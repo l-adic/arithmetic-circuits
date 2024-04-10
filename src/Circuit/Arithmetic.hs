@@ -3,11 +3,8 @@
 -- arbitrary number of such gates.
 module Circuit.Arithmetic
   ( Gate (..),
-    mapVarsGate,
-    collectInputsGate,
     outputWires,
     ArithCircuit (..),
-    fetchVars,
     generateRoots,
     validArithCircuit,
     Wire (..),
@@ -17,8 +14,8 @@ module Circuit.Arithmetic
   )
 where
 
-import Circuit.Affine               (AffineCircuit(..), collectInputsAffine,
-                                     evalAffineCircuit, mapVarsAffine)
+import Circuit.Affine               (AffineCircuit(..),
+                                     evalAffineCircuit)
 import Data.Aeson                   (FromJSON, ToJSON)
 import Data.Field.Galois            (PrimeField, fromP)
 import Protolude
@@ -58,10 +55,16 @@ data Gate f i
       }
   deriving (Show, Eq, Generic, NFData, FromJSON, ToJSON)
 
-collectInputsGate :: Ord i => Gate f i -> [i]
-collectInputsGate = \case
-  Mul l r _ -> collectInputsAffine l ++ collectInputsAffine r
-  _ -> panic "collectInputsGate: only supports mul gates"
+deriving instance Functor (Gate f)
+deriving instance Foldable (Gate f)
+deriving instance Traversable (Gate f)
+
+instance Bifunctor Gate where
+  bimap f g = \case
+    Mul l r o -> Mul (bimap f g l) (bimap f g r) (g o)
+    Equal i m o -> Equal (g i) (g m) (g o)
+    Split i os -> Split (g i) (map g os)
+
 
 -- | List output wires of a gate
 outputWires :: Gate f i -> [i]
@@ -93,14 +96,6 @@ instance (Pretty i, Show f) => Pretty (Gate f i) where
         text "split",
         pretty inp
       ]
-
--- | Apply mapping to variable names, i.e. rename variables. (Ideally
--- the mapping is injective.)
-mapVarsGate :: (i -> j) -> Gate f i -> Gate f j
-mapVarsGate f = \case
-  Mul l r o -> Mul (mapVarsAffine f l) (mapVarsAffine f r) (f o)
-  Equal i j o -> Equal (f i) (f j) (f o)
-  Split i os -> Split (f i) (fmap f os)
 
 -- | Evaluate a single gate
 evalGate ::
@@ -153,6 +148,9 @@ newtype ArithCircuit f = ArithCircuit [Gate f Wire]
 instance FromJSON f => FromJSON (ArithCircuit f)
 instance ToJSON f => ToJSON (ArithCircuit f)
 
+instance Functor ArithCircuit where
+  fmap f (ArithCircuit gates) = ArithCircuit $ map (first f) gates
+
 instance Show f => Pretty (ArithCircuit f) where
   pretty (ArithCircuit gs) = vcat . map pretty $ gs
 
@@ -182,17 +180,11 @@ validArithCircuit (ArithCircuit gates) =
     validWire _ (InputWire _) = True
     validWire _ (OutputWire _) = False
     validWire definedWires i@(IntermediateWire _) = i `elem` definedWires
-    fetchVarsGate (Mul l r _) = fetchVars l ++ fetchVars r
+    fetchVarsGate (Mul l r _) = toList l <> toList r
     fetchVarsGate (Equal i _ _) = [i] -- we can ignore the magic
       -- variable "m", as it is filled
       -- in when evaluating the circuit
     fetchVarsGate (Split i _) = [i]
-
-fetchVars :: AffineCircuit f Wire -> [Wire]
-fetchVars (Var i) = [i]
-fetchVars (ConstGate _) = []
-fetchVars (ScalarMul _ c) = fetchVars c
-fetchVars (Add l r) = fetchVars l ++ fetchVars r
 
 -- | Generate enough roots for a circuit
 generateRoots ::

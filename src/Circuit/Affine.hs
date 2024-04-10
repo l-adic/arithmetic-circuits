@@ -3,8 +3,6 @@
 -- evaluation and translation into affine maps.
 module Circuit.Affine
   ( AffineCircuit (..),
-    collectInputsAffine,
-    mapVarsAffine,
     evalAffineCircuit,
     affineCircuitToAffineMap,
     evalAffineMap,
@@ -30,12 +28,16 @@ data AffineCircuit f i
 instance (FromJSON i, FromJSON f) => FromJSON (AffineCircuit f i)
 instance (ToJSON i, ToJSON f) => ToJSON (AffineCircuit f i)
 
-collectInputsAffine :: Ord i => AffineCircuit f i -> [i]
-collectInputsAffine = \case
-  Add l r -> collectInputsAffine l ++ collectInputsAffine r
-  ScalarMul _ x -> collectInputsAffine x
-  ConstGate _ -> []
-  Var i -> [i]
+deriving instance Functor (AffineCircuit f)
+deriving instance Foldable (AffineCircuit f)
+deriving instance Traversable (AffineCircuit f)
+
+instance Bifunctor AffineCircuit where
+  bimap f g = \case
+    Add l r -> Add (bimap f g l) (bimap f g r)
+    ScalarMul s x -> ScalarMul (f s) (bimap f g x)
+    ConstGate c -> ConstGate (f c)
+    Var i -> Var (g i)
 
 instance (Pretty i, Show f) => Pretty (AffineCircuit f i) where
   pretty = prettyPrec 0
@@ -57,15 +59,6 @@ instance (Pretty i, Show f) => Pretty (AffineCircuit f i) where
 
 parensPrec :: Int -> Int -> Doc -> Doc
 parensPrec opPrec p = if p > opPrec then parens else identity
-
--- | Apply mapping to variable names, i.e. rename variables. (Ideally
--- the mapping is injective.)
-mapVarsAffine :: (i -> j) -> AffineCircuit f i -> AffineCircuit f j
-mapVarsAffine f = \case
-  Add l r -> Add (mapVarsAffine f l) (mapVarsAffine f r)
-  ScalarMul s expr -> ScalarMul s $ mapVarsAffine f expr
-  ConstGate c -> ConstGate c
-  Var i -> Var $ f i
 
 -- | Evaluate the arithmetic circuit without mul-gates on the given
 -- input. Variable map is assumed to have all the variables referred

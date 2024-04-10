@@ -12,7 +12,7 @@ import           System.Process          (readProcessWithExitCode)
 import           Text.PrettyPrint.Leijen.Text (Pretty(..))
 
 import Circuit.Affine     ()
-import Circuit.Arithmetic (ArithCircuit(..), Gate(..), Wire(..), fetchVars)
+import Circuit.Arithmetic (ArithCircuit(..), Gate(..), Wire(..))
 
 arithCircuitToDot
   :: (Show f) => ArithCircuit f -> Text
@@ -50,7 +50,7 @@ arithCircuitToDot (ArithCircuit gates)
         inputs circuit tgt
           = map ((\src -> dotArrowLabel src tgt (show $ pretty src))
                    . dotWire)
-          $ fetchVars circuit
+          $ toList circuit
     graphGate (Equal i m output)
       = [ labelNode gateLabel "= 0 ? 0 : 1"
         , dotArrowLabel (dotWire i) gateLabel (dotWire i)
