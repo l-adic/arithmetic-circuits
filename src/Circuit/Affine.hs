@@ -20,27 +20,27 @@ import           Text.PrettyPrint.Leijen.Text (Doc, Pretty(..), parens, text,
 
 -- | Arithmetic circuits without multiplication, i.e. circuits
 -- describe affine transformations.
-data AffineCircuit i f
-  = Add (AffineCircuit i f) (AffineCircuit i f)
-  | ScalarMul f (AffineCircuit i f)
+data AffineCircuit f i
+  = Add (AffineCircuit f i) (AffineCircuit f i)
+  | ScalarMul f (AffineCircuit f i)
   | ConstGate f
   | Var i
   deriving (Read, Eq, Show, Generic, NFData)
 
-instance (FromJSON i, FromJSON f) => FromJSON (AffineCircuit i f)
-instance (ToJSON i, ToJSON f) => ToJSON (AffineCircuit i f)
+instance (FromJSON i, FromJSON f) => FromJSON (AffineCircuit f i)
+instance (ToJSON i, ToJSON f) => ToJSON (AffineCircuit f i)
 
-collectInputsAffine :: Ord i => AffineCircuit i f -> [i]
+collectInputsAffine :: Ord i => AffineCircuit f i -> [i]
 collectInputsAffine = \case
   Add l r -> collectInputsAffine l ++ collectInputsAffine r
   ScalarMul _ x -> collectInputsAffine x
   ConstGate _ -> []
   Var i -> [i]
 
-instance (Pretty i, Show f) => Pretty (AffineCircuit i f) where
+instance (Pretty i, Show f) => Pretty (AffineCircuit f i) where
   pretty = prettyPrec 0
     where
-      prettyPrec :: Int -> AffineCircuit i f -> Doc
+      prettyPrec :: Int -> AffineCircuit f i -> Doc
       prettyPrec p e =
         case e of
           Var v ->
@@ -60,7 +60,7 @@ parensPrec opPrec p = if p > opPrec then parens else identity
 
 -- | Apply mapping to variable names, i.e. rename variables. (Ideally
 -- the mapping is injective.)
-mapVarsAffine :: (i -> j) -> AffineCircuit i f -> AffineCircuit j f
+mapVarsAffine :: (i -> j) -> AffineCircuit f i -> AffineCircuit f j
 mapVarsAffine f = \case
   Add l r -> Add (mapVarsAffine f l) (mapVarsAffine f r)
   ScalarMul s expr -> ScalarMul s $ mapVarsAffine f expr
@@ -77,7 +77,7 @@ evalAffineCircuit ::
   -- | variables
   vars ->
   -- | circuit to evaluate
-  AffineCircuit i f ->
+  AffineCircuit f i ->
   f
 evalAffineCircuit lookupVar vars = \case
   ConstGate f -> f
@@ -90,7 +90,7 @@ evalAffineCircuit lookupVar vars = \case
 affineCircuitToAffineMap ::
   (Num f, Ord i) =>
   -- | circuit to translate
-  AffineCircuit i f ->
+  AffineCircuit f i ->
   -- | constant part and non-constant part
   (f, Map i f)
 affineCircuitToAffineMap = \case

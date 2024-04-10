@@ -33,7 +33,7 @@ testSplitUnsplitCircuit nbits =
 -- Generators
 -------------------------------------------------------------------------------
 
-arbVars :: Int -> [Int] -> [Gen (AffineCircuit Wire f)]
+arbVars :: Int -> [Int] -> [Gen (AffineCircuit f Wire)]
 arbVars numInps mids =
   varInps numInps ++ varMids mids
   where
@@ -48,7 +48,7 @@ arbAffineCircuitWithMids ::
   Int ->
   [Int] ->
   Int ->
-  Gen (AffineCircuit Wire f)
+  Gen (AffineCircuit f Wire)
 arbAffineCircuitWithMids numInps mids size
   | size <= 0 =
     oneof $ [ConstGate <$> arbitrary] ++ arbVars numInps mids

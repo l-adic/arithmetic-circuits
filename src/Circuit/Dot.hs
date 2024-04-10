@@ -34,7 +34,7 @@ arithCircuitToDot (ArithCircuit gates)
 
     pointNode lblId = lblId <> " [shape=point]"
 
-    graphGate :: Show f => Gate Wire f -> [Text]
+    graphGate :: Show f => Gate f Wire -> [Text]
     graphGate (Mul lhs rhs output)
       = [ labelNode gateLabel "*"
         , labelNode lhsLabel (show $ pretty lhs)
