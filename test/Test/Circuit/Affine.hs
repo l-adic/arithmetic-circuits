@@ -22,7 +22,7 @@ arbAffineCircuit numVars size
         ++ if numVars > 0
           then [Var <$> choose (0, numVars - 1)]
           else []
-  | size > 0 =
+  | otherwise =
     oneof
       [ ScalarMul <$> arbitrary <*> arbAffineCircuit numVars (size - 1),
         Add <$> arbAffineCircuit numVars (size - 1)

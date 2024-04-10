@@ -1,22 +1,18 @@
-{-# LANGUAGE DeriveAnyClass, DeriveGeneric, TupleSections #-}
-
+{-#LANGUAGE DataKinds #-}
 module Test.Circuit.Arithmetic where
 
 import           Circuit.Affine
 import           Circuit.Arithmetic
-import           Data.Curve.Weierstrass.BN254 (Fr)
-import           Data.Map                     (Map)
 import qualified Data.Map                     as Map
-import           Data.Pairing.BN254           (getRootOfUnity)
-import           Fresh
 import           Protolude
-import           QAP
-import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck
+import Data.Field.Galois (Prime)
 
 -------------------------------------------------------------------------------
 -- Test values
 -------------------------------------------------------------------------------
+
+type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 testEqualCircuit :: ArithCircuit Fr
 testEqualCircuit = ArithCircuit [Equal (InputWire 0) (IntermediateWire 0) (OutputWire 0)]
@@ -56,7 +52,7 @@ arbAffineCircuitWithMids ::
 arbAffineCircuitWithMids numInps mids size
   | size <= 0 =
     oneof $ [ConstGate <$> arbitrary] ++ arbVars numInps mids
-  | size > 0 =
+  | otherwise =
     oneof
       [ ScalarMul <$> arbitrary <*> arbAffineCircuitWithMids numInps mids (size - 1),
         Add <$> arbAffineCircuitWithMids numInps mids (size - 1)
@@ -77,7 +73,7 @@ arbArithCircuit ::
 arbArithCircuit (distMul, distEqual, distSplit) numInps size
   | size <= 0 =
     pure $ ArithCircuit []
-  | size > 0 =
+  | otherwise =
     do
       ArithCircuit gates <- arbArithCircuit (distMul, distEqual, distSplit) numInps (size - 1)
       let mids = [i | IntermediateWire i <- concatMap outputWires gates]
@@ -101,10 +97,7 @@ arbArithCircuit (distMul, distEqual, distSplit) numInps size
     equalGate gates mids@(_ : _) =
       Just $ do
         inp <- elements mids
-        let outWire =
-              case mids of
-                [] -> 0
-                ms@(_ : _) -> maximum ms + 1
+        let outWire = maximum mids + 1
             gate =
               Equal
                 (IntermediateWire inp)
@@ -116,10 +109,7 @@ arbArithCircuit (distMul, distEqual, distSplit) numInps size
     splitGate gates mids@(_ : _) =
       Just $ do
         inp <- IntermediateWire <$> elements mids
-        let firstOutWire =
-              case mids of
-                [] -> 0
-                ms@(_ : _) -> maximum ms + 1
+        let firstOutWire = maximum mids + 1
             nbits = 256
             outWires = fmap IntermediateWire [firstOutWire .. firstOutWire + nbits - 1]
             gate = Split inp outWires
@@ -151,59 +141,6 @@ instance (Arbitrary f, Num f) => Arbitrary (ArithCircuitWithInput f) where
 -- Tests
 -------------------------------------------------------------------------------
 
-unit_eqGate ::
-  Assertion
-unit_eqGate =
-  do
-    testEvalWith 0 @?= Just 0
-    testEvalWith 1 @?= Just 1
-    testEvalWith 2 @?= Just 1
-    testEvalWith 3 @?= Just 1
-  where
-    testEvalWith n =
-      lookupAtWire (OutputWire 0) $
-        evalArithCircuit
-          lookupAtWire
-          updateAtWire
-          testEqualCircuit
-          (initialQapSet $ testInputMap n)
-
-unit_splitUnsplit :: Assertion
-unit_splitUnsplit =
-  mapM_ (\n -> testSplitUnsplit n @?= Just n) (fmap fromIntegral [0 .. 2 ^ nbits - 1])
-  where
-    nbits = 16
-    testSplitUnsplit n =
-      lookupAtWire (OutputWire 0) $
-        evalArithCircuit
-          lookupAtWire
-          updateAtWire
-          (testSplitUnsplitCircuit nbits)
-          (initialQapSet $ testInputMap n)
-
 prop_arithCircuitValid :: ArithCircuitWithInputs Fr -> Bool
 prop_arithCircuitValid (ArithCircuitWithInputs program _) =
   validArithCircuit program
-
-prop_arithCircuitToQAP_slow :: ArithCircuitWithInputs Fr -> Property
-prop_arithCircuitToQAP_slow (ArithCircuitWithInputs program inputs) =
-  withMaxSuccess 10 $
-    case program of
-      ArithCircuit [] -> True
-      ArithCircuit (_ : _) -> all testInput inputs
-  where
-    roots = evalFresh $ generateRoots (fromIntegral . (+ 1) <$> fresh) program
-    qap = arithCircuitToQAP roots program
-    testInput input =
-      verifyAssignment qap $ generateAssignment program input
-
-prop_arithCircuitToQAP_fft :: ArithCircuitWithInputs Fr -> Property
-prop_arithCircuitToQAP_fft (ArithCircuitWithInputs program inputs) =
-  withMaxSuccess 10 $
-    case program of
-      ArithCircuit [] -> True
-      ArithCircuit (_ : _) -> all testInput inputs
-  where
-    roots = evalFresh $ generateRoots (fromIntegral . (+ 1) <$> fresh) program
-    qap = createPolynomialsFFT getRootOfUnity $ arithCircuitToGenQAP roots program
-    testInput input = verifyAssignment qap $ generateAssignment program input

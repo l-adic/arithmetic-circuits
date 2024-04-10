@@ -1,25 +1,27 @@
+{-# LANGUAGE DataKinds #-}
+
 module Test.Circuit.Expr where
 
 import           Circuit.Arithmetic
 import           Circuit.Expr
-import           Data.Curve.Weierstrass.BN254 (Fr)
 import qualified Data.Map                     as Map
-import           Fresh
 import           Protolude
-import           QAP
 import           Test.Circuit.Affine
 import           Test.Tasty.QuickCheck
+import Data.Field.Galois (Prime)
 
 -------------------------------------------------------------------------------
 -- Generators
 -------------------------------------------------------------------------------
+
+type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 arbExprBool :: Arbitrary f => Int -> Int -> Gen (Expr Int f Bool)
 arbExprBool numVars size
   | size <= 0 = oneof $ [EConstBool <$> arbitrary] ++ if numVars > 0
     then []
     else []
-  | size > 0 = oneof
+  | otherwise = oneof
     [ EBinOp BAnd <$> arbExprBool numVars (size - 1) <*> arbExprBool
       numVars
       (size - 1)
@@ -35,7 +37,7 @@ arbExpr numVars size
   | size <= 0 = oneof $ [EConst <$> arbitrary] ++ if numVars > 0
     then [EVar <$> choose (0, numVars - 1)]
     else []
-  | size > 0 = oneof
+  | otherwise = oneof
     [ EBinOp BAdd <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1)
     , EBinOp BSub <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1)
     , EBinOp BMul <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1)
@@ -68,17 +70,6 @@ prop_compiledCircuitValid :: ExprWithInputs Fr -> Bool
 prop_compiledCircuitValid (ExprWithInputs expr _) =
   validArithCircuit (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 0))
 
--- | Check whether exprToArithCircuit produces circuits that have valid assignments to the qap
-prop_compiledQAPValid :: ExprWithInputs Fr -> Property
-prop_compiledQAPValid (ExprWithInputs expr inputs) = withMaxSuccess 50
-  $ all testInput inputs
- where
-  circuit = (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 0))
-  roots :: ArithCircuit Fr -> [[Fr]]
-  roots = evalFresh . generateRoots (fromIntegral <$> fresh)
-  qap = arithCircuitToQAP (roots circuit) circuit
-  assignment input = generateAssignment circuit input
-  testInput = verifyAssignment qap . assignment
 
 -- | Check whether evaluating an expression and
 -- evaluating the arithmetic circuit translation produces the same

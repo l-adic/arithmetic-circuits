@@ -1,6 +1,3 @@
-{-# LANGUAGE DeriveAnyClass, DeriveGeneric, LambdaCase, ScopedTypeVariables,
-             StrictData #-}
-
 -- | Definition of arithmetic circuits: one with a single
 -- multiplication gate with affine inputs and another variant with an
 -- arbitrary number of such gates.
@@ -33,7 +30,10 @@ data Wire
   = InputWire Int
   | IntermediateWire Int
   | OutputWire Int
-  deriving (Show, Eq, Ord, Generic, NFData, ToJSON, FromJSON)
+  deriving (Show, Eq, Ord, Generic, NFData)
+
+instance FromJSON Wire
+instance ToJSON Wire
 
 instance Pretty Wire where
   pretty (InputWire v) = text "input_" <> pretty v
@@ -147,7 +147,11 @@ evalGate lookupVar updateVar vars gate =
 -- | A circuit is a list of multiplication gates along with their
 -- output wire labels (which can be intermediate or actual outputs).
 newtype ArithCircuit f = ArithCircuit [Gate Wire f]
-  deriving (Eq, Show, Generic, NFData, FromJSON, ToJSON)
+  deriving (Eq, Show, Generic)
+  deriving NFData via ([Gate Wire f])
+
+instance FromJSON f => FromJSON (ArithCircuit f)
+instance ToJSON f => ToJSON (ArithCircuit f)
 
 instance Show f => Pretty (ArithCircuit f) where
   pretty (ArithCircuit gs) = vcat . map pretty $ gs
