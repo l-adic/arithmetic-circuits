@@ -1,18 +1,16 @@
-{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE DataKinds #-}
 
-module Circuit (benchmarks) where
+module Circuit where
 
 import Protolude
 
 import           Circuit.Affine
 import           Circuit.Arithmetic
 import           Criterion.Main
-import           Data.Curve.Weierstrass.BN254 (Fr)
 import qualified Data.Map                     as Map
-import           Data.Pairing.BN254           (getRootOfUnity)
-import           Fresh
-import           QAP
+import Data.Field.Galois (Prime)
 
+type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 program :: ArithCircuit Fr
 program = ArithCircuit
@@ -24,14 +22,4 @@ input :: Map.Map Int Fr
 input = Map.fromList [(0, 7), (1, 5), (2, 4)]
 
 benchmarks :: [Benchmark]
-benchmarks
-  = [ bench "evaluating circuit"
-    $ whnf (evalArithCircuit lookupAtWire updateAtWire program) (initialQapSet input)
-    , bench "creating QAP (no interpolation)"
-    $ nf (\c -> arithCircuitToGenQAP (evalFresh $ generateRoots (fromIntegral <$> fresh) c) c) program
-    , bench "creating QAP (fast interpolation)"
-    $ nf (\c -> arithCircuitToQAPFFT getRootOfUnity (evalFresh $ generateRoots (fromIntegral <$> fresh) c) c) program
-    , bench "creating QAP (slow interpolation)"
-    $ nf (\c -> arithCircuitToQAP (evalFresh $ generateRoots (fromIntegral <$> fresh) c) c) program
-    ]
-
+benchmarks = []

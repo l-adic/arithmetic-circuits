@@ -86,7 +86,7 @@ instance Pretty (UnOp f a) where
 instance (Pretty f, Pretty i, Pretty ty) => Pretty (Expr i f ty) where
   pretty = prettyPrec 0
     where
-      prettyPrec :: (Pretty f, Pretty i, Pretty ty) => Int -> Expr i f ty -> Doc
+      prettyPrec :: Int -> Expr i f ty -> Doc
       prettyPrec p e =
         case e of
           EVar v ->

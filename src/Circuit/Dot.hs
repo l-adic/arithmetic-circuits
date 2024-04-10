@@ -8,7 +8,7 @@ import Protolude
 
 import qualified Data.Text                    as Text
 import           System.FilePath              (replaceExtension)
-import           System.Process.Text          (readProcessWithExitCode)
+import           System.Process          (readProcessWithExitCode)
 import           Text.PrettyPrint.Leijen.Text (Pretty(..))
 
 import Circuit.Affine     ()
@@ -69,8 +69,8 @@ arithCircuitToDot (ArithCircuit gates)
 
 callDot :: Text -> IO Text
 callDot g = do
-  (_, out, err) <- readProcessWithExitCode "dot" ["-Tsvg"] g
-  if err == "" then pure out else panic err
+  (_, out, err) <- readProcessWithExitCode "dot" ["-Tsvg"] (Text.unpack g)
+  if err == "" then pure (Text.pack out) else panic (Text.pack err)
 
 
 dotWriteSVG :: FilePath -> Text -> IO ()
