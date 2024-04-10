@@ -3,8 +3,6 @@
 -- evaluation and translation into affine maps.
 module Circuit.Affine
   ( AffineCircuit (..),
-    collectInputsAffine,
-    mapVarsAffine,
     evalAffineCircuit,
     affineCircuitToAffineMap,
     evalAffineMap,
@@ -20,27 +18,31 @@ import           Text.PrettyPrint.Leijen.Text (Doc, Pretty(..), parens, text,
 
 -- | Arithmetic circuits without multiplication, i.e. circuits
 -- describe affine transformations.
-data AffineCircuit i f
-  = Add (AffineCircuit i f) (AffineCircuit i f)
-  | ScalarMul f (AffineCircuit i f)
+data AffineCircuit f i
+  = Add (AffineCircuit f i) (AffineCircuit f i)
+  | ScalarMul f (AffineCircuit f i)
   | ConstGate f
   | Var i
   deriving (Read, Eq, Show, Generic, NFData)
 
-instance (FromJSON i, FromJSON f) => FromJSON (AffineCircuit i f)
-instance (ToJSON i, ToJSON f) => ToJSON (AffineCircuit i f)
+instance (FromJSON i, FromJSON f) => FromJSON (AffineCircuit f i)
+instance (ToJSON i, ToJSON f) => ToJSON (AffineCircuit f i)
 
-collectInputsAffine :: Ord i => AffineCircuit i f -> [i]
-collectInputsAffine = \case
-  Add l r -> collectInputsAffine l ++ collectInputsAffine r
-  ScalarMul _ x -> collectInputsAffine x
-  ConstGate _ -> []
-  Var i -> [i]
+deriving instance Functor (AffineCircuit f)
+deriving instance Foldable (AffineCircuit f)
+deriving instance Traversable (AffineCircuit f)
 
-instance (Pretty i, Show f) => Pretty (AffineCircuit i f) where
+instance Bifunctor AffineCircuit where
+  bimap f g = \case
+    Add l r -> Add (bimap f g l) (bimap f g r)
+    ScalarMul s x -> ScalarMul (f s) (bimap f g x)
+    ConstGate c -> ConstGate (f c)
+    Var i -> Var (g i)
+
+instance (Pretty i, Show f) => Pretty (AffineCircuit f i) where
   pretty = prettyPrec 0
     where
-      prettyPrec :: Int -> AffineCircuit i f -> Doc
+      prettyPrec :: Int -> AffineCircuit f i -> Doc
       prettyPrec p e =
         case e of
           Var v ->
@@ -58,15 +60,6 @@ instance (Pretty i, Show f) => Pretty (AffineCircuit i f) where
 parensPrec :: Int -> Int -> Doc -> Doc
 parensPrec opPrec p = if p > opPrec then parens else identity
 
--- | Apply mapping to variable names, i.e. rename variables. (Ideally
--- the mapping is injective.)
-mapVarsAffine :: (i -> j) -> AffineCircuit i f -> AffineCircuit j f
-mapVarsAffine f = \case
-  Add l r -> Add (mapVarsAffine f l) (mapVarsAffine f r)
-  ScalarMul s expr -> ScalarMul s $ mapVarsAffine f expr
-  ConstGate c -> ConstGate c
-  Var i -> Var $ f i
-
 -- | Evaluate the arithmetic circuit without mul-gates on the given
 -- input. Variable map is assumed to have all the variables referred
 -- to in the circuit. Failed lookups are currently treated as 0.
@@ -77,7 +70,7 @@ evalAffineCircuit ::
   -- | variables
   vars ->
   -- | circuit to evaluate
-  AffineCircuit i f ->
+  AffineCircuit f i ->
   f
 evalAffineCircuit lookupVar vars = \case
   ConstGate f -> f
@@ -90,7 +83,7 @@ evalAffineCircuit lookupVar vars = \case
 affineCircuitToAffineMap ::
   (Num f, Ord i) =>
   -- | circuit to translate
-  AffineCircuit i f ->
+  AffineCircuit f i ->
   -- | constant part and non-constant part
   (f, Map i f)
 affineCircuitToAffineMap = \case

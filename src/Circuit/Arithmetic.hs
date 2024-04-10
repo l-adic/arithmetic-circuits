@@ -3,11 +3,8 @@
 -- arbitrary number of such gates.
 module Circuit.Arithmetic
   ( Gate (..),
-    mapVarsGate,
-    collectInputsGate,
     outputWires,
     ArithCircuit (..),
-    fetchVars,
     generateRoots,
     validArithCircuit,
     Wire (..),
@@ -17,8 +14,8 @@ module Circuit.Arithmetic
   )
 where
 
-import Circuit.Affine               (AffineCircuit(..), collectInputsAffine,
-                                     evalAffineCircuit, mapVarsAffine)
+import Circuit.Affine               (AffineCircuit(..),
+                                     evalAffineCircuit)
 import Data.Aeson                   (FromJSON, ToJSON)
 import Data.Field.Galois            (PrimeField, fromP)
 import Protolude
@@ -41,10 +38,10 @@ instance Pretty Wire where
   pretty (OutputWire v) = text "output_" <> pretty v
 
 -- | An arithmetic circuit with a single multiplication gate.
-data Gate i f
+data Gate f i
   = Mul
-      { mulLeft :: AffineCircuit i f,
-        mulRight :: AffineCircuit i f,
+      { mulLeft :: AffineCircuit f i,
+        mulRight :: AffineCircuit f i,
         mulOutput :: i
       }
   | Equal
@@ -58,19 +55,25 @@ data Gate i f
       }
   deriving (Show, Eq, Generic, NFData, FromJSON, ToJSON)
 
-collectInputsGate :: Ord i => Gate i f -> [i]
-collectInputsGate = \case
-  Mul l r _ -> collectInputsAffine l ++ collectInputsAffine r
-  _ -> panic "collectInputsGate: only supports mul gates"
+deriving instance Functor (Gate f)
+deriving instance Foldable (Gate f)
+deriving instance Traversable (Gate f)
+
+instance Bifunctor Gate where
+  bimap f g = \case
+    Mul l r o -> Mul (bimap f g l) (bimap f g r) (g o)
+    Equal i m o -> Equal (g i) (g m) (g o)
+    Split i os -> Split (g i) (map g os)
+
 
 -- | List output wires of a gate
-outputWires :: Gate i f -> [i]
+outputWires :: Gate f i -> [i]
 outputWires = \case
   Mul _ _ out -> [out]
   Equal _ _ out -> [out]
   Split _ outs -> outs
 
-instance (Pretty i, Show f) => Pretty (Gate i f) where
+instance (Pretty i, Show f) => Pretty (Gate f i) where
   pretty (Mul l r o) =
     hsep
       [ pretty o,
@@ -94,14 +97,6 @@ instance (Pretty i, Show f) => Pretty (Gate i f) where
         pretty inp
       ]
 
--- | Apply mapping to variable names, i.e. rename variables. (Ideally
--- the mapping is injective.)
-mapVarsGate :: (i -> j) -> Gate i f -> Gate j f
-mapVarsGate f = \case
-  Mul l r o -> Mul (mapVarsAffine f l) (mapVarsAffine f r) (f o)
-  Equal i j o -> Equal (f i) (f j) (f o)
-  Split i os -> Split (f i) (fmap f os)
-
 -- | Evaluate a single gate
 evalGate ::
   (PrimeField f) =>
@@ -112,7 +107,7 @@ evalGate ::
   -- | context before evaluation
   vars ->
   -- | gate
-  Gate i f ->
+  Gate f i ->
   -- | context after evaluation
   vars
 evalGate lookupVar updateVar vars gate =
@@ -146,12 +141,15 @@ evalGate lookupVar updateVar vars gate =
 
 -- | A circuit is a list of multiplication gates along with their
 -- output wire labels (which can be intermediate or actual outputs).
-newtype ArithCircuit f = ArithCircuit [Gate Wire f]
+newtype ArithCircuit f = ArithCircuit [Gate f Wire]
   deriving (Eq, Show, Generic)
-  deriving NFData via ([Gate Wire f])
+  deriving NFData via ([Gate f Wire])
 
 instance FromJSON f => FromJSON (ArithCircuit f)
 instance ToJSON f => ToJSON (ArithCircuit f)
+
+instance Functor ArithCircuit where
+  fmap f (ArithCircuit gates) = ArithCircuit $ map (first f) gates
 
 instance Show f => Pretty (ArithCircuit f) where
   pretty (ArithCircuit gs) = vcat . map pretty $ gs
@@ -182,17 +180,11 @@ validArithCircuit (ArithCircuit gates) =
     validWire _ (InputWire _) = True
     validWire _ (OutputWire _) = False
     validWire definedWires i@(IntermediateWire _) = i `elem` definedWires
-    fetchVarsGate (Mul l r _) = fetchVars l ++ fetchVars r
+    fetchVarsGate (Mul l r _) = toList l <> toList r
     fetchVarsGate (Equal i _ _) = [i] -- we can ignore the magic
       -- variable "m", as it is filled
       -- in when evaluating the circuit
     fetchVarsGate (Split i _) = [i]
-
-fetchVars :: AffineCircuit Wire f -> [Wire]
-fetchVars (Var i) = [i]
-fetchVars (ConstGate _) = []
-fetchVars (ScalarMul _ c) = fetchVars c
-fetchVars (Add l r) = fetchVars l ++ fetchVars r
 
 -- | Generate enough roots for a circuit
 generateRoots ::
@@ -244,5 +236,5 @@ unsplit ::
   -- | (binary) wires containing a binary expansion,
   -- small-endian
   [Wire] ->
-  AffineCircuit Wire f
+  AffineCircuit f Wire
 unsplit = snd . foldl (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (ScalarMul (2 ^ ix) (Var wire)))) (0, ConstGate 0)

@@ -217,14 +217,14 @@ freshOutput :: ExprM f Wire
 freshOutput = OutputWire <$> fresh
 
 -- | Multiply two wires or affine circuits to an intermediate variable
-mulToImm :: Either Wire (AffineCircuit Wire f) -> Either Wire (AffineCircuit Wire f) -> ExprM f Wire
+mulToImm :: Either Wire (AffineCircuit f Wire) -> Either Wire (AffineCircuit f Wire) -> ExprM f Wire
 mulToImm l r = do
   o <- imm
   emit $ Mul (addVar l) (addVar r) o
   pure o
 
 -- | Add a Mul and its output to the ArithCircuit
-emit :: Gate Wire f -> ExprM f ()
+emit :: Gate f Wire -> ExprM f ()
 emit c = modify $ first (\(ArithCircuit cs) -> ArithCircuit (c : cs))
 
 -- | Rotate a list to the right
@@ -232,19 +232,19 @@ rotateList :: Int -> [a] -> [a]
 rotateList steps x = take (length x) $ drop steps $ cycle x
 
 -- | Turn a wire into an affine circuit, or leave it be
-addVar :: Either Wire (AffineCircuit Wire f) -> AffineCircuit Wire f
+addVar :: Either Wire (AffineCircuit f Wire) -> AffineCircuit f Wire
 addVar (Left w) = Var w
 addVar (Right c) = c
 
 -- | Turn an affine circuit into a wire, or leave it be
-addWire :: Num f => Either Wire (AffineCircuit Wire f) -> ExprM f Wire
+addWire :: Num f => Either Wire (AffineCircuit f Wire) -> ExprM f Wire
 addWire (Left w) = pure w
 addWire (Right c) = do
   mulOut <- imm
   emit $ Mul (ConstGate 1) c mulOut
   pure mulOut
 
-compile :: Num f => Expr Wire f ty -> ExprM f (Either Wire (AffineCircuit Wire f))
+compile :: Num f => Expr Wire f ty -> ExprM f (Either Wire (AffineCircuit f Wire))
 compile expr = case expr of
   EConst n -> pure . Right $ ConstGate n
   EConstBool b -> pure . Right $ ConstGate (if b then 1 else 0)

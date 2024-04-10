@@ -13,7 +13,7 @@ arbAffineCircuit ::
   Arbitrary f =>
   Int ->
   Int ->
-  Gen (AffineCircuit Int f)
+  Gen (AffineCircuit f Int)
 arbAffineCircuit numVars size
   | size <= 0 =
     oneof $
@@ -34,7 +34,7 @@ arbInputVector numVars = Map.fromList . zip [0 ..] <$> vector numVars
 
 -- | The input vector has to have the correct length, so we want to
 -- generate the program and the test input simultaneously.
-data AffineCircuitWithInputs f = AffineCircuitWithInputs (AffineCircuit Int f) [Map Int f]
+data AffineCircuitWithInputs f = AffineCircuitWithInputs (AffineCircuit f Int) [Map Int f]
   deriving (Show)
 
 instance Arbitrary f => Arbitrary (AffineCircuitWithInputs f) where
