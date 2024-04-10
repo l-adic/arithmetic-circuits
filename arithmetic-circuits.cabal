@@ -45,13 +45,10 @@ common deps
     , containers      >=0.6.0
     , filepath        >=1.4.2
     , galois-field    >=2.0.0
-    , MonadRandom     >=0.6
-    , poly            >=0.3.2 && <0.6
     , process
     , protolude       >=0.2
     , semirings       >=0.7
     , text            >=1.2.3
-    , vector          >=0.13
     , wl-pprint-text  >=1.2.0
 
 library
@@ -60,6 +57,7 @@ library
     Circuit
     Circuit.Affine
     Circuit.Arithmetic
+    Circuit.Dataflow
     Circuit.Dot
     Circuit.Expr
     Circuit.Lang

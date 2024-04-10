@@ -8,6 +8,7 @@ module Circuit.Arithmetic
     generateRoots,
     validArithCircuit,
     Wire (..),
+    wireName,
     evalGate,
     evalArithCircuit,
     unsplit,
@@ -37,6 +38,11 @@ instance Pretty Wire where
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
 
+wireName :: Wire -> Int
+wireName (InputWire v) = v
+wireName (IntermediateWire v) = v
+wireName (OutputWire v) = v
+
 -- | An arithmetic circuit with a single multiplication gate.
 data Gate f i
   = Mul
@@ -53,7 +59,7 @@ data Gate f i
       { splitInput :: i,
         splitOutputs :: [i]
       }
-  deriving (Show, Eq, Generic, NFData, FromJSON, ToJSON)
+  deriving (Show, Eq, Ord, Generic, NFData, FromJSON, ToJSON)
 
 deriving instance Functor (Gate f)
 deriving instance Foldable (Gate f)
@@ -238,3 +244,4 @@ unsplit ::
   [Wire] ->
   AffineCircuit f Wire
 unsplit = snd . foldl (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (ScalarMul (2 ^ ix) (Var wire)))) (0, ConstGate 0)
+

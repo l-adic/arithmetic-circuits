@@ -23,7 +23,7 @@ data AffineCircuit f i
   | ScalarMul f (AffineCircuit f i)
   | ConstGate f
   | Var i
-  deriving (Read, Eq, Show, Generic, NFData)
+  deriving (Read, Eq, Ord, Show, Generic, NFData)
 
 instance (FromJSON i, FromJSON f) => FromJSON (AffineCircuit f i)
 instance (ToJSON i, ToJSON f) => ToJSON (AffineCircuit f i)
