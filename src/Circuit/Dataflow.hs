@@ -38,6 +38,8 @@ indexVars gateMap = Map.fromListWith (<>) $ do
   wire <- toList gate
   pure (wireName wire, Set.singleton gid)
 
+-- | Starting from a list of roots, explore the circuit to find all the gates/wires that are reachable.
+-- | Filter the unreachable gates from the circuit.
 removeUnreachable ::
   (Ord a) =>
   [Int] ->
