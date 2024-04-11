@@ -46,6 +46,7 @@ common deps
     , filepath        >=1.4.2
     , galois-field    >=2.0.0
     , process
+    , propagators
     , protolude       >=0.2
     , semirings       >=0.7
     , text            >=1.2.3
@@ -58,6 +59,7 @@ library
     Circuit.Affine
     Circuit.Arithmetic
     Circuit.Dataflow
+    Circuit.Solver
     Circuit.Dot
     Circuit.Expr
     Circuit.Lang
