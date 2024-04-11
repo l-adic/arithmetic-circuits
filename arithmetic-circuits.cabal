@@ -74,7 +74,7 @@ library
   default-language:   GHC2021
 
 test-suite circuit-tests
-  import: deps, extensions
+  import: deps, extensions, warnings
   type:               exitcode-stdio-1.0
   main-is:            Main.hs
 
@@ -83,6 +83,7 @@ test-suite circuit-tests
     Test.Circuit.Affine
     Test.Circuit.Arithmetic
     Test.Circuit.Expr
+    Test.Circuit.R1CS
 
   hs-source-dirs:     test
 

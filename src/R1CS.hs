@@ -66,9 +66,8 @@ instance (Num f) => Monoid (LinearPoly f) where
 
 substitute :: (Num f) => LinearPoly f -> Map Int f -> f
 substitute (LinearPoly m) vals =
-  let c = Map.findWithDefault 0 oneVar m
-      f acc var coeff = acc + coeff * Map.findWithDefault 0 var vals
-   in Map.foldlWithKey f c m
+  let f acc var coeff = acc + coeff * Map.findWithDefault 0 var vals
+   in Map.foldlWithKey f 0 m
   where
 
 mkLinearPoly :: (Num f) => AffineCircuit f Wire -> LinearPoly f
@@ -122,7 +121,8 @@ validateWitness (Witness w) (R1CS {r1csConstraints}) =
   let f r1c = unless (satisfiesR1C r1c) (Left r1c)
    in traverse_ f r1csConstraints
   where
-    satisfiesR1C (R1C (a, b, c)) = substitute a w * substitute b w == substitute c w
+    w' = Map.insert oneVar 1 w
+    satisfiesR1C (R1C (a, b, c)) = substitute a w' * substitute b w' == substitute c w'
 
 isValidWitness :: (Eq f, Num f) => Witness f -> R1CS f -> Bool
 isValidWitness w r1cs = isRight $ validateWitness w r1cs
