@@ -44,7 +44,7 @@ removeUnreachable ::
   (Ord a) =>
   [Int] ->
   ArithCircuit a ->
-  ArithCircuit a
+  (ArithCircuit a, Set Int)
 removeUnreachable outVars cs =
   let gatesMap = numberGates cs
       env =
@@ -52,15 +52,15 @@ removeUnreachable outVars cs =
           { gatesMap,
             indexedVars = indexVars gatesMap
           }
-      foundGates =
-        flip evalState (DEnv Set.empty) $
+      (foundGates, usedVars) =
+        flip runState (DEnv Set.empty) $
           do
             mapM_ addRoot outVars
             -- start searching from the output variables
             exploreVars env outVars
             roots <- gets dfRoots
             pure $ Set.foldl (\acc root -> acc `Set.union` findGates env root) mempty roots
-   in ArithCircuit $ Set.toList foundGates
+   in (ArithCircuit $ Set.toList foundGates, dfRoots usedVars)
   where
     findGates Env {indexedVars, gatesMap} root =
       Set.fromList $

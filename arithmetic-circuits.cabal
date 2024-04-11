@@ -63,6 +63,7 @@ library
     Circuit.Dot
     Circuit.Expr
     Circuit.Lang
+    R1CS
     Fresh
 
   other-modules:      Paths_arithmetic_circuits
@@ -73,7 +74,7 @@ library
   default-language:   GHC2021
 
 test-suite circuit-tests
-  import: deps, extensions, warnings
+  import: deps, extensions
   type:               exitcode-stdio-1.0
   main-is:            Main.hs
 
@@ -88,6 +89,7 @@ test-suite circuit-tests
   ghc-options:        -freverse-errors -O2 -Wall -main-is Main
   build-depends:
       arithmetic-circuits
+    , integer-logarithms
     , quickcheck-instances  >=0.3
     , tasty                 >=1.2
     , tasty-hunit           >=0.10

@@ -1,5 +1,6 @@
 module Circuit
-  ( module Circuit.Arithmetic,
+  ( module Circuit.Affine,
+    module Circuit.Arithmetic,
     module Circuit.Lang,
     module Circuit.Expr,
     module Circuit.Dataflow,
@@ -7,6 +8,7 @@ module Circuit
   )
 where
 
+import Circuit.Affine
 import Circuit.Arithmetic
 import Circuit.Dataflow
 import Circuit.Expr
