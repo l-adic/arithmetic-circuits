@@ -23,6 +23,7 @@ data AffineCircuit f i
   | ScalarMul f (AffineCircuit f i)
   | ConstGate f
   | Var i
+  | Nil
   deriving (Read, Eq, Ord, Show, Generic, NFData)
 
 instance (FromJSON i, FromJSON f) => FromJSON (AffineCircuit f i)
@@ -38,6 +39,7 @@ instance Bifunctor AffineCircuit where
     ScalarMul s x -> ScalarMul (f s) (bimap f g x)
     ConstGate c -> ConstGate (f c)
     Var i -> Var (g i)
+    Nil -> Nil
 
 instance (Pretty i, Show f) => Pretty (AffineCircuit f i) where
   pretty = prettyPrec 0
@@ -45,6 +47,8 @@ instance (Pretty i, Show f) => Pretty (AffineCircuit f i) where
       prettyPrec :: Int -> AffineCircuit f i -> Doc
       prettyPrec p e =
         case e of
+          Nil ->
+            text "nil"
           Var v ->
             pretty v
           ConstGate f ->
@@ -73,6 +77,7 @@ evalAffineCircuit ::
   AffineCircuit f i ->
   f
 evalAffineCircuit lookupVar vars = \case
+  Nil -> 0
   ConstGate f -> f
   Var i -> fromMaybe 0 $ lookupVar i vars
   Add l r -> evalAffineCircuit lookupVar vars l + evalAffineCircuit lookupVar vars r
@@ -87,6 +92,7 @@ affineCircuitToAffineMap ::
   -- | constant part and non-constant part
   (f, Map i f)
 affineCircuitToAffineMap = \case
+  Nil -> (0, Map.empty)
   Var i -> (0, Map.singleton i 1)
   Add l r -> (constLeft + constRight, Map.unionWith (+) vecLeft vecRight)
     where

@@ -59,6 +59,7 @@ library
     Circuit.Affine
     Circuit.Arithmetic
     Circuit.Dataflow
+    Circuit.Solver
     Circuit.Dot
     Circuit.Expr
     Circuit.Lang
