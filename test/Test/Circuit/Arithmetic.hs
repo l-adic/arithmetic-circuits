@@ -1,17 +1,17 @@
-{-#LANGUAGE DataKinds #-}
+{-# LANGUAGE DataKinds #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Test.Circuit.Arithmetic where
 
-import           Circuit.Affine
-import           Circuit.Arithmetic
-import qualified Data.Map                     as Map
-import           Protolude
-import           Test.Tasty.QuickCheck
-import Data.Field.Galois (Prime)
+import Circuit.Affine
+import Circuit.Arithmetic
 import Circuit.Solver
-import Data.Propagator (PropagatedNum, Propagated)
+import Data.Field.Galois (Prime)
 import Data.List ((\\))
+import Data.Map qualified as Map
+import Data.Propagator (Propagated, PropagatedNum)
+import Protolude
+import Test.Tasty.QuickCheck
 
 -------------------------------------------------------------------------------
 -- Test values
@@ -19,8 +19,9 @@ import Data.List ((\\))
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-instance KnownNat p => Propagated (Prime p)
-instance KnownNat p => PropagatedNum (Prime p)
+instance (KnownNat p) => Propagated (Prime p)
+
+instance (KnownNat p) => PropagatedNum (Prime p)
 
 testEqualCircuit :: ArithCircuit Fr
 testEqualCircuit = ArithCircuit [Equal (InputWire 0) (IntermediateWire 0) (OutputWire 0)]
@@ -50,26 +51,27 @@ arbVars inputs mids =
     varMids ms@(_ : _) = [Var . IntermediateWire <$> elements ms]
 
 arbAffineCircuitWithMids ::
-  Arbitrary f =>
+  (Arbitrary f) =>
   [Int] ->
   [Int] ->
   Int ->
   Gen (AffineCircuit f Wire)
 arbAffineCircuitWithMids inputs mids size
   | size <= 0 =
-    oneof $ [ConstGate <$> arbitrary] ++ arbVars inputs mids
+      oneof $ [ConstGate <$> arbitrary] ++ arbVars inputs mids
   | otherwise =
-    oneof
-      [ ScalarMul <$> arbitrary <*> arbAffineCircuitWithMids inputs mids (size - 1),
-        Add <$> arbAffineCircuitWithMids inputs mids (size - 1)
-          <*> arbAffineCircuitWithMids inputs mids (size - 1)
-      ]
+      oneof
+        [ ScalarMul <$> arbitrary <*> arbAffineCircuitWithMids inputs mids (size - 1),
+          Add
+            <$> arbAffineCircuitWithMids inputs mids (size - 1)
+            <*> arbAffineCircuitWithMids inputs mids (size - 1)
+        ]
 
 arbInputVector :: (Arbitrary f) => Int -> Gen (Map Int f)
 arbInputVector numVars = Map.fromList . zip [0 ..] <$> vector numVars
 
 arbArithCircuit ::
-  Arbitrary f =>
+  (Arbitrary f) =>
   -- | distribution of frequency of mul/equal/split
   -- gates, respectively
   (Int, Int, Int) ->
@@ -78,18 +80,18 @@ arbArithCircuit ::
   Gen (ArithCircuit f)
 arbArithCircuit (distMul, distEqual, distSplit) inputs size
   | size <= 0 =
-    pure $ ArithCircuit []
+      pure $ ArithCircuit []
   | otherwise =
-    do
-      ArithCircuit gates <- arbArithCircuit (distMul, distEqual, distSplit) inputs (size - 1)
-      let mids = 
-            [i | IntermediateWire i <- concatMap outputWires gates]
+      do
+        ArithCircuit gates <- arbArithCircuit (distMul, distEqual, distSplit) inputs (size - 1)
+        let mids =
+              [i | IntermediateWire i <- concatMap outputWires gates]
 
-      frequency . catMaybes $
-        [ (distMul,) <$> mulGate gates mids,
-          (distEqual,) <$> equalGate gates mids,
-          (distSplit,) <$> splitGate gates mids
-        ]
+        frequency . catMaybes $
+          [ (distMul,) <$> mulGate gates mids,
+            (distEqual,) <$> equalGate gates mids,
+            (distSplit,) <$> splitGate gates mids
+          ]
   where
     mulGate gates mids =
       Just $ do
@@ -155,9 +157,9 @@ prop_arithCircuitValid (ArithCircuitWithInputs program _) =
 
 prop_equivalentSolver :: ArithCircuitWithInput Fr -> Bool
 prop_equivalentSolver (ArithCircuitWithInput program inputs) =
-  solve inputs program  == 
-    evalArithCircuit 
-        (\w m -> Map.lookup (wireName w) m)
-        (\w m -> Map.insert (wireName w) m)
-        program
-        inputs
+  solve inputs program
+    == evalArithCircuit
+      (\w m -> Map.lookup (wireName w) m)
+      (\w m -> Map.insert (wireName w) m)
+      program
+      inputs

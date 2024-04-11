@@ -237,14 +237,14 @@ addVar (Left w) = Var w
 addVar (Right c) = c
 
 -- | Turn an affine circuit into a wire, or leave it be
-addWire :: Num f => Either Wire (AffineCircuit f Wire) -> ExprM f Wire
+addWire :: (Num f) => Either Wire (AffineCircuit f Wire) -> ExprM f Wire
 addWire (Left w) = pure w
 addWire (Right c) = do
   mulOut <- imm
   emit $ Mul (ConstGate 1) c mulOut
   pure mulOut
 
-compile :: Num f => Expr Wire f ty -> ExprM f (Either Wire (AffineCircuit f Wire))
+compile :: (Num f) => Expr Wire f ty -> ExprM f (Either Wire (AffineCircuit f Wire))
 compile expr = case expr of
   EConst n -> pure . Right $ ConstGate n
   EConstBool b -> pure . Right $ ConstGate (if b then 1 else 0)
@@ -306,7 +306,7 @@ compile expr = case expr of
 
 -- | Translate an arithmetic expression to an arithmetic circuit
 exprToArithCircuit ::
-  Num f =>
+  (Num f) =>
   -- | expression to compile
   Expr Int f ty ->
   -- | Wire to assign the output of the expression to
@@ -315,7 +315,7 @@ exprToArithCircuit ::
 exprToArithCircuit expr output =
   exprToArithCircuit' (mapVarsExpr InputWire expr) output
 
-exprToArithCircuit' :: Num f => Expr Wire f ty -> Wire -> ExprM f ()
+exprToArithCircuit' :: (Num f) => Expr Wire f ty -> Wire -> ExprM f ()
 exprToArithCircuit' expr output = do
   exprOut <- compile expr
   emit $ Mul (ConstGate 1) (addVar exprOut) output

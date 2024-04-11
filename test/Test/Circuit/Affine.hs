@@ -1,35 +1,36 @@
 module Test.Circuit.Affine where
 
-import           Circuit.Affine
-import qualified Data.Map              as Map
-import           Protolude
-import           Test.Tasty.QuickCheck
+import Circuit.Affine
+import Data.Map qualified as Map
+import Protolude
+import Test.Tasty.QuickCheck
 
 -------------------------------------------------------------------------------
 -- Generators
 -------------------------------------------------------------------------------
 
 arbAffineCircuit ::
-  Arbitrary f =>
+  (Arbitrary f) =>
   Int ->
   Int ->
   Gen (AffineCircuit f Int)
 arbAffineCircuit numVars size
   | size <= 0 =
-    oneof $
-      [ ConstGate <$> arbitrary
-      ]
-        ++ if numVars > 0
-          then [Var <$> choose (0, numVars - 1)]
-          else []
+      oneof $
+        [ ConstGate <$> arbitrary
+        ]
+          ++ if numVars > 0
+            then [Var <$> choose (0, numVars - 1)]
+            else []
   | otherwise =
-    oneof
-      [ ScalarMul <$> arbitrary <*> arbAffineCircuit numVars (size - 1),
-        Add <$> arbAffineCircuit numVars (size - 1)
-          <*> arbAffineCircuit numVars (size - 1)
-      ]
+      oneof
+        [ ScalarMul <$> arbitrary <*> arbAffineCircuit numVars (size - 1),
+          Add
+            <$> arbAffineCircuit numVars (size - 1)
+            <*> arbAffineCircuit numVars (size - 1)
+        ]
 
-arbInputVector :: Arbitrary f => Int -> Gen (Map Int f)
+arbInputVector :: (Arbitrary f) => Int -> Gen (Map Int f)
 arbInputVector numVars = Map.fromList . zip [0 ..] <$> vector numVars
 
 -- | The input vector has to have the correct length, so we want to
@@ -37,7 +38,7 @@ arbInputVector numVars = Map.fromList . zip [0 ..] <$> vector numVars
 data AffineCircuitWithInputs f = AffineCircuitWithInputs (AffineCircuit f Int) [Map Int f]
   deriving (Show)
 
-instance Arbitrary f => Arbitrary (AffineCircuitWithInputs f) where
+instance (Arbitrary f) => Arbitrary (AffineCircuitWithInputs f) where
   arbitrary = do
     numVars <- abs <$> arbitrary
     program <- scale (`div` 7) $ sized (arbAffineCircuit numVars)

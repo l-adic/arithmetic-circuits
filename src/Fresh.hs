@@ -1,13 +1,15 @@
 module Fresh
-  ( fresh
-  , evalFresh
-  , Fresh
-  , FreshT
-  ) where
+  ( fresh,
+    evalFresh,
+    Fresh,
+    FreshT,
+  )
+where
 
 import Protolude
 
 type FreshT m a = StateT Int m a
+
 type Fresh a = FreshT Identity a
 
 evalFresh :: Fresh a -> a

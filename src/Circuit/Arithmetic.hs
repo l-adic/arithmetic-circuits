@@ -15,13 +15,21 @@ module Circuit.Arithmetic
   )
 where
 
-import Circuit.Affine               (AffineCircuit(..),
-                                     evalAffineCircuit)
-import Data.Aeson                   (FromJSON, ToJSON)
-import Data.Field.Galois            (PrimeField, fromP)
+import Circuit.Affine
+  ( AffineCircuit (..),
+    evalAffineCircuit,
+  )
+import Data.Aeson (FromJSON, ToJSON)
+import Data.Field.Galois (PrimeField, fromP)
 import Protolude
-import Text.PrettyPrint.Leijen.Text as PP (Pretty(..), hsep, list, parens, text,
-                                           vcat)
+import Text.PrettyPrint.Leijen.Text as PP
+  ( Pretty (..),
+    hsep,
+    list,
+    parens,
+    text,
+    vcat,
+  )
 
 -- | Wires are can be labeled in the ways given in this data type
 data Wire
@@ -31,6 +39,7 @@ data Wire
   deriving (Show, Eq, Ord, Generic, NFData)
 
 instance FromJSON Wire
+
 instance ToJSON Wire
 
 instance Pretty Wire where
@@ -62,7 +71,9 @@ data Gate f i
   deriving (Show, Eq, Ord, Generic, NFData, FromJSON, ToJSON)
 
 deriving instance Functor (Gate f)
+
 deriving instance Foldable (Gate f)
+
 deriving instance Traversable (Gate f)
 
 instance Bifunctor Gate where
@@ -70,7 +81,6 @@ instance Bifunctor Gate where
     Mul l r o -> Mul (bimap f g l) (bimap f g r) (g o)
     Equal i m o -> Equal (g i) (g m) (g o)
     Split i os -> Split (g i) (map g os)
-
 
 -- | List output wires of a gate
 outputWires :: Gate f i -> [i]
@@ -149,15 +159,16 @@ evalGate lookupVar updateVar vars gate =
 -- output wire labels (which can be intermediate or actual outputs).
 newtype ArithCircuit f = ArithCircuit [Gate f Wire]
   deriving (Eq, Show, Generic)
-  deriving NFData via ([Gate f Wire])
+  deriving (NFData) via ([Gate f Wire])
 
-instance FromJSON f => FromJSON (ArithCircuit f)
-instance ToJSON f => ToJSON (ArithCircuit f)
+instance (FromJSON f) => FromJSON (ArithCircuit f)
+
+instance (ToJSON f) => ToJSON (ArithCircuit f)
 
 instance Functor ArithCircuit where
   fmap f (ArithCircuit gates) = ArithCircuit $ map (first f) gates
 
-instance Show f => Pretty (ArithCircuit f) where
+instance (Show f) => Pretty (ArithCircuit f) where
   pretty (ArithCircuit gs) = vcat . map pretty $ gs
 
 -- | Check whether an arithmetic circuit does not refer to
@@ -188,13 +199,13 @@ validArithCircuit (ArithCircuit gates) =
     validWire definedWires i@(IntermediateWire _) = i `elem` definedWires
     fetchVarsGate (Mul l r _) = toList l <> toList r
     fetchVarsGate (Equal i _ _) = [i] -- we can ignore the magic
-      -- variable "m", as it is filled
-      -- in when evaluating the circuit
+    -- variable "m", as it is filled
+    -- in when evaluating the circuit
     fetchVarsGate (Split i _) = [i]
 
 -- | Generate enough roots for a circuit
 generateRoots ::
-  Applicative m =>
+  (Applicative m) =>
   m f ->
   ArithCircuit f ->
   m [[f]]
@@ -238,10 +249,9 @@ evalArithCircuit lookupVar updateVar (ArithCircuit gates) vars =
 
 -- | Turn a binary expansion back into a single value.
 unsplit ::
-  Num f =>
+  (Num f) =>
   -- | (binary) wires containing a binary expansion,
   -- small-endian
   [Wire] ->
   AffineCircuit f Wire
 unsplit = snd . foldl (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (ScalarMul (2 ^ ix) (Var wire)))) (0, ConstGate 0)
-

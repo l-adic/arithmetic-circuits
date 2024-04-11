@@ -4,13 +4,12 @@
 
 module Main where
 
+import Circuit qualified
+import Criterion.Main
 import Protolude
 
-import Criterion.Main
-
-import qualified Circuit
-
 main :: IO ()
-main = defaultMain
-      [ bgroup "Circuit to QAP translation" Circuit.benchmarks
-      ]
+main =
+  defaultMain
+    [ bgroup "Circuit to QAP translation" Circuit.benchmarks
+    ]

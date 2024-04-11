@@ -10,11 +10,16 @@ module Circuit.Affine
   )
 where
 
-import           Data.Aeson                   (FromJSON, ToJSON)
-import qualified Data.Map                     as Map
-import           Protolude
-import           Text.PrettyPrint.Leijen.Text (Doc, Pretty(..), parens, text,
-                                               (<+>))
+import Data.Aeson (FromJSON, ToJSON)
+import Data.Map qualified as Map
+import Protolude
+import Text.PrettyPrint.Leijen.Text
+  ( Doc,
+    Pretty (..),
+    parens,
+    text,
+    (<+>),
+  )
 
 -- | Arithmetic circuits without multiplication, i.e. circuits
 -- describe affine transformations.
@@ -27,10 +32,13 @@ data AffineCircuit f i
   deriving (Read, Eq, Ord, Show, Generic, NFData)
 
 instance (FromJSON i, FromJSON f) => FromJSON (AffineCircuit f i)
+
 instance (ToJSON i, ToJSON f) => ToJSON (AffineCircuit f i)
 
 deriving instance Functor (AffineCircuit f)
+
 deriving instance Foldable (AffineCircuit f)
+
 deriving instance Traversable (AffineCircuit f)
 
 instance Bifunctor AffineCircuit where
@@ -68,7 +76,7 @@ parensPrec opPrec p = if p > opPrec then parens else identity
 -- input. Variable map is assumed to have all the variables referred
 -- to in the circuit. Failed lookups are currently treated as 0.
 evalAffineCircuit ::
-  Num f =>
+  (Num f) =>
   -- | lookup function for variable mapping
   (i -> vars -> Maybe f) ->
   -- | variables

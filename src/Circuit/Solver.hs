@@ -1,13 +1,13 @@
 module Circuit.Solver (solve) where
 
+import Circuit.Affine
+import Circuit.Arithmetic
 import Data.Field.Galois (PrimeField (fromP))
 import Data.Map qualified as Map
 import Data.Propagator
 import Data.Propagator.Num
 import Data.Set qualified as Set
-import Circuit.Arithmetic
-import Circuit.Affine
-import Protolude 
+import Protolude
 
 --------------------------------------------------------------------------------
 
@@ -67,7 +67,6 @@ gateToPropagator env (Split i outs) = do
     bool2val True = 1
     bool2val False = 0
 
-
 solve ::
   forall k.
   (PrimeField k) =>
@@ -85,10 +84,14 @@ solve initialAssignments (ArithCircuit gates) = runST $ do
     case Map.lookup v (vars env) of
       Nothing -> pure ()
       Just vCell -> write vCell a
-  bindings <- foldlM (\m v -> do 
-      ma <- content $ assertLookupCell env v
-      pure $ maybe m (\a -> Map.insert v a m) ma
-    ) Map.empty wireNames
+  bindings <-
+    foldlM
+      ( \m v -> do
+          ma <- content $ assertLookupCell env v
+          pure $ maybe m (\a -> Map.insert v a m) ma
+      )
+      Map.empty
+      wireNames
   pure $ bindings `Map.union` initialAssignments
 
 assertLookupCell :: SolverEnv s f -> Int -> Cell s f
@@ -96,4 +99,3 @@ assertLookupCell env i = do
   case Map.lookup i (vars env) of
     Nothing -> panic $ "Wire not found: " <> show i
     Just c -> c
-    

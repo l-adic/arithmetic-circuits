@@ -3,15 +3,15 @@ module Circuit.Dataflow
   )
 where
 
-import Protolude
-import Data.Map qualified as Map
-import Data.Set qualified as Set
 import Circuit.Arithmetic
   ( ArithCircuit (..),
     Gate (..),
     Wire (..),
     wireName,
   )
+import Data.Map qualified as Map
+import Data.Set qualified as Set
+import Protolude
 
 newtype GateId = GateId Int
   deriving (Eq, Ord)
