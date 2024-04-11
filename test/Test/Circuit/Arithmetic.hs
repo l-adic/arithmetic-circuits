@@ -6,10 +6,11 @@ module Test.Circuit.Arithmetic where
 import Circuit.Affine
 import Circuit.Arithmetic
 import Circuit.Solver
-import Data.Field.Galois (Prime)
+import Data.Field.Galois (Prime, char, fromP)
 import Data.List ((\\))
 import Data.Map qualified as Map
 import Data.Propagator (Propagated, PropagatedNum)
+import Math.NumberTheory.Logarithms (naturalLog2)
 import Protolude
 import Test.Tasty.QuickCheck
 
@@ -68,7 +69,7 @@ arbAffineCircuitWithMids inputs mids size
         ]
 
 arbInputVector :: (Arbitrary f) => Int -> Gen (Map Int f)
-arbInputVector numVars = Map.fromList . zip [0 ..] <$> vector numVars
+arbInputVector numVars = Map.fromList . zip [1 ..] <$> vector numVars
 
 arbArithCircuit ::
   (Arbitrary f) =>
@@ -133,7 +134,7 @@ data ArithCircuitWithInputs f = ArithCircuitWithInputs (ArithCircuit f) [Map Int
 instance (Arbitrary f, Num f) => Arbitrary (ArithCircuitWithInputs f) where
   arbitrary = do
     numInputs <- abs <$> arbitrary `suchThat` (> 0)
-    program <- sized (arbArithCircuit (50, 10, 1) [0 .. numInputs - 1])
+    program <- sized (arbArithCircuit (50, 10, 1) [1 .. numInputs])
     inputs <- vectorOf 5 $ arbInputVector numInputs
     pure $ ArithCircuitWithInputs program inputs
 
@@ -143,7 +144,7 @@ data ArithCircuitWithInput f = ArithCircuitWithInput (ArithCircuit f) (Map Int f
 instance (Arbitrary f, Num f) => Arbitrary (ArithCircuitWithInput f) where
   arbitrary = do
     numInputs <- abs <$> arbitrary `suchThat` (> 0)
-    program <- sized (arbArithCircuit (50, 10, 1) [0 .. numInputs - 1])
+    program <- sized (arbArithCircuit (50, 10, 1) [1 .. numInputs])
     input <- arbInputVector numInputs
     pure $ ArithCircuitWithInput program input
 
@@ -163,3 +164,57 @@ prop_equivalentSolver (ArithCircuitWithInput program inputs) =
       (\w m -> Map.insert (wireName w) m)
       program
       inputs
+
+prop_basicMultiplication :: (Fr, Fr) -> Bool
+prop_basicMultiplication (a, b) =
+  let c = ArithCircuit [Mul (Var (InputWire 1)) (Var (InputWire 2)) (OutputWire 3)]
+      inputs = Map.fromList [(1, a), (2, b)]
+      solution = solve inputs c
+   in Map.lookup 3 solution == Just (a * b)
+
+prop_complexMultiplication :: (Fr, Fr, Fr, Fr) -> Bool
+prop_complexMultiplication (a, b, c, d) =
+  let circuit =
+        ArithCircuit
+          [ Mul (Var (InputWire 1)) (Var (InputWire 2)) (OutputWire 3),
+            Mul (Var (InputWire 4)) (Var (InputWire 5)) (OutputWire 6),
+            Mul (Var (OutputWire 3)) (Var (OutputWire 6)) (OutputWire 7)
+          ]
+      inputs = Map.fromList [(1, a), (2, b), (4, c), (5, d)]
+      solution = solve inputs circuit
+   in Map.lookup 7 solution == Just (a * b * c * d)
+
+prop_division :: (Fr, Fr) -> Bool
+prop_division (a, b) =
+  let circuit =
+        ArithCircuit
+          [ Mul (Var (InputWire 1)) (Var (InputWire 5)) (IntermediateWire 3),
+            Mul (ConstGate 1) (ConstGate 1) (IntermediateWire 4),
+            Mul (Var (InputWire 2)) (Var (IntermediateWire 5)) (OutputWire 4)
+          ]
+      inputs = Map.fromList [(1, a), (2, b)]
+      solution = solve inputs circuit
+   in Map.lookup 3 solution == Just (a / b)
+
+nBits :: Int
+nBits = 1 + (naturalLog2 $ char (1 :: Fr))
+
+prop_bitSummingForward :: Fr -> Bool
+prop_bitSummingForward a =
+  let circuit =
+        ArithCircuit
+          [ Split (InputWire 1) (OutputWire <$> [2 .. nBits + 1])
+          ]
+      -- forward
+      solution = solve (Map.fromList [(1, a)]) circuit
+   in all (\i -> Map.lookup i solution == Just (if testBit (fromP a) (i - 2) then 1 else 0)) [2 .. nBits + 1]
+
+prop_bitSummingBackward :: Fr -> Bool
+prop_bitSummingBackward a =
+  let circuit =
+        ArithCircuit
+          [ Split (OutputWire 1) (OutputWire <$> [2 .. nBits + 1])
+          ]
+      -- backward
+      solution = solve (Map.fromList $ zip [2 .. nBits + 1] (fmap (\i -> if testBit (fromP a) (i - 2) then 1 else 0) [2 .. nBits + 1])) circuit
+   in Map.lookup 1 solution == Just a

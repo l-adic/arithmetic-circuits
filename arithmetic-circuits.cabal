@@ -63,6 +63,7 @@ library
     Circuit.Dot
     Circuit.Expr
     Circuit.Lang
+    R1CS
     Fresh
 
   other-modules:      Paths_arithmetic_circuits
@@ -82,12 +83,14 @@ test-suite circuit-tests
     Test.Circuit.Affine
     Test.Circuit.Arithmetic
     Test.Circuit.Expr
+    Test.Circuit.R1CS
 
   hs-source-dirs:     test
 
   ghc-options:        -freverse-errors -O2 -Wall -main-is Main
   build-depends:
       arithmetic-circuits
+    , integer-logarithms
     , quickcheck-instances  >=0.3
     , tasty                 >=1.2
     , tasty-hunit           >=0.10

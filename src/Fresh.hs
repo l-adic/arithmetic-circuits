@@ -13,7 +13,7 @@ type FreshT m a = StateT Int m a
 type Fresh a = FreshT Identity a
 
 evalFresh :: Fresh a -> a
-evalFresh act = runIdentity $ evalStateT act 0
+evalFresh act = runIdentity $ evalStateT act 1
 
 fresh :: Fresh Int
 fresh = do

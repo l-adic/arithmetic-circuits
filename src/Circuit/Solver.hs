@@ -2,9 +2,10 @@ module Circuit.Solver (solve) where
 
 import Circuit.Affine
 import Circuit.Arithmetic
-import Data.Field.Galois (PrimeField (fromP))
+import Data.Field.Galois (PrimeField (fromP), pow)
 import Data.Map qualified as Map
 import Data.Propagator
+import Data.Propagator.Cell (unify)
 import Data.Propagator.Num
 import Data.Set qualified as Set
 import Protolude
@@ -63,6 +64,20 @@ gateToPropagator env (Split i outs) = do
     let oCell = assertLookupCell env (wireName o)
     watch iCell $ \val ->
       write oCell $ bool2val $ testBit (fromP val) idx
+  -- if we know any of the outputs, we can update a summand of i
+  let f acc (o, idx) = do
+        let oCell = assertLookupCell env (wireName o)
+        summand <- do
+          summand <- cell
+          coeff <- known (2 `pow` idx)
+          ctimesFractional oCell coeff summand
+          pure summand
+        acc' <- cell
+        cplus acc summand acc'
+        pure acc'
+  seed <- known 0
+  s <- foldM f seed os
+  unify s iCell
   where
     bool2val True = 1
     bool2val False = 0
