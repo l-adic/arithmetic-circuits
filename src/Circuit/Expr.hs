@@ -210,7 +210,7 @@ imm = IntermediateWire <$> fresh
 
 -- | Fresh input variables
 freshInput :: ExprM f Wire
-freshInput = InputWire <$> fresh
+freshInput = InputWire Public <$> fresh
 
 -- | Fresh output variables
 freshOutput :: ExprM f Wire
@@ -313,7 +313,7 @@ exprToArithCircuit ::
   Wire ->
   ExprM f ()
 exprToArithCircuit expr output =
-  exprToArithCircuit' (mapVarsExpr InputWire expr) output
+  exprToArithCircuit' (mapVarsExpr (InputWire Public) expr) output
 
 exprToArithCircuit' :: (Num f) => Expr Wire f ty -> Wire -> ExprM f ()
 exprToArithCircuit' expr output = do

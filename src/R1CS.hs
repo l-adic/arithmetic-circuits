@@ -9,7 +9,7 @@ module R1CS
   )
 where
 
-import Circuit (AffineCircuit (..), ArithCircuit (..), Gate (..), Wire (..), unsplit, wireName)
+import Circuit (AffineCircuit (..), ArithCircuit (..), Gate (..), InputType (Private, Public), Wire (..), unsplit, wireName)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Map qualified as Map
 import Data.Set qualified as Set
@@ -97,8 +97,9 @@ mkR1C = \case
 data R1CS f = R1CS
   { r1csConstraints :: [R1C f],
     r1csNumVars :: Int,
-    r1csPublicInputs :: [Int],
-    r1csOutputs :: [Int]
+    r1csNumPublicInputs :: Int,
+    r1csNumPrivateInputs :: Int,
+    r1csNumOutputs :: Int
   }
   deriving (Show)
 
@@ -129,18 +130,21 @@ isValidWitness w r1cs = isRight $ validateWitness w r1cs
 
 toR1CS :: (Num f) => ArithCircuit f -> R1CS f
 toR1CS (ArithCircuit gates) =
-  let (inputs, intermediates, outputs) = foldMap collectWires gates
-      allVars = Set.toList $ Set.unions [inputs, intermediates, outputs]
+  let (pubInputs, privInputs, intermediates, outputs) = foldMap collectWires gates
+      allVars = Set.toList $ Set.unions [pubInputs, privInputs, intermediates, outputs]
    in R1CS
         { r1csConstraints = mkR1C <$> gates,
           r1csNumVars = length allVars,
-          r1csPublicInputs = Set.toAscList inputs,
-          r1csOutputs = Set.toAscList outputs
+          r1csNumPublicInputs = Set.size pubInputs,
+          r1csNumPrivateInputs = Set.size privInputs,
+          r1csNumOutputs = Set.size outputs
         }
   where
     collectWires =
-      let f (inputs, intermediates, outputs) w = case w of
-            InputWire i -> (Set.insert i inputs, intermediates, outputs)
-            IntermediateWire i -> (inputs, Set.insert i intermediates, outputs)
-            OutputWire i -> (inputs, intermediates, Set.insert i outputs)
+      let f (pubInputs, privInputs, intermediates, outputs) w = case w of
+            InputWire it i -> case it of
+              Public -> (Set.insert i pubInputs, privInputs, intermediates, outputs)
+              Private -> (pubInputs, Set.insert i privInputs, intermediates, outputs)
+            IntermediateWire i -> (pubInputs, privInputs, Set.insert i intermediates, outputs)
+            OutputWire i -> (pubInputs, privInputs, intermediates, Set.insert i outputs)
        in foldl f mempty
