@@ -54,11 +54,13 @@ r1csToCircomR1CS R1CS {..} =
             rhNPubOut = fromIntegral r1csNumOutputs,
             rhNPubIn = fromIntegral r1csNumPublicInputs,
             rhNPrvIn = fromIntegral r1csNumPrivateInputs,
+            -- I'm not sure what a label is, but i doubt we're using it
             rhNLabels = 0,
             rhNConstraints = fromIntegral $ length r1csConstraints
           },
       crConstraints = r1csConstraints,
-      crWireMap = []
+      -- we make strong the assumption that variables are numbered from 0 to n-1
+      crWireMap = [0 .. fromIntegral r1csNumVars - 1]
     }
 
 r1csFromCircomR1CS :: CircomR1CS f -> R1CS f
@@ -151,8 +153,8 @@ data Preamble = Preamble
 getPreamble :: Word32 -> Get Preamble
 getPreamble typeMagic = do
   magic <- getWord32le
-  when (typeMagic /= magic) $
-    fail ("invalid magic number, expected " <> show typeMagic <> " but got " <> show magic)
+  when (typeMagic /= magic)
+    $ fail ("invalid magic number, expected " <> show typeMagic <> " but got " <> show magic)
   version <- getWord32le
   nSections <- getWord32le
   pure Preamble {..}
@@ -190,8 +192,8 @@ getR1CSHeader = do
   rhNPrvIn <- getWord32le
   rhNLabels <- getWord64le
   rhNConstraints <- getWord32le
-  pure $
-    R1CSHeader
+  pure
+    $ R1CSHeader
       { rhFieldSize = FieldSize fieldSize,
         rhPrime,
         rhNVars,
@@ -249,9 +251,9 @@ putLinearCombination fieldSize (LinearCombination factors) = do
 getPoly :: (PrimeField f) => FieldSize -> Get (LinearPoly f)
 getPoly fieldSize = do
   LinearCombination factors <- getLinearCombination fieldSize
-  pure $
-    LinearPoly $
-      foldl (\acc (Factor {wireId, value}) -> Map.insert (fromIntegral wireId) value acc) mempty factors
+  pure
+    $ LinearPoly
+    $ foldl (\acc (Factor {wireId, value}) -> Map.insert (fromIntegral wireId) value acc) mempty factors
 
 putPoly :: (PrimeField k) => FieldSize -> LinearPoly k -> Put
 putPoly fieldSize (LinearPoly p) =
@@ -385,8 +387,8 @@ getWitnessHeader = do
   when (fieldSize /= 32) $ fail ("field size must be 32 bytes " <> show fieldSize)
   whPrime <- integerFromLittleEndian <$> replicateM (fromIntegral fieldSize) getWord8
   whWitnessSize <- getWord32le
-  pure $
-    WitnessHeader
+  pure
+    $ WitnessHeader
       { whFieldSize = FieldSize fieldSize,
         whPrime,
         whWitnessSize
