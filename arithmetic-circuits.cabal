@@ -33,6 +33,7 @@ common extensions
     OverloadedStrings
     DeriveAnyClass
     DerivingVia
+    RecordWildCards
 
 common warnings
   ghc-options: -Wall -Wredundant-constraints -Werror
@@ -73,6 +74,23 @@ library
 
   default-language:   GHC2021
 
+library circom-compat
+  import: deps, extensions, warnings
+  visibility: public
+  exposed-modules:
+    R1CS.Circom
+
+  other-modules:      Paths_arithmetic_circuits
+  hs-source-dirs:     circom-compat/src
+  build-depends:
+      arithmetic-circuits
+    , binary
+    , bytestring
+
+  ghc-options:        -freverse-errors -O2 -Wall
+
+  default-language:   GHC2021
+
 test-suite circuit-tests
   import: deps, extensions, warnings
   type:               exitcode-stdio-1.0
@@ -95,6 +113,33 @@ test-suite circuit-tests
     , tasty                 >=1.2
     , tasty-hunit           >=0.10
     , tasty-quickcheck      >=0.10
+
+  build-tool-depends: tasty-discover:tasty-discover >=4.2
+
+  default-language:   GHC2021
+
+test-suite circom-compat-tests
+  import: deps, extensions, warnings
+  type:               exitcode-stdio-1.0
+  main-is:            Main.hs
+
+  other-modules:
+    Paths_arithmetic_circuits
+    Test.R1CS.Circom
+
+  hs-source-dirs:     circom-compat/test
+
+  ghc-options:        -freverse-errors -O2 -Wall -main-is Main
+  build-depends:
+      arithmetic-circuits
+    , arithmetic-circuits:circom-compat
+    , quickcheck-instances  >=0.3
+    , tasty                 >=1.2
+    , tasty-hspec
+    , tasty-quickcheck      >=0.10
+    , hspec
+    , QuickCheck
+    , binary
 
   build-tool-depends: tasty-discover:tasty-discover >=4.2
 
