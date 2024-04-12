@@ -91,6 +91,17 @@ library circom-compat
 
   default-language:   GHC2021
 
+executable factors
+  import:           warnings, extensions, deps
+  main-is:          Main.hs
+  build-depends:
+      binary
+    , arithmetic-circuits
+    , arithmetic-circuits:circom-compat
+
+  hs-source-dirs:   circom-compat/app
+  default-language: GHC2021
+
 test-suite circuit-tests
   import: deps, extensions, warnings
   type:               exitcode-stdio-1.0

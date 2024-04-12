@@ -13,7 +13,8 @@ module Circuit.Lang
     e,
     cond,
     ret,
-    input,
+    publicInput,
+    privateInput,
   )
 where
 
@@ -74,5 +75,8 @@ compileWithWire freshWire expr = do
       emit $ Mul (ConstGate 1) circ wire
       pure wire
 
-input :: ExprM f Wire
-input = freshInput
+publicInput :: ExprM f Wire
+publicInput = freshPublicInput
+
+privateInput :: ExprM f Wire
+privateInput = freshPrivateInput

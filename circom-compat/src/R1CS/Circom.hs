@@ -60,7 +60,7 @@ r1csToCircomR1CS R1CS {..} =
           },
       crConstraints = r1csConstraints,
       -- we make strong the assumption that variables are numbered from 0 to n-1
-      crWireMap = [0 .. fromIntegral r1csNumVars - 1]
+      crWireMap = [0 .. fromIntegral r1csNumVars]
     }
 
 r1csFromCircomR1CS :: CircomR1CS f -> R1CS f
@@ -153,8 +153,8 @@ data Preamble = Preamble
 getPreamble :: Word32 -> Get Preamble
 getPreamble typeMagic = do
   magic <- getWord32le
-  when (typeMagic /= magic)
-    $ fail ("invalid magic number, expected " <> show typeMagic <> " but got " <> show magic)
+  when (typeMagic /= magic) $
+    fail ("invalid magic number, expected " <> show typeMagic <> " but got " <> show magic)
   version <- getWord32le
   nSections <- getWord32le
   pure Preamble {..}
@@ -192,8 +192,8 @@ getR1CSHeader = do
   rhNPrvIn <- getWord32le
   rhNLabels <- getWord64le
   rhNConstraints <- getWord32le
-  pure
-    $ R1CSHeader
+  pure $
+    R1CSHeader
       { rhFieldSize = FieldSize fieldSize,
         rhPrime,
         rhNVars,
@@ -241,23 +241,25 @@ getLinearCombination :: (PrimeField f) => FieldSize -> Get (LinearCombination f)
 getLinearCombination fieldSize = do
   nFactors <- getWord32le
   factors <- replicateM (fromIntegral nFactors) (getFactor fieldSize)
-  pure $ LinearCombination factors
+  pure $ LinearCombination $ sortOn wireId factors
 
 putLinearCombination :: (PrimeField f) => FieldSize -> LinearCombination f -> Put
 putLinearCombination fieldSize (LinearCombination factors) = do
-  putWord32le (fromIntegral (length factors))
-  mapM_ (putFactor fieldSize) factors
+  let nonzeroFactors = filter (\Factor {value} -> value /= 0) factors
+  putWord32le (fromIntegral (length nonzeroFactors))
+  mapM_ (putFactor fieldSize) $ sortOn wireId nonzeroFactors
 
 getPoly :: (PrimeField f) => FieldSize -> Get (LinearPoly f)
 getPoly fieldSize = do
   LinearCombination factors <- getLinearCombination fieldSize
-  pure
-    $ LinearPoly
-    $ foldl (\acc (Factor {wireId, value}) -> Map.insert (fromIntegral wireId) value acc) mempty factors
+  pure $
+    LinearPoly $
+      foldl (\acc (Factor {wireId, value}) -> Map.insert (fromIntegral wireId) value acc) mempty factors
 
 putPoly :: (PrimeField k) => FieldSize -> LinearPoly k -> Put
 putPoly fieldSize (LinearPoly p) =
-  putLinearCombination fieldSize (LinearCombination [Factor {wireId = fromIntegral var, value} | (var, value) <- Map.toList p])
+  putLinearCombination fieldSize $
+    LinearCombination [Factor {wireId = fromIntegral var, value} | (var, value) <- Map.toAscList p, value /= 0]
 
 getR1C :: (PrimeField f) => FieldSize -> Get (R1C f)
 getR1C fieldSize = do
@@ -314,7 +316,7 @@ witnessToCircomWitness (Witness m) =
             whPrime = fromIntegral $ char (1 :: f),
             whWitnessSize = fromIntegral $ Map.size m
           },
-      wtnsValues = Map.elems m
+      wtnsValues = snd <$> Map.toAscList m
     }
 
 witnessFromCircomWitness :: CircomWitness f -> Witness f
@@ -387,8 +389,8 @@ getWitnessHeader = do
   when (fieldSize /= 32) $ fail ("field size must be 32 bytes " <> show fieldSize)
   whPrime <- integerFromLittleEndian <$> replicateM (fromIntegral fieldSize) getWord8
   whWitnessSize <- getWord32le
-  pure
-    $ WitnessHeader
+  pure $
+    WitnessHeader
       { whFieldSize = FieldSize fieldSize,
         whPrime,
         whWitnessSize

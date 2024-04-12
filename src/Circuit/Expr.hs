@@ -5,12 +5,14 @@ module Circuit.Expr
     BinOp (..),
     Expr (..),
     ExprM,
+    BuilderState (..),
     compile,
     emit,
     imm,
     addVar,
     addWire,
-    freshInput,
+    freshPublicInput,
+    freshPrivateInput,
     freshOutput,
     rotateList,
     runCircuitBuilder,
@@ -138,7 +140,7 @@ truncRotate nbits nrots x =
 
 -- | Evaluate arithmetic expressions directly, given an environment
 evalExpr ::
-  (PrimeField f) =>
+  (PrimeField f, Show i) =>
   -- | variable lookup
   (i -> vars -> Maybe f) ->
   -- | expression to evaluate
@@ -152,10 +154,10 @@ evalExpr lookupVar expr vars = case expr of
   EConstBool b -> b
   EVar i -> case lookupVar i vars of
     Just v -> v
-    Nothing -> panic "TODO: incorrect var lookup"
+    Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
   EVarBool i -> case lookupVar i vars of
     Just v -> v == 1
-    Nothing -> panic "TODO: incorrect var lookup"
+    Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
   EUnOp UNeg e1 ->
     negate $ evalExpr lookupVar e1 vars
   EUnOp UNot e1 ->
@@ -180,25 +182,52 @@ evalExpr lookupVar expr vars = case expr of
 -- Circuit Builder
 -------------------------------------------------------------------------------
 
-type ExprM f a = State (ArithCircuit f, Int) a
+data BuilderState f = BuilderState
+  { bsCircuit :: ArithCircuit f,
+    bsNextVar :: Int,
+    bsPublicInputs :: [Int],
+    bsPrivateInputs :: [Int],
+    bsOutputs :: [Int]
+  }
+
+defaultBuilderState :: BuilderState f
+defaultBuilderState =
+  BuilderState
+    { bsCircuit = ArithCircuit [],
+      bsNextVar = 1,
+      bsPublicInputs = [],
+      bsPrivateInputs = [],
+      bsOutputs = []
+    }
+
+type ExprM f a = State (BuilderState f) a
 
 execCircuitBuilder :: ExprM f a -> ArithCircuit f
-execCircuitBuilder m = reverseCircuit $ fst $ execState m (ArithCircuit [], 0)
+execCircuitBuilder m = reverseCircuit $ bsCircuit $ execState m defaultBuilderState
   where
     reverseCircuit = \(ArithCircuit cs) -> ArithCircuit $ reverse cs
 
 evalCircuitBuilder :: ExprM f a -> a
 evalCircuitBuilder = fst . runCircuitBuilder
 
-runCircuitBuilder :: ExprM f a -> (a, ArithCircuit f)
-runCircuitBuilder m = second (reverseCircuit . fst) $ runState m (ArithCircuit [], 0)
+runCircuitBuilder :: ExprM f a -> (a, BuilderState f)
+runCircuitBuilder m =
+  let (a, s) = runState m defaultBuilderState
+   in ( a,
+        s
+          { bsCircuit = reverseCircuit $ bsCircuit s,
+            bsPublicInputs = reverse $ bsPublicInputs s,
+            bsPrivateInputs = reverse $ bsPrivateInputs s,
+            bsOutputs = reverse $ bsOutputs s
+          }
+      )
   where
     reverseCircuit = \(ArithCircuit cs) -> ArithCircuit $ reverse cs
 
 fresh :: ExprM f Int
 fresh = do
-  v <- gets snd
-  modify (second (+ 1))
+  v <- gets bsNextVar
+  modify $ \s -> s {bsNextVar = v + 1}
   pure v
 
 -- | Fresh intermediate variables
@@ -206,12 +235,24 @@ imm :: ExprM f Wire
 imm = IntermediateWire <$> fresh
 
 -- | Fresh input variables
-freshInput :: ExprM f Wire
-freshInput = InputWire Public <$> fresh
+freshPublicInput :: ExprM f Wire
+freshPublicInput = do
+  v <- InputWire Public <$> fresh
+  modify $ \s -> s {bsPublicInputs = wireName v : bsPublicInputs s}
+  pure v
+
+freshPrivateInput :: ExprM f Wire
+freshPrivateInput = do
+  v <- InputWire Private <$> fresh
+  modify $ \s -> s {bsPrivateInputs = wireName v : bsPrivateInputs s}
+  pure v
 
 -- | Fresh output variables
 freshOutput :: ExprM f Wire
-freshOutput = OutputWire <$> fresh
+freshOutput = do
+  v <- OutputWire <$> fresh
+  modify $ \s -> s {bsOutputs = wireName v : bsOutputs s}
+  pure v
 
 -- | Multiply two wires or affine circuits to an intermediate variable
 mulToImm :: Either Wire (AffineCircuit f Wire) -> Either Wire (AffineCircuit f Wire) -> ExprM f Wire
@@ -222,7 +263,8 @@ mulToImm l r = do
 
 -- | Add a Mul and its output to the ArithCircuit
 emit :: Gate f Wire -> ExprM f ()
-emit c = modify $ first (\(ArithCircuit cs) -> ArithCircuit (c : cs))
+emit c = modify $ \s@(BuilderState {bsCircuit = ArithCircuit cs}) ->
+  s {bsCircuit = ArithCircuit (c : cs)}
 
 -- | Rotate a list to the right
 rotateList :: Int -> [a] -> [a]
