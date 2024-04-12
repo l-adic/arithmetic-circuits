@@ -13,7 +13,7 @@ import Prelude (String)
 
 prop_endianConversion :: NonNegative Integer -> Property
 prop_endianConversion (NonNegative n) =
-  let n' = integerToLittleEndian 32 n
+  let n' = integerToLittleEndian (FieldSize 32) n
    in integerFromLittleEndian n' === n
 
 spec_parseMultiplier :: Spec

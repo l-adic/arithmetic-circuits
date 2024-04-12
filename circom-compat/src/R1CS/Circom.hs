@@ -2,6 +2,7 @@ module R1CS.Circom
   ( CircomR1CS (..),
     Preamble (..),
     Header (..),
+    FieldSize (..),
     -- for testing
     integerFromLittleEndian,
     integerToLittleEndian,
@@ -23,16 +24,18 @@ import Prelude (fail)
 --------------------------------------------------------------------------------
 
 data CircomR1CS f = CircomR1CS
-  { preamble :: Preamble,
-    header :: Header,
-    constraints :: [R1C f],
-    wireMap :: [Word64]
+  { r1csPreamble :: Preamble,
+    r1csHeader :: Header,
+    r1csConstraints :: [R1C f],
+    r1csWireMap :: [Word64]
   }
   deriving (Show)
 
 deriving instance (Eq k) => Eq (CircomR1CS k)
 
 newtype CircomR1CSBuilder k = CircomR1CSBuilder (CircomR1CS k -> CircomR1CS k)
+
+newtype FieldSize = FieldSize Int32 deriving (Show, Eq)
 
 instance (PrimeField k) => Binary (CircomR1CS k) where
   get = do
@@ -41,10 +44,10 @@ instance (PrimeField k) => Binary (CircomR1CS k) where
     builders <- replicateM (fromIntegral $ nSections preamble) (parseSection header)
     let def =
           CircomR1CS
-            { preamble,
-              header,
-              constraints = [],
-              wireMap = []
+            { r1csPreamble = preamble,
+              r1csHeader = header,
+              r1csConstraints = [],
+              r1csWireMap = []
             }
     pure $ foldr (\(CircomR1CSBuilder f) acc -> f acc) def builders
     where
@@ -59,24 +62,24 @@ instance (PrimeField k) => Binary (CircomR1CS k) where
             findHeader
 
   put CircomR1CS {..} = do
-    putPreamble preamble
+    putPreamble r1csPreamble
     putHeaderSection
     putConstraintsSection
     putWireMapSection
     where
       putHeaderSection = do
         putWord32le 0x00000001
-        let bytes = runPut $ putHeader header
+        let bytes = runPut $ putHeader r1csHeader
         putWord64le (fromIntegral (LBS.length bytes))
         void $ putLazyByteString bytes
       putConstraintsSection = do
         putWord32le 0x00000002
-        let bytes = runPut $ putConstraints (fromIntegral $ fieldSize header) constraints
+        let bytes = runPut $ putConstraints (fieldSize r1csHeader) r1csConstraints
         putWord64le $ fromIntegral (LBS.length bytes)
         void $ putLazyByteString bytes
       putWireMapSection = do
         putWord32le 0x00000003
-        let bytes = runPut $ putWireMap wireMap
+        let bytes = runPut $ putWireMap r1csWireMap
         putWord64le $ fromIntegral (LBS.length bytes)
         void $ putLazyByteString bytes
 
@@ -87,13 +90,13 @@ parseSection header@(Header {nConstraints, nWires, fieldSize}) = do
   case sectionType of
     0x00000001 -> do
       skip $ fromIntegral len
-      pure . CircomR1CSBuilder $ \rc1s -> rc1s {header}
+      pure . CircomR1CSBuilder $ \rc1s -> rc1s {r1csHeader = header}
     0x00000002 -> do
-      constraints <- getConstraints (fromIntegral fieldSize) (fromIntegral nConstraints)
-      pure . CircomR1CSBuilder $ \rc1s -> rc1s {constraints}
+      constraints <- getConstraints fieldSize (fromIntegral nConstraints)
+      pure . CircomR1CSBuilder $ \rc1s -> rc1s {r1csConstraints = constraints}
     0x00000003 -> do
       wireMap <- getWireMap (fromIntegral nWires)
-      pure . CircomR1CSBuilder $ \rc1s -> rc1s {wireMap}
+      pure . CircomR1CSBuilder $ \rc1s -> rc1s {r1csWireMap = wireMap}
     st -> fail $ "unexpected section type " <> show st
 
 --------------------------------------------------------------------------------
@@ -126,7 +129,7 @@ putPreamble Preamble {..} = do
 --------------------------------------------------------------------------------
 
 data Header = Header
-  { fieldSize :: Int32,
+  { fieldSize :: FieldSize,
     primeSize :: Integer,
     nWires :: Word32,
     nPubOut :: Word32,
@@ -148,9 +151,9 @@ getHeader = do
   nPrvIn <- getWord32le
   nLabels <- getWord64le
   nConstraints <- getWord32le
-  pure $
-    Header
-      { fieldSize,
+  pure
+    $ Header
+      { fieldSize = FieldSize fieldSize,
         primeSize,
         nWires,
         nPubOut,
@@ -161,9 +164,9 @@ getHeader = do
       }
 
 putHeader :: Header -> Put
-putHeader Header {..} = do
-  putInt32le fieldSize
-  mapM_ putWord8 (integerToLittleEndian (fromIntegral fieldSize) primeSize)
+putHeader Header {fieldSize = fieldSize@(FieldSize fs), ..} = do
+  putInt32le fs
+  mapM_ putWord8 (integerToLittleEndian fieldSize primeSize)
   putWord32le nWires
   putWord32le nPubOut
   putWord32le nPubIn
@@ -180,58 +183,58 @@ data Factor f = Factor
     value :: f
   }
 
-getFactor :: (PrimeField k) => Int -> Get (Factor k)
-getFactor fieldSize = do
+getFactor :: (PrimeField k) => FieldSize -> Get (Factor k)
+getFactor (FieldSize fieldSize) = do
   wireId <- getWord32le
-  value <- fromInteger . integerFromLittleEndian <$> replicateM fieldSize getWord8
+  value <- fromInteger . integerFromLittleEndian <$> replicateM (fromIntegral fieldSize) getWord8
   pure $ Factor {..}
 
-putFactor :: (PrimeField k) => Int -> Factor k -> Put
+putFactor :: (PrimeField k) => FieldSize -> Factor k -> Put
 putFactor fieldSize (Factor {..}) = do
   putWord32le wireId
   mapM_ putWord8 (integerToLittleEndian fieldSize (fromP value))
 
 newtype LinearCombination k = LinearCombination [Factor k]
 
-getLinearCombination :: (PrimeField f) => Int -> Get (LinearCombination f)
+getLinearCombination :: (PrimeField f) => FieldSize -> Get (LinearCombination f)
 getLinearCombination fieldSize = do
   nFactors <- getWord32le
   factors <- replicateM (fromIntegral nFactors) (getFactor fieldSize)
   pure $ LinearCombination factors
 
-putLinearCombination :: (PrimeField f) => Int -> LinearCombination f -> Put
+putLinearCombination :: (PrimeField f) => FieldSize -> LinearCombination f -> Put
 putLinearCombination fieldSize (LinearCombination factors) = do
   putWord32le (fromIntegral (length factors))
   mapM_ (putFactor fieldSize) factors
 
-getPoly :: (PrimeField f) => Int -> Get (LinearPoly f)
+getPoly :: (PrimeField f) => FieldSize -> Get (LinearPoly f)
 getPoly fieldSize = do
   LinearCombination factors <- getLinearCombination fieldSize
-  pure $
-    LinearPoly $
-      foldl (\acc (Factor {wireId, value}) -> Map.insert (fromIntegral wireId) value acc) mempty factors
+  pure
+    $ LinearPoly
+    $ foldl (\acc (Factor {wireId, value}) -> Map.insert (fromIntegral wireId) value acc) mempty factors
 
-putPoly :: (PrimeField k) => Int -> LinearPoly k -> Put
+putPoly :: (PrimeField k) => FieldSize -> LinearPoly k -> Put
 putPoly fieldSize (LinearPoly p) =
   putLinearCombination fieldSize (LinearCombination [Factor {wireId = fromIntegral var, value} | (var, value) <- Map.toList p])
 
-getR1C :: (PrimeField f) => Int -> Get (R1C f)
+getR1C :: (PrimeField f) => FieldSize -> Get (R1C f)
 getR1C fieldSize = do
   a <- getPoly fieldSize
   b <- getPoly fieldSize
   c <- getPoly fieldSize
   pure $ R1C (a, b, c)
 
-putR1C :: (PrimeField k) => Int -> R1C k -> Put
+putR1C :: (PrimeField k) => FieldSize -> R1C k -> Put
 putR1C fieldSize (R1C (a, b, c)) = do
   putPoly fieldSize a
   putPoly fieldSize b
   putPoly fieldSize c
 
-getConstraints :: (PrimeField f) => Int -> Int -> Get [R1C f]
+getConstraints :: (PrimeField f) => FieldSize -> Int -> Get [R1C f]
 getConstraints fieldSize n = replicateM n (getR1C fieldSize)
 
-putConstraints :: (PrimeField k) => Int -> [R1C k] -> Put
+putConstraints :: (PrimeField k) => FieldSize -> [R1C k] -> Put
 putConstraints fieldSize = mapM_ (putR1C fieldSize)
 
 --------------------------------------------------------------------------------
@@ -250,10 +253,10 @@ integerFromLittleEndian :: [Word8] -> Integer
 integerFromLittleEndian bytes =
   foldl' (\acc (i, byte) -> acc .|. (fromIntegral byte `shiftL` (i * 8))) 0 (zip [0 ..] bytes)
 
-integerToLittleEndian :: Int -> Integer -> [Word8]
-integerToLittleEndian fieldSize n =
+integerToLittleEndian :: FieldSize -> Integer -> [Word8]
+integerToLittleEndian (FieldSize fieldSize) n =
   let res = go n
-      padLen = fieldSize - length res
+      padLen = fromIntegral fieldSize - length res
    in res <> replicate padLen 0
   where
     go 0 = []
