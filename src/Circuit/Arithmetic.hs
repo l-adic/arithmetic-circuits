@@ -8,6 +8,7 @@ module Circuit.Arithmetic
     generateRoots,
     validArithCircuit,
     Wire (..),
+    InputType (..),
     wireName,
     evalGate,
     evalArithCircuit,
@@ -31,9 +32,15 @@ import Text.PrettyPrint.Leijen.Text as PP
     vcat,
   )
 
+data InputType = Public | Private deriving (Show, Eq, Ord, Generic, NFData)
+
+instance FromJSON InputType
+
+instance ToJSON InputType
+
 -- | Wires are can be labeled in the ways given in this data type
 data Wire
-  = InputWire Int
+  = InputWire InputType Int
   | IntermediateWire Int
   | OutputWire Int
   deriving (Show, Eq, Ord, Generic, NFData)
@@ -43,12 +50,16 @@ instance FromJSON Wire
 instance ToJSON Wire
 
 instance Pretty Wire where
-  pretty (InputWire v) = text "input_" <> pretty v
+  pretty (InputWire t v) =
+    let a = case t of
+          Public -> "pub"
+          Private -> "priv"
+     in text (a <> "_input_") <> pretty v
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
 
 wireName :: Wire -> Int
-wireName (InputWire v) = v
+wireName (InputWire _ v) = v
 wireName (IntermediateWire v) = v
 wireName (OutputWire v) = v
 
@@ -191,10 +202,10 @@ validArithCircuit (ArithCircuit gates) =
           )
           (True, [])
           gates
-    isNotInput (InputWire _) = False
+    isNotInput (InputWire _ _) = False
     isNotInput (OutputWire _) = True
     isNotInput (IntermediateWire _) = True
-    validWire _ (InputWire _) = True
+    validWire _ (InputWire _ _) = True
     validWire _ (OutputWire _) = False
     validWire definedWires i@(IntermediateWire _) = i `elem` definedWires
     fetchVarsGate (Mul l r _) = toList l <> toList r

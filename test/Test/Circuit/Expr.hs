@@ -95,5 +95,5 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) = all testInput inputs
         (Map.lookup)
         (Map.insert)
         circuit
-        (Map.mapKeys InputWire input)
+        (Map.mapKeys (InputWire Public) input)
     circuit = (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 0))
