@@ -5,7 +5,6 @@ module Circuit.Arithmetic
   ( Gate (..),
     outputWires,
     ArithCircuit (..),
-    generateRoots,
     validArithCircuit,
     Wire (..),
     InputType (..),
@@ -213,31 +212,6 @@ validArithCircuit (ArithCircuit gates) =
     -- variable "m", as it is filled
     -- in when evaluating the circuit
     fetchVarsGate (Split i _) = [i]
-
--- | Generate enough roots for a circuit
-generateRoots ::
-  (Applicative m) =>
-  m f ->
-  ArithCircuit f ->
-  m [[f]]
-generateRoots _ (ArithCircuit []) =
-  pure []
-generateRoots takeRoot (ArithCircuit (gate : gates)) =
-  case gate of
-    Mul {} ->
-      (\r rs -> [r] : rs)
-        <$> takeRoot
-        <*> generateRoots takeRoot (ArithCircuit gates)
-    Equal {} ->
-      (\r0 r1 rs -> [r0, r1] : rs)
-        <$> takeRoot
-        <*> takeRoot
-        <*> generateRoots takeRoot (ArithCircuit gates)
-    Split _ outputs ->
-      (\r0 rOutputs rRest -> (r0 : rOutputs) : rRest)
-        <$> takeRoot
-        <*> traverse (const takeRoot) outputs
-        <*> generateRoots takeRoot (ArithCircuit gates)
 
 -- | Evaluate an arithmetic circuit on a given environment containing
 -- the inputs. Outputs the entire environment (outputs, intermediate

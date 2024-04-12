@@ -24,15 +24,15 @@ where
 
 import Circuit.Affine
 import Circuit.Arithmetic
-import Data.Field.Galois (PrimeField, fromP)
+import Data.Field.Galois (PrimeField)
 import Protolude
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 
 data UnOp f a where
   UNeg :: UnOp f f
   UNot :: UnOp f Bool
-  -- | # truncate bits, # rotate bits
-  URot :: Int -> Int -> UnOp f f
+
+-- \| # truncate bits, # rotate bits
 
 data BinOp f a where
   BAdd :: BinOp f f
@@ -81,7 +81,6 @@ instance Pretty (UnOp f a) where
   pretty op = case op of
     UNeg -> text "neg"
     UNot -> text "!"
-    URot truncBits rotBits -> text "rot(" <> pretty truncBits <> text "," <> pretty rotBits <> ")"
 
 instance (Pretty f, Pretty i, Pretty ty) => Pretty (Expr i f ty) where
   pretty = prettyPrec 0
@@ -161,8 +160,6 @@ evalExpr lookupVar expr vars = case expr of
     negate $ evalExpr lookupVar e1 vars
   EUnOp UNot e1 ->
     not $ evalExpr lookupVar e1 vars
-  EUnOp (URot truncBits rotBits) e1 ->
-    fromInteger $ truncRotate truncBits rotBits $ fromP $ evalExpr lookupVar e1 vars
   EBinOp op e1 e2 ->
     (evalExpr lookupVar e1 vars) `apply` (evalExpr lookupVar e2 vars)
     where
@@ -255,11 +252,6 @@ compile expr = case expr of
     case op of
       UNeg -> pure . Right $ ScalarMul (-1) (addVar e1Out)
       UNot -> pure . Right $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
-      URot truncBits rotBits -> do
-        inp <- addWire e1Out
-        outputs <- replicateM truncBits imm
-        emit $ Split inp outputs
-        pure . Right $ unsplit (rotateList rotBits outputs)
   EBinOp op e1 e2 -> do
     e1Out <- addVar <$> compile e1
     e2Out <- addVar <$> compile e2

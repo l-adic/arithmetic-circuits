@@ -24,21 +24,6 @@ instance (KnownNat p) => Propagated (Prime p)
 
 instance (KnownNat p) => PropagatedNum (Prime p)
 
-testEqualCircuit :: ArithCircuit Fr
-testEqualCircuit = ArithCircuit [Equal (InputWire Public 0) (IntermediateWire 0) (OutputWire 0)]
-
-testInputMap :: Fr -> Map Int Fr
-testInputMap = Map.singleton 0
-
-testSplitUnsplitCircuit :: Int -> ArithCircuit Fr
-testSplitUnsplitCircuit nbits =
-  ArithCircuit
-    [ Split (InputWire Public 0) midWires,
-      Mul (ConstGate 1) (unsplit midWires) (OutputWire 0)
-    ]
-  where
-    midWires = fmap IntermediateWire [0 .. nbits - 1]
-
 -------------------------------------------------------------------------------
 -- Generators
 -------------------------------------------------------------------------------
