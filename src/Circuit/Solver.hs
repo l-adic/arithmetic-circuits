@@ -91,7 +91,7 @@ solve ::
   Map Int k
 solve initialAssignments (ArithCircuit gates) = runST $ do
   let wireNames = foldMap (foldMap $ Set.singleton . wireName) gates
-  env <- SolverEnv <$> foldlM (\m i -> Map.insert i <$> cell <*> pure m) Map.empty wireNames
+  env <- SolverEnv <$> foldlM (\m i -> Map.insert i <$> cell <*> pure m) mempty wireNames
   for_ gates $ gateToPropagator env
   for_ (Map.toList initialAssignments) $ \(v, a) -> do
     -- its possible that the input variables aren't even used in the circuit,
@@ -105,7 +105,7 @@ solve initialAssignments (ArithCircuit gates) = runST $ do
           ma <- content $ assertLookupCell env v
           pure $ maybe m (\a -> Map.insert v a m) ma
       )
-      Map.empty
+      mempty
       wireNames
   pure $ bindings `Map.union` initialAssignments
 

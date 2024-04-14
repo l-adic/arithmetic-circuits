@@ -12,6 +12,7 @@ module Circuit.Arithmetic
     evalGate,
     evalArithCircuit,
     unsplit,
+    relabel,
   )
 where
 
@@ -240,3 +241,10 @@ unsplit ::
   [Wire] ->
   AffineCircuit f Wire
 unsplit = snd . foldl (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (ScalarMul (2 ^ ix) (Var wire)))) (0, ConstGate 0)
+
+relabel :: (Int -> Int) -> ArithCircuit f -> ArithCircuit f
+relabel f (ArithCircuit gates) = ArithCircuit $ map (second $ mapWire f) gates
+  where
+    mapWire g (InputWire t v) = InputWire t (g v)
+    mapWire g (IntermediateWire v) = IntermediateWire (g v)
+    mapWire g (OutputWire v) = OutputWire (g v)

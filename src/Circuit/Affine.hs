@@ -100,7 +100,7 @@ affineCircuitToAffineMap ::
   -- | constant part and non-constant part
   (f, Map i f)
 affineCircuitToAffineMap = \case
-  Nil -> (0, Map.empty)
+  Nil -> (0, mempty)
   Var i -> (0, Map.singleton i 1)
   Add l r -> (constLeft + constRight, Map.unionWith (+) vecLeft vecRight)
     where
@@ -109,7 +109,7 @@ affineCircuitToAffineMap = \case
   ScalarMul scalar expr -> (scalar * constExpr, fmap (scalar *) vecExpr)
     where
       (constExpr, vecExpr) = affineCircuitToAffineMap expr
-  ConstGate f -> (f, Map.empty)
+  ConstGate f -> (f, mempty)
 
 -- | Evaluating the affine map representing the arithmetic circuit
 -- without mul-gates against inputs. If the input map does not have a

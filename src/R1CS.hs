@@ -60,12 +60,10 @@ monomial :: (f, Int) -> LinearPoly f
 monomial (coeff, var) = LinearPoly $ Map.singleton var coeff
 
 instance (Num f) => Semigroup (LinearPoly f) where
-  LinearPoly l <> LinearPoly r =
-    LinearPoly $
-      Map.unionWith (+) l r
+  LinearPoly l <> LinearPoly r = LinearPoly $ Map.unionWith (+) l r
 
 instance (Num f) => Monoid (LinearPoly f) where
-  mempty = LinearPoly Map.empty
+  mempty = LinearPoly mempty
 
 substitute :: (Num f) => LinearPoly f -> Map Int f -> f
 substitute (LinearPoly m) vals =

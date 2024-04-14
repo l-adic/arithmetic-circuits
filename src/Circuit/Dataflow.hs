@@ -53,7 +53,7 @@ removeUnreachable outVars cs =
             indexedVars = indexVars gatesMap
           }
       (foundGates, usedVars) =
-        flip runState (DEnv Set.empty) $
+        flip runState (DEnv mempty) $
           do
             mapM_ addRoot outVars
             -- start searching from the output variables
