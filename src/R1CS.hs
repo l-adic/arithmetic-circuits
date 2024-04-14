@@ -3,6 +3,7 @@ module R1CS
     R1C (..),
     R1CS (..),
     Witness (..),
+    Inputs (..),
     toR1CS,
     validateWitness,
     isValidWitness,
@@ -106,6 +107,17 @@ data R1CS f = R1CS
 instance (Eq f, Num f, Pretty f) => Pretty (R1CS f) where
   pretty (R1CS {r1csConstraints}) = vsep (pretty <$> r1csConstraints)
 
+newtype Inputs f = Inputs (Map Int f) deriving (Eq, Show, Generic)
+
+instance (ToJSON f) => ToJSON (Inputs f)
+
+instance (FromJSON f) => FromJSON (Inputs f)
+
+instance (Pretty f) => Pretty (Inputs f) where
+  pretty (Inputs m) = vsep $ map mkPair $ Map.toList m
+    where
+      mkPair (var, val) = pretty var <+> ":=" <+> pretty val
+
 newtype Witness f = Witness (Map Int f) deriving (Eq, Show, Generic)
 
 instance (ToJSON f) => ToJSON (Witness f)
@@ -153,10 +165,10 @@ calculateWitness ::
   forall f.
   (PrimeField f) =>
   (PropagatedNum f) =>
-  Map Int f ->
+  Inputs f ->
   ArithCircuit f ->
   (R1CS f, Witness f)
-calculateWitness initialAssignments circuit =
+calculateWitness (Inputs initialAssignments) circuit =
   let r1cs = toR1CS circuit
       w = solve (Map.insert oneVar 1 initialAssignments) circuit
    in (r1cs, Witness w)

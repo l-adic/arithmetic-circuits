@@ -8,6 +8,8 @@ module R1CS.Circom
     WitnessHeader (..),
     witnessToCircomWitness,
     witnessFromCircomWitness,
+    putInputs,
+    getInputs,
     FieldSize (..),
     -- for testing
     integerFromLittleEndian,
@@ -22,7 +24,7 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.Field.Galois (GaloisField (char), PrimeField, fromP)
 import Data.Map qualified as Map
 import Protolude
-import R1CS (LinearPoly (..), R1C (..), R1CS (..), Witness (..))
+import R1CS (Inputs (Inputs), LinearPoly (..), R1C (..), R1CS (..), Witness (..))
 import Prelude (fail)
 
 --------------------------------------------------------------------------------
@@ -409,6 +411,24 @@ getWitnessValues (FieldSize fieldSize) n =
 putWitnessValues :: (PrimeField f) => FieldSize -> [f] -> Put
 putWitnessValues fieldSize values = do
   mapM_ (mapM_ putWord8 . integerToLittleEndian fieldSize . fromP) values
+
+--------------------------------------------------------------------------------
+-- Inputs
+--------------------------------------------------------------------------------
+
+putInputs :: (PrimeField f) => FieldSize -> Inputs f -> Put
+putInputs fieldSize (Inputs inputs) = do
+  for_ (Map.toAscList inputs) $ \(name, value) -> do
+    putWord32le (fromIntegral name)
+    mapM_ putWord8 . integerToLittleEndian fieldSize . fromP $ value
+
+getInputs :: (PrimeField f) => FieldSize -> Int -> Get (Inputs f)
+getInputs (FieldSize fieldSize) n = do
+  inputs <- replicateM n $ do
+    name <- getWord32le
+    value <- fromInteger . integerFromLittleEndian <$> replicateM (fromIntegral fieldSize) getWord8
+    pure (fromIntegral name, value)
+  pure $ Inputs $ Map.fromList inputs
 
 --------------------------------------------------------------------------------
 integerFromLittleEndian :: [Word8] -> Integer
