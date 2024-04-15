@@ -7,7 +7,6 @@ import Data.Map qualified as Map
 import Data.Propagator
 import Data.Propagator.Cell (unify)
 import Data.Propagator.Num
-import Data.Set qualified as Set
 import Protolude
 
 --------------------------------------------------------------------------------
@@ -89,8 +88,8 @@ solve ::
   Map Int k ->
   ArithCircuit k ->
   Map Int k
-solve initialAssignments (ArithCircuit gates) = runST $ do
-  let wireNames = foldMap (foldMap $ Set.singleton . wireName) gates
+solve initialAssignments c@(ArithCircuit gates) = runST $ do
+  let wireNames = collectVariables c
   env <- SolverEnv <$> foldlM (\m i -> Map.insert i <$> cell <*> pure m) mempty wireNames
   for_ gates $ gateToPropagator env
   for_ (Map.toList initialAssignments) $ \(v, a) -> do

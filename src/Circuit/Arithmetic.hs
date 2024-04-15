@@ -13,6 +13,7 @@ module Circuit.Arithmetic
     evalArithCircuit,
     unsplit,
     relabel,
+    collectVariables,
   )
 where
 
@@ -22,6 +23,7 @@ import Circuit.Affine
   )
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Field.Galois (PrimeField, fromP)
+import Data.Set qualified as Set
 import Protolude
 import Text.PrettyPrint.Leijen.Text as PP
   ( Pretty (..),
@@ -248,3 +250,6 @@ relabel f (ArithCircuit gates) = ArithCircuit $ map (second $ mapWire f) gates
     mapWire g (InputWire t v) = InputWire t (g v)
     mapWire g (IntermediateWire v) = IntermediateWire (g v)
     mapWire g (OutputWire v) = OutputWire (g v)
+
+collectVariables :: ArithCircuit f -> Set Int
+collectVariables (ArithCircuit gates) = foldMap (foldMap $ Set.singleton . wireName) gates
