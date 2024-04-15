@@ -13,8 +13,8 @@ module Circuit.Arithmetic
     evalArithCircuit,
     unsplit,
     reindex,
-    relabel,
     CircuitVars (..),
+    relabel,
     collectCircuitVars,
   )
 where
@@ -261,6 +261,26 @@ data CircuitVars label = CircuitVars
     cvOutputs :: Set Int,
     cvInputsLabels :: Map label Int
   }
+
+instance (Ord label) => Semigroup (CircuitVars label) where
+  a <> b =
+    CircuitVars
+      { cvVars = cvVars a <> cvVars b,
+        cvPrivateInputs = cvPrivateInputs a <> cvPrivateInputs b,
+        cvPublicInputs = cvPublicInputs a <> cvPublicInputs b,
+        cvOutputs = cvOutputs a <> cvOutputs b,
+        cvInputsLabels = cvInputsLabels a `Map.union` cvInputsLabels b
+      }
+
+instance (Ord label) => Monoid (CircuitVars label) where
+  mempty =
+    CircuitVars
+      { cvVars = mempty,
+        cvPrivateInputs = mempty,
+        cvPublicInputs = mempty,
+        cvOutputs = mempty,
+        cvInputsLabels = mempty
+      }
 
 relabel :: (Ord l2) => (l1 -> l2) -> CircuitVars l1 -> CircuitVars l2
 relabel f (CircuitVars vars priv pub outs labels) =
