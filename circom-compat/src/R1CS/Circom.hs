@@ -11,13 +11,14 @@ module R1CS.Circom
     putInputs,
     getInputs,
     FieldSize (..),
+    n32,
     -- for testing
     integerFromLittleEndian,
     integerToLittleEndian,
   )
 where
 
-import Data.Binary (Binary (..), Get, Put, getWord8, putWord8)
+import Data.Binary (Binary (..), Get, Put)
 import Data.Binary.Get (getInt32le, getInt64le, getWord32le, getWord64le, lookAhead, skip)
 import Data.Binary.Put (putInt32le, putLazyByteString, putWord32le, putWord64le, runPut)
 import Data.ByteString.Lazy qualified as LBS
@@ -77,7 +78,11 @@ r1csFromCircomR1CS (CircomR1CS {..}) =
 
 newtype CircomR1CSBuilder k = CircomR1CSBuilder (CircomR1CS k -> CircomR1CS k)
 
+-- measured in bytes
 newtype FieldSize = FieldSize Int32 deriving (Show, Eq)
+
+n32 :: FieldSize -> Int
+n32 (FieldSize n) = fromIntegral n `div` 4
 
 instance (PrimeField k) => Binary (CircomR1CS k) where
   get = do
@@ -187,7 +192,7 @@ getR1CSHeader :: Get R1CSHeader
 getR1CSHeader = do
   fieldSize <- getInt32le
   when (fieldSize /= 32) $ fail ("field size must be 32 bytes " <> show fieldSize)
-  rhPrime <- integerFromLittleEndian <$> replicateM (fromIntegral fieldSize) getWord8
+  rhPrime <- integerFromLittleEndian <$> replicateM (n32 $ FieldSize fieldSize) getWord32le
   rhNVars <- getWord32le
   rhNPubOut <- getWord32le
   rhNPubIn <- getWord32le
@@ -209,7 +214,7 @@ getR1CSHeader = do
 putcrHeader :: R1CSHeader -> Put
 putcrHeader R1CSHeader {rhFieldSize = fieldSize@(FieldSize fs), ..} = do
   putInt32le fs
-  mapM_ putWord8 (integerToLittleEndian fieldSize rhPrime)
+  mapM_ putWord32le (integerToLittleEndian fieldSize rhPrime)
   putWord32le rhNVars
   putWord32le rhNPubOut
   putWord32le rhNPubIn
@@ -227,15 +232,15 @@ data Factor f = Factor
   }
 
 getFactor :: (PrimeField k) => FieldSize -> Get (Factor k)
-getFactor (FieldSize fieldSize) = do
+getFactor fieldSize = do
   wireId <- getWord32le
-  value <- fromInteger . integerFromLittleEndian <$> replicateM (fromIntegral fieldSize) getWord8
+  value <- fromInteger . integerFromLittleEndian <$> replicateM (n32 fieldSize) getWord32le
   pure $ Factor {..}
 
 putFactor :: (PrimeField k) => FieldSize -> Factor k -> Put
 putFactor fieldSize (Factor {..}) = do
   putWord32le wireId
-  mapM_ putWord8 (integerToLittleEndian fieldSize (fromP value))
+  mapM_ putWord32le (integerToLittleEndian fieldSize (fromP value))
 
 newtype LinearCombination k = LinearCombination [Factor k]
 
@@ -261,7 +266,11 @@ getPoly fieldSize = do
 putPoly :: (PrimeField k) => FieldSize -> LinearPoly k -> Put
 putPoly fieldSize (LinearPoly p) =
   putLinearCombination fieldSize $
-    LinearCombination [Factor {wireId = fromIntegral var, value} | (var, value) <- Map.toAscList p, value /= 0]
+    LinearCombination
+      [ Factor {wireId = fromIntegral var, value}
+        | (var, value) <- Map.toAscList p,
+          value /= 0
+      ]
 
 getR1C :: (PrimeField f) => FieldSize -> Get (R1C f)
 getR1C fieldSize = do
@@ -389,7 +398,7 @@ getWitnessHeader :: Get WitnessHeader
 getWitnessHeader = do
   fieldSize <- getInt32le
   when (fieldSize /= 32) $ fail ("field size must be 32 bytes " <> show fieldSize)
-  whPrime <- integerFromLittleEndian <$> replicateM (fromIntegral fieldSize) getWord8
+  whPrime <- integerFromLittleEndian <$> replicateM (n32 $ FieldSize fieldSize) getWord32le
   whWitnessSize <- getWord32le
   pure $
     WitnessHeader
@@ -401,16 +410,16 @@ getWitnessHeader = do
 putWitnessHeader :: WitnessHeader -> Put
 putWitnessHeader WitnessHeader {whFieldSize = FieldSize fs, whPrime, whWitnessSize} = do
   putInt32le fs
-  mapM_ putWord8 (integerToLittleEndian (FieldSize fs) whPrime)
+  mapM_ putWord32le (integerToLittleEndian (FieldSize fs) whPrime)
   putWord32le whWitnessSize
 
 getWitnessValues :: (PrimeField f) => FieldSize -> Int -> Get [f]
-getWitnessValues (FieldSize fieldSize) n =
-  replicateM n (fromInteger . integerFromLittleEndian <$> replicateM (fromIntegral fieldSize) getWord8)
+getWitnessValues fieldSize n =
+  replicateM n (fromInteger . integerFromLittleEndian <$> replicateM (n32 fieldSize) getWord32le)
 
 putWitnessValues :: (PrimeField f) => FieldSize -> [f] -> Put
 putWitnessValues fieldSize values = do
-  mapM_ (mapM_ putWord8 . integerToLittleEndian fieldSize . fromP) values
+  mapM_ (mapM_ putWord32le . integerToLittleEndian fieldSize . fromP) values
 
 --------------------------------------------------------------------------------
 -- Inputs
@@ -420,26 +429,26 @@ putInputs :: (PrimeField f) => FieldSize -> Inputs f -> Put
 putInputs fieldSize (Inputs inputs) = do
   for_ (Map.toAscList inputs) $ \(name, value) -> do
     putWord32le (fromIntegral name)
-    mapM_ putWord8 . integerToLittleEndian fieldSize . fromP $ value
+    mapM_ putWord32le . integerToLittleEndian fieldSize . fromP $ value
 
 getInputs :: (PrimeField f) => FieldSize -> Int -> Get (Inputs f)
-getInputs (FieldSize fieldSize) n = do
+getInputs fieldSize n = do
   inputs <- replicateM n $ do
     name <- getWord32le
-    value <- fromInteger . integerFromLittleEndian <$> replicateM (fromIntegral fieldSize) getWord8
+    value <- fromInteger . integerFromLittleEndian <$> replicateM (n32 fieldSize) getWord32le
     pure (fromIntegral name, value)
   pure $ Inputs $ Map.fromList inputs
 
 --------------------------------------------------------------------------------
-integerFromLittleEndian :: [Word8] -> Integer
+integerFromLittleEndian :: [Word32] -> Integer
 integerFromLittleEndian bytes =
-  foldl' (\acc (i, byte) -> acc .|. (fromIntegral byte `shiftL` (i * 8))) 0 (zip [0 ..] bytes)
+  foldl' (\acc (i, byte) -> acc .|. (fromIntegral byte `shiftL` (i * 32))) 0 (zip [0 ..] bytes)
 
-integerToLittleEndian :: FieldSize -> Integer -> [Word8]
-integerToLittleEndian (FieldSize fieldSize) n =
+integerToLittleEndian :: FieldSize -> Integer -> [Word32]
+integerToLittleEndian fieldSize n =
   let res = go n
-      padLen = fromIntegral fieldSize - length res
+      padLen = n32 fieldSize - length res
    in res <> replicate padLen 0
   where
     go 0 = []
-    go x = fromIntegral (x .&. 0xff) : go (x `shiftR` 8)
+    go x = fromIntegral (x .&. 0xffffffff) : go (x `shiftR` 32)
