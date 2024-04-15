@@ -86,6 +86,7 @@ library circom-compat
       arithmetic-circuits
     , binary
     , bytestring
+    , vector
 
   ghc-options:        -freverse-errors -O2 -Wall
 

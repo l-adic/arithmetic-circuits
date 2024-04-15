@@ -24,6 +24,8 @@ import Data.Binary.Put (putInt32le, putLazyByteString, putWord32le, putWord64le,
 import Data.ByteString.Lazy qualified as LBS
 import Data.Field.Galois (GaloisField (char), PrimeField, fromP)
 import Data.Map qualified as Map
+import Data.Vector (Vector)
+import Data.Vector qualified as V
 import Protolude
 import R1CS (Inputs (Inputs), LinearPoly (..), R1C (..), R1CS (..), Witness (..))
 import Prelude (fail)
@@ -192,7 +194,7 @@ getR1CSHeader :: Get R1CSHeader
 getR1CSHeader = do
   fieldSize <- getInt32le
   when (fieldSize /= 32) $ fail ("field size must be 32 bytes " <> show fieldSize)
-  rhPrime <- integerFromLittleEndian <$> replicateM (n32 $ FieldSize fieldSize) getWord32le
+  rhPrime <- integerFromLittleEndian <$> V.replicateM (n32 $ FieldSize fieldSize) getWord32le
   rhNVars <- getWord32le
   rhNPubOut <- getWord32le
   rhNPubIn <- getWord32le
@@ -234,7 +236,7 @@ data Factor f = Factor
 getFactor :: (PrimeField k) => FieldSize -> Get (Factor k)
 getFactor fieldSize = do
   wireId <- getWord32le
-  value <- fromInteger . integerFromLittleEndian <$> replicateM (n32 fieldSize) getWord32le
+  value <- fromInteger . integerFromLittleEndian <$> V.replicateM (n32 fieldSize) getWord32le
   pure $ Factor {..}
 
 putFactor :: (PrimeField k) => FieldSize -> Factor k -> Put
@@ -398,7 +400,7 @@ getWitnessHeader :: Get WitnessHeader
 getWitnessHeader = do
   fieldSize <- getInt32le
   when (fieldSize /= 32) $ fail ("field size must be 32 bytes " <> show fieldSize)
-  whPrime <- integerFromLittleEndian <$> replicateM (n32 $ FieldSize fieldSize) getWord32le
+  whPrime <- integerFromLittleEndian <$> V.replicateM (n32 $ FieldSize fieldSize) getWord32le
   whWitnessSize <- getWord32le
   pure $
     WitnessHeader
@@ -415,7 +417,7 @@ putWitnessHeader WitnessHeader {whFieldSize = FieldSize fs, whPrime, whWitnessSi
 
 getWitnessValues :: (PrimeField f) => FieldSize -> Int -> Get [f]
 getWitnessValues fieldSize n =
-  replicateM n (fromInteger . integerFromLittleEndian <$> replicateM (n32 fieldSize) getWord32le)
+  replicateM n (fromInteger . integerFromLittleEndian <$> V.replicateM (n32 fieldSize) getWord32le)
 
 putWitnessValues :: (PrimeField f) => FieldSize -> [f] -> Put
 putWitnessValues fieldSize values = do
@@ -435,20 +437,20 @@ getInputs :: (PrimeField f) => FieldSize -> Int -> Get (Inputs f)
 getInputs fieldSize n = do
   inputs <- replicateM n $ do
     name <- getWord32le
-    value <- fromInteger . integerFromLittleEndian <$> replicateM (n32 fieldSize) getWord32le
+    value <- fromInteger . integerFromLittleEndian <$> V.replicateM (n32 fieldSize) getWord32le
     pure (fromIntegral name, value)
   pure $ Inputs $ Map.fromList inputs
 
 --------------------------------------------------------------------------------
-integerFromLittleEndian :: [Word32] -> Integer
+integerFromLittleEndian :: Vector Word32 -> Integer
 integerFromLittleEndian bytes =
-  foldl' (\acc (i, byte) -> acc .|. (fromIntegral byte `shiftL` (i * 32))) 0 (zip [0 ..] bytes)
+  foldl' (\acc (i, byte) -> acc .|. (fromIntegral byte `shiftL` (i * 32))) 0 (V.zip (V.fromList [0 ..]) bytes)
 
-integerToLittleEndian :: FieldSize -> Integer -> [Word32]
+integerToLittleEndian :: FieldSize -> Integer -> Vector Word32
 integerToLittleEndian fieldSize n =
   let res = go n
       padLen = n32 fieldSize - length res
-   in res <> replicate padLen 0
+   in res <> V.replicate padLen 0
   where
-    go 0 = []
-    go x = fromIntegral (x .&. 0xffffffff) : go (x `shiftR` 32)
+    go 0 = mempty
+    go x = fromIntegral (x .&. 0xffffffff) `V.cons` go (x `shiftR` 32)

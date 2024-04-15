@@ -9,7 +9,7 @@ import Data.Field.Galois (GaloisField, Prime)
 import Data.Map qualified as Map
 import Data.Propagator (Propagated, PropagatedNum)
 import Protolude
-import R1CS (Inputs(..), calculateWitness, isValidWitness)
+import R1CS (Inputs (..), calculateWitness, isValidWitness)
 import R1CS.Circom (r1csToCircomR1CS, witnessToCircomWitness)
 
 main :: IO ()
