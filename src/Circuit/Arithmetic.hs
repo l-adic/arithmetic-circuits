@@ -13,7 +13,8 @@ module Circuit.Arithmetic
     evalArithCircuit,
     unsplit,
     relabel,
-    collectVariables,
+    CircuitVars (..),
+    collectCircuitVars,
   )
 where
 
@@ -23,6 +24,7 @@ import Circuit.Affine
   )
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Field.Galois (PrimeField, fromP)
+import Data.List (nub)
 import Data.Set qualified as Set
 import Protolude
 import Text.PrettyPrint.Leijen.Text as PP
@@ -251,5 +253,27 @@ relabel f (ArithCircuit gates) = ArithCircuit $ map (second $ mapWire f) gates
     mapWire g (IntermediateWire v) = IntermediateWire (g v)
     mapWire g (OutputWire v) = OutputWire (g v)
 
-collectVariables :: ArithCircuit f -> Set Int
-collectVariables (ArithCircuit gates) = foldMap (foldMap $ Set.singleton . wireName) gates
+data CircuitVars = CircuitVars
+  { cvVars :: Set Int,
+    cvPrivateInputs :: Set Int,
+    cvPublicInputs :: Set Int,
+    cvOutputs :: Set Int,
+    cvInputsLabels :: [(Text, Int)]
+  }
+
+collectCircuitVars :: ArithCircuit f -> CircuitVars
+collectCircuitVars (ArithCircuit gates) =
+  let f (pubInputs, privInputs, intermediates, outputs, labels) w = case w of
+        InputWire label it i -> case it of
+          Public -> (Set.insert i pubInputs, privInputs, intermediates, outputs, (label, i) : labels)
+          Private -> (pubInputs, Set.insert i privInputs, intermediates, outputs, labels)
+        IntermediateWire i -> (pubInputs, privInputs, Set.insert i intermediates, outputs, labels)
+        OutputWire i -> (pubInputs, privInputs, intermediates, Set.insert i outputs, labels)
+      (pubis, prvis, imms, os, ls) = foldMap (foldl f mempty) gates
+   in CircuitVars
+        { cvVars = Set.unions [pubis, prvis, imms, os],
+          cvPrivateInputs = prvis,
+          cvPublicInputs = pubis,
+          cvOutputs = os,
+          cvInputsLabels = nub ls
+        }

@@ -8,8 +8,6 @@ module R1CS.Circom
     WitnessHeader (..),
     witnessToCircomWitness,
     witnessFromCircomWitness,
-    putInputs,
-    getInputs,
     FieldSize (..),
     n32,
     -- for testing
@@ -27,7 +25,7 @@ import Data.Map qualified as Map
 import Data.Vector (Vector)
 import Data.Vector qualified as V
 import Protolude
-import R1CS (Inputs (Inputs), LinearPoly (..), R1C (..), R1CS (..), Witness (..))
+import R1CS (LinearPoly (..), R1C (..), R1CS (..), Witness (..))
 import Prelude (fail)
 
 --------------------------------------------------------------------------------
@@ -422,24 +420,6 @@ getWitnessValues fieldSize n =
 putWitnessValues :: (PrimeField f) => FieldSize -> [f] -> Put
 putWitnessValues fieldSize values = do
   mapM_ (mapM_ putWord32le . integerToLittleEndian fieldSize . fromP) values
-
---------------------------------------------------------------------------------
--- Inputs
---------------------------------------------------------------------------------
-
-putInputs :: (PrimeField f) => FieldSize -> Inputs f -> Put
-putInputs fieldSize (Inputs inputs) = do
-  for_ (Map.toAscList inputs) $ \(name, value) -> do
-    putWord32le (fromIntegral name)
-    mapM_ putWord32le . integerToLittleEndian fieldSize . fromP $ value
-
-getInputs :: (PrimeField f) => FieldSize -> Int -> Get (Inputs f)
-getInputs fieldSize n = do
-  inputs <- replicateM n $ do
-    name <- getWord32le
-    value <- fromInteger . integerFromLittleEndian <$> V.replicateM (n32 fieldSize) getWord32le
-    pure (fromIntegral name, value)
-  pure $ Inputs $ Map.fromList inputs
 
 --------------------------------------------------------------------------------
 integerFromLittleEndian :: Vector Word32 -> Integer
