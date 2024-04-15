@@ -1,12 +1,26 @@
-module FNV where
+module FNV
+  ( fnv1a,
+    hashText,
+    FNVHash (..),
+    mkFNV,
+    fnvLSB,
+    fnvMSB,
+  )
+where
 
+import Data.ByteString qualified as B
+import Data.Text.Encoding qualified as TE
 import Protolude
+import Text.PrettyPrint.Leijen.Text (Pretty (..), text)
 
 --------------------------------------------------------------------------------
 -- fnv
 --------------------------------------------------------------------------------
 
 newtype FNVHash = FNVHash Word64 deriving (Show, Eq, Ord)
+
+instance Pretty FNVHash where
+  pretty (FNVHash h) = text $ show h
 
 -- FNV-1a constants for 64-bit hashing
 initialState :: Word64
@@ -30,3 +44,8 @@ fnvMSB (FNVHash h) = fromIntegral (h `shiftR` 32)
 
 mkFNV :: Word32 -> Word32 -> FNVHash
 mkFNV msb lsb = FNVHash $ fromIntegral msb `shiftL` 32 .|. fromIntegral lsb
+
+hashText :: Text -> FNVHash
+hashText = fnv1a . textToUtf8
+  where
+    textToUtf8 = B.unpack . TE.encodeUtf8
