@@ -154,7 +154,7 @@ toR1CS (ArithCircuit gates) =
   where
     collectWires =
       let f (pubInputs, privInputs, intermediates, outputs) w = case w of
-            InputWire it i -> case it of
+            InputWire _ it i -> case it of
               Public -> (Set.insert i pubInputs, privInputs, intermediates, outputs)
               Private -> (pubInputs, Set.insert i privInputs, intermediates, outputs)
             IntermediateWire i -> (pubInputs, privInputs, Set.insert i intermediates, outputs)

@@ -42,7 +42,7 @@ instance ToJSON InputType
 
 -- | Wires are can be labeled in the ways given in this data type
 data Wire
-  = InputWire InputType Int
+  = InputWire Text InputType Int
   | IntermediateWire Int
   | OutputWire Int
   deriving (Show, Eq, Ord, Generic, NFData)
@@ -52,16 +52,16 @@ instance FromJSON Wire
 instance ToJSON Wire
 
 instance Pretty Wire where
-  pretty (InputWire t v) =
+  pretty (InputWire label t v) =
     let a = case t of
           Public -> "pub"
           Private -> "priv"
-     in text (a <> "_input_") <> pretty v
+     in text (a <> "_input_") <> pretty v <> "_{\"" <> pretty label <> "\"}"
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
 
 wireName :: Wire -> Int
-wireName (InputWire _ v) = v
+wireName (InputWire _ _ v) = v
 wireName (IntermediateWire v) = v
 wireName (OutputWire v) = v
 
@@ -204,10 +204,10 @@ validArithCircuit (ArithCircuit gates) =
           )
           (True, [])
           gates
-    isNotInput (InputWire _ _) = False
+    isNotInput InputWire {} = False
     isNotInput (OutputWire _) = True
     isNotInput (IntermediateWire _) = True
-    validWire _ (InputWire _ _) = True
+    validWire _ InputWire {} = True
     validWire _ (OutputWire _) = False
     validWire definedWires i@(IntermediateWire _) = i `elem` definedWires
     fetchVarsGate (Mul l r _) = toList l <> toList r
@@ -247,7 +247,7 @@ unsplit = snd . foldl (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (Scala
 relabel :: (Int -> Int) -> ArithCircuit f -> ArithCircuit f
 relabel f (ArithCircuit gates) = ArithCircuit $ map (second $ mapWire f) gates
   where
-    mapWire g (InputWire t v) = InputWire t (g v)
+    mapWire g (InputWire l t v) = InputWire l t (g v)
     mapWire g (IntermediateWire v) = IntermediateWire (g v)
     mapWire g (OutputWire v) = OutputWire (g v)
 

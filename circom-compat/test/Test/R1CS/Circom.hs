@@ -5,6 +5,7 @@ module Test.R1CS.Circom where
 import Data.Binary (decode, decodeFileOrFail, encode)
 import Data.Binary.Get (ByteOffset)
 import Data.Field.Galois (Prime)
+import FNV
 import Protolude
 import R1CS (validateWitness)
 import R1CS.Circom
@@ -48,6 +49,16 @@ spec_parseMultiplier = do
       let wtns :: CircomWitness F_BN128
           wtns = fromRight (panic "impossible") ewtns
       validateWitness (witnessFromCircomWitness wtns) (r1csFromCircomR1CS r1cs) `shouldBe` Right ()
+
+  describe "FNV Hashing" $ do
+    let stringToWord8s :: String -> [Word8]
+        stringToWord8s = map (fromIntegral . ord)
+    it "Can compute fnv hash according to the rust spec" $ do
+      fnv1a (stringToWord8s []) `shouldBe` FNVHash 0xcbf29ce484222325
+      fnv1a (stringToWord8s "a") `shouldBe` FNVHash 0xaf63dc4c8601ec8c
+      fnv1a (stringToWord8s "b") `shouldBe` FNVHash 0xaf63df4c8601f1a5
+      fnv1a (stringToWord8s "feedfacedeadbeef") `shouldBe` FNVHash 0xcac54572bb1a6fc8
+      fnv1a (stringToWord8s "http://www.isthe.com/chongo/bio.html") `shouldBe` FNVHash 0x8c7609b4a9f10907
 
 type P_BN128 = 21888242871839275222246405745257275088548364400416034343698204186575808495617
 

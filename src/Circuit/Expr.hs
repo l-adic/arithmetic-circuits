@@ -235,15 +235,15 @@ imm :: ExprM f Wire
 imm = IntermediateWire <$> fresh
 
 -- | Fresh input variables
-freshPublicInput :: ExprM f Wire
-freshPublicInput = do
-  v <- InputWire Public <$> fresh
+freshPublicInput :: Text -> ExprM f Wire
+freshPublicInput label = do
+  v <- InputWire label Public <$> fresh
   modify $ \s -> s {bsPublicInputs = wireName v : bsPublicInputs s}
   pure v
 
-freshPrivateInput :: ExprM f Wire
-freshPrivateInput = do
-  v <- InputWire Private <$> fresh
+freshPrivateInput :: Text -> ExprM f Wire
+freshPrivateInput label = do
+  v <- InputWire label Private <$> fresh
   modify $ \s -> s {bsPrivateInputs = wireName v : bsPrivateInputs s}
   pure v
 
@@ -347,7 +347,7 @@ exprToArithCircuit ::
   Wire ->
   ExprM f ()
 exprToArithCircuit expr output =
-  exprToArithCircuit' (mapVarsExpr (InputWire Public) expr) output
+  exprToArithCircuit' (mapVarsExpr (InputWire "" Public) expr) output
 
 exprToArithCircuit' :: (Num f) => Expr Wire f ty -> Wire -> ExprM f ()
 exprToArithCircuit' expr output = do
