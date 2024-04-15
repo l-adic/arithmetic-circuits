@@ -12,6 +12,7 @@ module Circuit.Arithmetic
     evalGate,
     evalArithCircuit,
     unsplit,
+    reindex,
     relabel,
     CircuitVars (..),
     collectCircuitVars,
@@ -24,7 +25,7 @@ import Circuit.Affine
   )
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Field.Galois (PrimeField, fromP)
-import Data.List (nub)
+import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Protolude
 import Text.PrettyPrint.Leijen.Text as PP
@@ -246,22 +247,32 @@ unsplit ::
   AffineCircuit f Wire
 unsplit = snd . foldl (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (ScalarMul (2 ^ ix) (Var wire)))) (0, ConstGate 0)
 
-relabel :: (Int -> Int) -> ArithCircuit f -> ArithCircuit f
-relabel f (ArithCircuit gates) = ArithCircuit $ map (second $ mapWire f) gates
+reindex :: (Int -> Int) -> ArithCircuit f -> ArithCircuit f
+reindex f (ArithCircuit gates) = ArithCircuit $ map (second $ mapWire f) gates
   where
     mapWire g (InputWire l t v) = InputWire l t (g v)
     mapWire g (IntermediateWire v) = IntermediateWire (g v)
     mapWire g (OutputWire v) = OutputWire (g v)
 
-data CircuitVars = CircuitVars
+data CircuitVars label = CircuitVars
   { cvVars :: Set Int,
     cvPrivateInputs :: Set Int,
     cvPublicInputs :: Set Int,
     cvOutputs :: Set Int,
-    cvInputsLabels :: [(Text, Int)]
+    cvInputsLabels :: Map label Int
   }
 
-collectCircuitVars :: ArithCircuit f -> CircuitVars
+relabel :: (Ord l2) => (l1 -> l2) -> CircuitVars l1 -> CircuitVars l2
+relabel f (CircuitVars vars priv pub outs labels) =
+  CircuitVars
+    { cvVars = vars,
+      cvPrivateInputs = priv,
+      cvPublicInputs = pub,
+      cvOutputs = outs,
+      cvInputsLabels = Map.mapKeys f labels
+    }
+
+collectCircuitVars :: ArithCircuit f -> CircuitVars Text
 collectCircuitVars (ArithCircuit gates) =
   let f (pubInputs, privInputs, intermediates, outputs, labels) w = case w of
         InputWire label it i -> case it of
@@ -275,5 +286,5 @@ collectCircuitVars (ArithCircuit gates) =
           cvPrivateInputs = prvis,
           cvPublicInputs = pubis,
           cvOutputs = os,
-          cvInputsLabels = nub ls
+          cvInputsLabels = Map.fromList ls
         }
