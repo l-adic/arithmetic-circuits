@@ -75,8 +75,8 @@ compileWithWire freshWire expr = do
       emit $ Mul (ConstGate 1) circ wire
       pure wire
 
-publicInput :: ExprM f Wire
+publicInput :: Text -> ExprM f Wire
 publicInput = freshPublicInput
 
-privateInput :: ExprM f Wire
+privateInput :: Text -> ExprM f Wire
 privateInput = freshPrivateInput

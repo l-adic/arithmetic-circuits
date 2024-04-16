@@ -8,17 +8,18 @@ import Data.Binary (encodeFile)
 import Data.Field.Galois (GaloisField, Prime)
 import Data.Map qualified as Map
 import Data.Propagator (Propagated, PropagatedNum)
+import Data.Set qualified as Set
 import Protolude
-import R1CS (calculateWitness, isValidWitness)
+import R1CS (Inputs (..), calculateWitness, isValidWitness)
 import R1CS.Circom (r1csToCircomR1CS, witnessToCircomWitness)
 
 main :: IO ()
 main = do
   let BuilderState {..} = snd $ runCircuitBuilder $ program @Fr
-      publicInputs = Map.fromList $ zip bsPublicInputs [6]
-      privateInputs = Map.fromList $ zip bsPrivateInputs [2, 3]
+      publicInputs = Map.fromList $ zip (Set.toAscList $ cvPublicInputs bsVars) [6]
+      privateInputs = Map.fromList $ zip (Set.toAscList $ cvPrivateInputs bsVars) [2, 3]
       inputs = publicInputs <> privateInputs
-      (r1cs, wtns) = calculateWitness inputs bsCircuit
+      (r1cs, wtns) = calculateWitness (Inputs inputs) bsCircuit
   unless (isValidWitness wtns r1cs) $ panic "Invalid witness"
   encodeFile "circom-compat/examples/factors/circuit.r1cs" $ r1csToCircomR1CS r1cs
   encodeFile "circom-compat/examples/factors/witness.wtns" $ witnessToCircomWitness wtns
@@ -31,8 +32,8 @@ instance (KnownNat p) => PropagatedNum (Prime p)
 
 program :: (GaloisField f) => ExprM f Wire
 program = do
-  n <- deref <$> freshPublicInput
-  a <- deref <$> freshPrivateInput
-  b <- deref <$> freshPrivateInput
+  n <- deref <$> freshPublicInput "n"
+  a <- deref <$> freshPrivateInput "a"
+  b <- deref <$> freshPrivateInput "b"
   let isFactorization = eq n (a `mul` b)
   ret $ cond isFactorization (c 1) (c 0)

@@ -3,14 +3,16 @@ module R1CS
     R1C (..),
     R1CS (..),
     Witness (..),
+    Inputs (..),
     toR1CS,
+    oneVar,
     validateWitness,
     isValidWitness,
     calculateWitness,
   )
 where
 
-import Circuit (AffineCircuit (..), ArithCircuit (..), Gate (..), InputType (Private, Public), Wire (..), solve, unsplit, wireName)
+import Circuit (AffineCircuit (..), ArithCircuit (..), CircuitVars (..), Gate (..), Wire (..), collectCircuitVars, solve, unsplit, wireName)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Field.Galois (PrimeField)
 import Data.Map qualified as Map
@@ -106,6 +108,18 @@ data R1CS f = R1CS
 instance (Eq f, Num f, Pretty f) => Pretty (R1CS f) where
   pretty (R1CS {r1csConstraints}) = vsep (pretty <$> r1csConstraints)
 
+newtype Inputs f = Inputs (Map Int f)
+  deriving (Eq, Show, Generic)
+
+instance (ToJSON f) => ToJSON (Inputs f)
+
+instance (FromJSON f) => FromJSON (Inputs f)
+
+instance (Pretty f) => Pretty (Inputs f) where
+  pretty (Inputs m) = vsep $ map mkPair $ Map.toList m
+    where
+      mkPair (var, val) = pretty var <+> ":=" <+> pretty val
+
 newtype Witness f = Witness (Map Int f) deriving (Eq, Show, Generic)
 
 instance (ToJSON f) => ToJSON (Witness f)
@@ -129,34 +143,24 @@ isValidWitness :: (Eq f, Num f) => Witness f -> R1CS f -> Bool
 isValidWitness w r1cs = isRight $ validateWitness w r1cs
 
 toR1CS :: (Num f) => ArithCircuit f -> R1CS f
-toR1CS (ArithCircuit gates) =
-  let (pubInputs, privInputs, intermediates, outputs) = foldMap collectWires gates
-      allVars = oneVar : Set.toAscList (Set.unions [pubInputs, privInputs, intermediates, outputs])
+toR1CS c@(ArithCircuit gates) =
+  let CircuitVars {..} = collectCircuitVars c
    in R1CS
         { r1csConstraints = mkR1C <$> gates,
-          r1csNumVars = length allVars,
-          r1csNumPublicInputs = Set.size pubInputs,
-          r1csNumPrivateInputs = Set.size privInputs,
-          r1csNumOutputs = Set.size outputs
+          r1csNumVars = Set.size $ Set.insert oneVar cvVars,
+          r1csNumPublicInputs = Set.size cvPublicInputs,
+          r1csNumPrivateInputs = Set.size cvPrivateInputs,
+          r1csNumOutputs = Set.size cvOutputs
         }
-  where
-    collectWires =
-      let f (pubInputs, privInputs, intermediates, outputs) w = case w of
-            InputWire it i -> case it of
-              Public -> (Set.insert i pubInputs, privInputs, intermediates, outputs)
-              Private -> (pubInputs, Set.insert i privInputs, intermediates, outputs)
-            IntermediateWire i -> (pubInputs, privInputs, Set.insert i intermediates, outputs)
-            OutputWire i -> (pubInputs, privInputs, intermediates, Set.insert i outputs)
-       in foldl f mempty
 
 calculateWitness ::
   forall f.
   (PrimeField f) =>
   (PropagatedNum f) =>
-  Map Int f ->
+  Inputs f ->
   ArithCircuit f ->
   (R1CS f, Witness f)
-calculateWitness initialAssignments circuit =
+calculateWitness (Inputs m) circuit =
   let r1cs = toR1CS circuit
-      w = solve (Map.insert oneVar 1 initialAssignments) circuit
+      w = solve (Map.insert oneVar 1 m) circuit
    in (r1cs, Witness w)

@@ -12,7 +12,10 @@ module Circuit.Arithmetic
     evalGate,
     evalArithCircuit,
     unsplit,
+    reindex,
+    CircuitVars (..),
     relabel,
+    collectCircuitVars,
   )
 where
 
@@ -22,6 +25,8 @@ import Circuit.Affine
   )
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Field.Galois (PrimeField, fromP)
+import Data.Map qualified as Map
+import Data.Set qualified as Set
 import Protolude
 import Text.PrettyPrint.Leijen.Text as PP
   ( Pretty (..),
@@ -40,7 +45,7 @@ instance ToJSON InputType
 
 -- | Wires are can be labeled in the ways given in this data type
 data Wire
-  = InputWire InputType Int
+  = InputWire Text InputType Int
   | IntermediateWire Int
   | OutputWire Int
   deriving (Show, Eq, Ord, Generic, NFData)
@@ -50,16 +55,16 @@ instance FromJSON Wire
 instance ToJSON Wire
 
 instance Pretty Wire where
-  pretty (InputWire t v) =
+  pretty (InputWire label t v) =
     let a = case t of
           Public -> "pub"
           Private -> "priv"
-     in text (a <> "_input_") <> pretty v
+     in text (a <> "_input_") <> pretty v <> "_{\"" <> pretty label <> "\"}"
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
 
 wireName :: Wire -> Int
-wireName (InputWire _ v) = v
+wireName (InputWire _ _ v) = v
 wireName (IntermediateWire v) = v
 wireName (OutputWire v) = v
 
@@ -202,10 +207,10 @@ validArithCircuit (ArithCircuit gates) =
           )
           (True, [])
           gates
-    isNotInput (InputWire _ _) = False
+    isNotInput InputWire {} = False
     isNotInput (OutputWire _) = True
     isNotInput (IntermediateWire _) = True
-    validWire _ (InputWire _ _) = True
+    validWire _ InputWire {} = True
     validWire _ (OutputWire _) = False
     validWire definedWires i@(IntermediateWire _) = i `elem` definedWires
     fetchVarsGate (Mul l r _) = toList l <> toList r
@@ -242,9 +247,64 @@ unsplit ::
   AffineCircuit f Wire
 unsplit = snd . foldl (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (ScalarMul (2 ^ ix) (Var wire)))) (0, ConstGate 0)
 
-relabel :: (Int -> Int) -> ArithCircuit f -> ArithCircuit f
-relabel f (ArithCircuit gates) = ArithCircuit $ map (second $ mapWire f) gates
+reindex :: (Int -> Int) -> ArithCircuit f -> ArithCircuit f
+reindex f (ArithCircuit gates) = ArithCircuit $ map (second $ mapWire f) gates
   where
-    mapWire g (InputWire t v) = InputWire t (g v)
+    mapWire g (InputWire l t v) = InputWire l t (g v)
     mapWire g (IntermediateWire v) = IntermediateWire (g v)
     mapWire g (OutputWire v) = OutputWire (g v)
+
+data CircuitVars label = CircuitVars
+  { cvVars :: Set Int,
+    cvPrivateInputs :: Set Int,
+    cvPublicInputs :: Set Int,
+    cvOutputs :: Set Int,
+    cvInputsLabels :: Map label Int
+  }
+
+instance (Ord label) => Semigroup (CircuitVars label) where
+  a <> b =
+    CircuitVars
+      { cvVars = cvVars a <> cvVars b,
+        cvPrivateInputs = cvPrivateInputs a <> cvPrivateInputs b,
+        cvPublicInputs = cvPublicInputs a <> cvPublicInputs b,
+        cvOutputs = cvOutputs a <> cvOutputs b,
+        cvInputsLabels = cvInputsLabels a `Map.union` cvInputsLabels b
+      }
+
+instance (Ord label) => Monoid (CircuitVars label) where
+  mempty =
+    CircuitVars
+      { cvVars = mempty,
+        cvPrivateInputs = mempty,
+        cvPublicInputs = mempty,
+        cvOutputs = mempty,
+        cvInputsLabels = mempty
+      }
+
+relabel :: (Ord l2) => (l1 -> l2) -> CircuitVars l1 -> CircuitVars l2
+relabel f (CircuitVars vars priv pub outs labels) =
+  CircuitVars
+    { cvVars = vars,
+      cvPrivateInputs = priv,
+      cvPublicInputs = pub,
+      cvOutputs = outs,
+      cvInputsLabels = Map.mapKeys f labels
+    }
+
+collectCircuitVars :: ArithCircuit f -> CircuitVars Text
+collectCircuitVars (ArithCircuit gates) =
+  let f (pubInputs, privInputs, intermediates, outputs, labels) w = case w of
+        InputWire label it i -> case it of
+          Public -> (Set.insert i pubInputs, privInputs, intermediates, outputs, (label, i) : labels)
+          Private -> (pubInputs, Set.insert i privInputs, intermediates, outputs, labels)
+        IntermediateWire i -> (pubInputs, privInputs, Set.insert i intermediates, outputs, labels)
+        OutputWire i -> (pubInputs, privInputs, intermediates, Set.insert i outputs, labels)
+      (pubis, prvis, imms, os, ls) = foldMap (foldl f mempty) gates
+   in CircuitVars
+        { cvVars = Set.unions [pubis, prvis, imms, os],
+          cvPrivateInputs = prvis,
+          cvPublicInputs = pubis,
+          cvOutputs = os,
+          cvInputsLabels = Map.fromList ls
+        }

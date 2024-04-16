@@ -27,6 +27,8 @@ where
 import Circuit.Affine
 import Circuit.Arithmetic
 import Data.Field.Galois (PrimeField)
+import Data.Map qualified as Map
+import Data.Set qualified as Set
 import Protolude
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 
@@ -185,9 +187,7 @@ evalExpr lookupVar expr vars = case expr of
 data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
-    bsPublicInputs :: [Int],
-    bsPrivateInputs :: [Int],
-    bsOutputs :: [Int]
+    bsVars :: CircuitVars Text
   }
 
 defaultBuilderState :: BuilderState f
@@ -195,9 +195,7 @@ defaultBuilderState =
   BuilderState
     { bsCircuit = ArithCircuit [],
       bsNextVar = 1,
-      bsPublicInputs = [],
-      bsPrivateInputs = [],
-      bsOutputs = []
+      bsVars = mempty
     }
 
 type ExprM f a = State (BuilderState f) a
@@ -215,10 +213,7 @@ runCircuitBuilder m =
   let (a, s) = runState m defaultBuilderState
    in ( a,
         s
-          { bsCircuit = reverseCircuit $ bsCircuit s,
-            bsPublicInputs = reverse $ bsPublicInputs s,
-            bsPrivateInputs = reverse $ bsPrivateInputs s,
-            bsOutputs = reverse $ bsOutputs s
+          { bsCircuit = reverseCircuit $ bsCircuit s
           }
       )
   where
@@ -227,7 +222,11 @@ runCircuitBuilder m =
 fresh :: ExprM f Int
 fresh = do
   v <- gets bsNextVar
-  modify $ \s -> s {bsNextVar = v + 1}
+  modify $ \s ->
+    s
+      { bsVars = (bsVars s) {cvVars = Set.insert v (cvVars $ bsVars s)},
+        bsNextVar = v + 1
+      }
   pure v
 
 -- | Fresh intermediate variables
@@ -235,23 +234,43 @@ imm :: ExprM f Wire
 imm = IntermediateWire <$> fresh
 
 -- | Fresh input variables
-freshPublicInput :: ExprM f Wire
-freshPublicInput = do
-  v <- InputWire Public <$> fresh
-  modify $ \s -> s {bsPublicInputs = wireName v : bsPublicInputs s}
+freshPublicInput :: Text -> ExprM f Wire
+freshPublicInput label = do
+  v <- InputWire label Public <$> fresh
+  modify $ \s ->
+    s
+      { bsVars =
+          (bsVars s)
+            { cvPublicInputs = Set.insert (wireName v) (cvPublicInputs $ bsVars s),
+              cvInputsLabels = Map.insert label (wireName v) (cvInputsLabels $ bsVars s)
+            }
+      }
   pure v
 
-freshPrivateInput :: ExprM f Wire
-freshPrivateInput = do
-  v <- InputWire Private <$> fresh
-  modify $ \s -> s {bsPrivateInputs = wireName v : bsPrivateInputs s}
+freshPrivateInput :: Text -> ExprM f Wire
+freshPrivateInput label = do
+  v <- InputWire label Private <$> fresh
+  modify $ \s ->
+    s
+      { bsVars =
+          (bsVars s)
+            { cvPrivateInputs = Set.insert (wireName v) (cvPrivateInputs $ bsVars s),
+              cvInputsLabels = Map.insert label (wireName v) (cvInputsLabels $ bsVars s)
+            }
+      }
   pure v
 
 -- | Fresh output variables
 freshOutput :: ExprM f Wire
 freshOutput = do
   v <- OutputWire <$> fresh
-  modify $ \s -> s {bsOutputs = wireName v : bsOutputs s}
+  modify $ \s ->
+    s
+      { bsVars =
+          (bsVars s)
+            { cvOutputs = Set.insert (wireName v) (cvOutputs $ bsVars s)
+            }
+      }
   pure v
 
 -- | Multiply two wires or affine circuits to an intermediate variable
@@ -347,7 +366,7 @@ exprToArithCircuit ::
   Wire ->
   ExprM f ()
 exprToArithCircuit expr output =
-  exprToArithCircuit' (mapVarsExpr (InputWire Public) expr) output
+  exprToArithCircuit' (mapVarsExpr (InputWire "" Public) expr) output
 
 exprToArithCircuit' :: (Num f) => Expr Wire f ty -> Wire -> ExprM f ()
 exprToArithCircuit' expr output = do

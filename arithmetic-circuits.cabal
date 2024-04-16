@@ -79,6 +79,7 @@ library circom-compat
   visibility: public
   exposed-modules:
     R1CS.Circom
+    FNV
 
   other-modules:      Paths_arithmetic_circuits
   hs-source-dirs:     circom-compat/src
@@ -86,6 +87,7 @@ library circom-compat
       arithmetic-circuits
     , binary
     , bytestring
+    , vector
 
   ghc-options:        -freverse-errors -O2 -Wall
 
