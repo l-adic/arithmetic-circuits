@@ -63,7 +63,7 @@ r1csToCircomR1CS R1CS {..} =
           },
       crConstraints = r1csConstraints,
       -- we make strong the assumption that variables are numbered from 0 to n-1
-      crWireMap = [0 .. fromIntegral r1csNumVars]
+      crWireMap = [0 .. fromIntegral r1csNumVars - 1]
     }
 
 r1csFromCircomR1CS :: CircomR1CS f -> R1CS f
