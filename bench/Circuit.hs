@@ -14,8 +14,8 @@ type Fr = Prime 2188824287183927522224640574525727508854836440041603434369820418
 program :: ArithCircuit Fr
 program =
   ArithCircuit
-    [ Mul (Var (InputWire Public 0)) (Var (InputWire Public 1)) (IntermediateWire 0),
-      Mul (Var (IntermediateWire 0)) (Add (Var (InputWire Public 0)) (Var (InputWire Public 2))) (OutputWire 0)
+    [ Mul (Var (InputWire "" Public 0)) (Var (InputWire "" Public 1)) (IntermediateWire 0),
+      Mul (Var (IntermediateWire 0)) (Add (Var (InputWire "" Public 0)) (Var (InputWire "" Public 2))) (OutputWire 0)
     ]
 
 input :: Map.Map Int Fr
