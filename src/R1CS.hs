@@ -5,6 +5,7 @@ module R1CS
     Witness (..),
     Inputs (..),
     toR1CS,
+    oneVar,
     validateWitness,
     isValidWitness,
     calculateWitness,
