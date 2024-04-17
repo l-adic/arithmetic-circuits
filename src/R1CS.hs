@@ -156,11 +156,11 @@ calculateWitness ::
   forall f l.
   (PrimeField f) =>
   (PropagatedNum f) =>
-  Inputs f ->
   CircuitVars l ->
   ArithCircuit f ->
+  Inputs f ->
   (R1CS f, Witness f)
-calculateWitness (Inputs m) vars circuit =
+calculateWitness vars circuit (Inputs m) =
   let r1cs = toR1CS vars circuit
-      w = solve (Map.insert oneVar 1 m) vars circuit
+      w = solve vars circuit (Map.insert oneVar 1 m)
    in (r1cs, Witness w)

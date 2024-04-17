@@ -124,7 +124,7 @@ _setInputSignal env@(ProgramEnv {peCircuit, peInputsSize, peCircuitVars}) stRef 
   writeIORef stRef $
     if Map.size newInputs == peInputsSize
       then
-        let wtns = solve newInputs peCircuitVars peCircuit
+        let wtns = solve peCircuitVars peCircuit newInputs
          in st
               { psInputs = Inputs newInputs,
                 psWitness = Witness $ Map.insert oneVar 1 wtns
