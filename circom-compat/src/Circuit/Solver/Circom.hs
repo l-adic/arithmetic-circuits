@@ -34,67 +34,71 @@ data ProgramEnv f = ProgramEnv
   { peFieldSize :: FieldSize,
     peRawPrime :: Integer,
     peVersion :: Int,
-    peSharedRWMemory :: IOVector Word32,
-    peCircuit :: ArithCircuit f
+    peInputsSize :: Int,
+    peWitnessSize :: Int,
+    peCircuit :: ArithCircuit f,
+    peCircuitVars :: CircuitVars FNVHash
   }
 
 mkProgramEnv ::
   forall f.
   (GaloisField f) =>
+  CircuitVars Text ->
   ArithCircuit f ->
-  IO (ProgramEnv f)
-mkProgramEnv circ = do
-  let fieldSize = FieldSize 32
-  sharedRWMemory <- MV.replicate (n32 fieldSize) 0
-  pure
-    ProgramEnv
-      { peFieldSize = FieldSize 32,
-        peRawPrime = toInteger $ char (1 :: f),
-        peVersion = 2,
-        peSharedRWMemory = sharedRWMemory,
-        peCircuit = circ
-      }
+  ProgramEnv f
+mkProgramEnv vars circ =
+  ProgramEnv
+    { peFieldSize = FieldSize 32,
+      peRawPrime = toInteger $ char (1 :: f),
+      peVersion = 2,
+      peInputsSize = Set.size $ cvPrivateInputs vars <> cvPublicInputs vars,
+      peWitnessSize = Set.size $ Set.insert oneVar $ cvVars vars,
+      peCircuit = circ,
+      peCircuitVars = relabel hashText vars
+    }
 
 data ProgramState f = ProgramState
-  { psInputsSize :: Int,
-    psInputs :: Inputs f,
-    psWitnessSize :: Int,
+  { psInputs :: Inputs f,
     psWitness :: Witness f,
-    psInputsLabels :: Map FNVHash Int
+    psSharedRWMemory :: IOVector Word32
   }
 
 mkProgramState ::
-  CircuitVars Text ->
-  ProgramState f
-mkProgramState vs =
-  ProgramState
-    { psInputsSize = Set.size $ cvPrivateInputs vs <> cvPublicInputs vs,
-      psInputs = Inputs mempty,
-      psWitnessSize = Set.size $ Set.insert oneVar $ cvVars vs,
-      psWitness = Witness mempty,
-      psInputsLabels = cvInputsLabels $ relabel hashText vs
-    }
+  ProgramEnv f ->
+  IO (ProgramState f)
+mkProgramState ProgramEnv {peFieldSize} = do
+  sharedRWMemory <- MV.replicate (n32 peFieldSize) 0
+  pure
+    ProgramState
+      { psInputs = Inputs mempty,
+        psWitness = Witness mempty,
+        psSharedRWMemory = sharedRWMemory
+      }
 
 -- | The arg is a bool representing 'sanityCheck'. We don't
 -- need this at the moment
 _init :: Int -> IO ()
 _init = mempty
 
-_getNVars :: IORef (ProgramState f) -> IO Int
-_getNVars st = readIORef st <&> psWitnessSize
+_getNVars :: ProgramEnv f -> Int
+_getNVars = peWitnessSize
 
 _getVersion :: ProgramEnv f -> Int
 _getVersion = peVersion
 
-_getRawPrime :: ProgramEnv f -> IO ()
-_getRawPrime env@ProgramEnv {peRawPrime} =
-  writeBuffer env peRawPrime
+_getRawPrime :: ProgramEnv f -> IORef (ProgramState f) -> IO ()
+_getRawPrime env@ProgramEnv {peRawPrime} stRef =
+  writeBuffer env stRef peRawPrime
 
-_writeSharedRWMemory :: ProgramEnv f -> Int -> Word32 -> IO ()
-_writeSharedRWMemory env i v = MV.write (peSharedRWMemory env) i v
+_writeSharedRWMemory :: IORef (ProgramState f) -> Int -> Word32 -> IO ()
+_writeSharedRWMemory stRef i v =
+  readIORef stRef >>= \st ->
+    MV.write (psSharedRWMemory st) i v
 
-_readSharedRWMemory :: ProgramEnv f -> Int -> IO Word32
-_readSharedRWMemory env i = MV.read (peSharedRWMemory env) i
+_readSharedRWMemory :: IORef (ProgramState f) -> Int -> IO Word32
+_readSharedRWMemory stRef i =
+  readIORef stRef >>= \st ->
+    MV.read (psSharedRWMemory st) i
 
 _getFieldNumLen32 :: ProgramEnv f -> Int
 _getFieldNumLen32 ProgramEnv {peFieldSize} = n32 peFieldSize
@@ -110,25 +114,25 @@ _setInputSignal ::
   Word32 ->
   Int ->
   IO ()
-_setInputSignal env@(ProgramEnv {peCircuit}) stRef msb lsb _ = do
+_setInputSignal env@(ProgramEnv {peCircuit, peInputsSize, peCircuitVars}) stRef msb lsb _ = do
   st <- readIORef stRef
   let Inputs inputs = psInputs st
   let h = mkFNV msb lsb
-      i = fromMaybe (panic $ "Hash not found: " <> show h) $ Map.lookup h (psInputsLabels st)
-  newInput <- fromInteger <$> readBuffer env
+      i = fromMaybe (panic $ "Hash not found: " <> show h) $ Map.lookup h (cvInputsLabels peCircuitVars)
+  newInput <- fromInteger <$> readBuffer env stRef
   let newInputs = Map.insert i newInput inputs
   writeIORef stRef $
-    if Map.size newInputs == psInputsSize st
+    if Map.size newInputs == peInputsSize
       then
-        let wtns = solve newInputs peCircuit
+        let wtns = solve newInputs peCircuitVars peCircuit
          in st
               { psInputs = Inputs newInputs,
                 psWitness = Witness $ Map.insert oneVar 1 wtns
               }
       else st {psInputs = Inputs newInputs}
 
-_getWitnessSize :: IORef (ProgramState f) -> IO Int
-_getWitnessSize st = readIORef st <&> psWitnessSize
+_getWitnessSize :: ProgramEnv f -> Int
+_getWitnessSize = peWitnessSize
 
 _getWitness ::
   (PrimeField f) =>
@@ -136,21 +140,21 @@ _getWitness ::
   IORef (ProgramState f) ->
   Int ->
   IO ()
-_getWitness env st i = do
-  ProgramState {psWitness = Witness wtns} <- readIORef st
+_getWitness env stRef i = do
+  ProgramState {psWitness = Witness wtns} <- readIORef stRef
   let wtn = maybe (panic $ "missing witness " <> show i) fromP $ Map.lookup i wtns
-   in writeBuffer env wtn
+   in writeBuffer env stRef wtn
 
 --------------------------------------------------------------------------------
 
-writeBuffer :: ProgramEnv f -> Integer -> IO ()
-writeBuffer env@(ProgramEnv {peFieldSize}) x = do
+writeBuffer :: ProgramEnv f -> IORef (ProgramState f) -> Integer -> IO ()
+writeBuffer (ProgramEnv {peFieldSize}) stRef x = do
   let chunks = integerToLittleEndian peFieldSize x
   forM_ [0 .. n32 peFieldSize - 1] $ \j ->
-    _writeSharedRWMemory env j (chunks V.! j)
+    _writeSharedRWMemory stRef j (chunks V.! j)
 
-readBuffer :: ProgramEnv f -> IO Integer
-readBuffer env@(ProgramEnv {peFieldSize}) = do
+readBuffer :: ProgramEnv f -> IORef (ProgramState f) -> IO Integer
+readBuffer (ProgramEnv {peFieldSize}) stRef = do
   v <- V.generateM (n32 peFieldSize) $ \j ->
-    _readSharedRWMemory env j
+    _readSharedRWMemory stRef j
   pure $ integerFromLittleEndian v

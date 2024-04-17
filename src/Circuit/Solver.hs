@@ -82,14 +82,14 @@ gateToPropagator env (Split i outs) = do
     bool2val False = 0
 
 solve ::
-  forall k.
+  forall k l.
   (PrimeField k) =>
   (PropagatedNum k) =>
   Map Int k ->
+  CircuitVars l ->
   ArithCircuit k ->
   Map Int k
-solve initialAssignments c@(ArithCircuit gates) = runST $ do
-  let wireNames = cvVars $ collectCircuitVars c
+solve initialAssignments CircuitVars {cvVars = wireNames} (ArithCircuit gates) = runST $ do
   env <- SolverEnv <$> foldlM (\m i -> Map.insert i <$> cell <*> pure m) mempty wireNames
   for_ gates $ gateToPropagator env
   for_ (Map.toList initialAssignments) $ \(v, a) -> do
