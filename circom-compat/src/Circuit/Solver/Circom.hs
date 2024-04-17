@@ -1,6 +1,23 @@
 {-# LANGUAGE TemplateHaskellQuotes #-}
 
-module Circuit.Solver.Circom (mkProgram) where
+module Circuit.Solver.Circom
+  ( ProgramEnv (..),
+    mkProgramEnv,
+    ProgramState (..),
+    mkProgramState,
+    _init,
+    _getNVars,
+    _getVersion,
+    _getRawPrime,
+    _writeSharedRWMemory,
+    _readSharedRWMemory,
+    _getFieldNumLen32,
+    _setInputSignal,
+    _getWitnessSize,
+    _getWitness,
+    mkProgram,
+  )
+where
 
 import Circuit
 import Data.Field.Galois (GaloisField, PrimeField (fromP), char)
@@ -129,19 +146,16 @@ _getWitness env st i = do
   let wtn = maybe (panic $ "missing witness " <> show i) fromP $ Map.lookup i wtns
    in writeBuffer env wtn
 
-writeBuffer :: ProgramEnv f -> Integer -> IO ()
-writeBuffer env@(ProgramEnv {peFieldSize}) x = do
-  let chunks = integerToLittleEndian peFieldSize x
-  forM_ [0 .. n32 peFieldSize - 1] $ \j ->
-    _writeSharedRWMemory env j (chunks V.! j)
-
-readBuffer :: ProgramEnv f -> IO Integer
-readBuffer env@(ProgramEnv {peFieldSize}) = do
-  v <- V.generateM (n32 peFieldSize) $ \j ->
-    _readSharedRWMemory env j
-  pure $ integerFromLittleEndian v
-
-mkProgram :: Name -> Name -> Name -> DecsQ
+-- Unfortunately GHC-WASM doesn't support TemplateHaskell at this time, but leaving
+-- this here in hopes that it will be supported in the future
+mkProgram ::
+  -- CircuitVars Text
+  Name ->
+  -- ArithCircuit f
+  Name ->
+  -- Prime p
+  Name ->
+  DecsQ
 mkProgram env s f = do
   let stateName = mkName "programStateRef"
   let envName = mkName "programEnv"
@@ -268,3 +282,17 @@ mkProgram env s f = do
       getWitnessSizeDecls,
       getWitnessDecls
     ]
+
+--------------------------------------------------------------------------------
+
+writeBuffer :: ProgramEnv f -> Integer -> IO ()
+writeBuffer env@(ProgramEnv {peFieldSize}) x = do
+  let chunks = integerToLittleEndian peFieldSize x
+  forM_ [0 .. n32 peFieldSize - 1] $ \j ->
+    _writeSharedRWMemory env j (chunks V.! j)
+
+readBuffer :: ProgramEnv f -> IO Integer
+readBuffer env@(ProgramEnv {peFieldSize}) = do
+  v <- V.generateM (n32 peFieldSize) $ \j ->
+    _readSharedRWMemory env j
+  pure $ integerFromLittleEndian v

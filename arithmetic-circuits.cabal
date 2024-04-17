@@ -79,7 +79,6 @@ library circom-compat
   visibility: public
   exposed-modules:
     Circuit.Solver.Circom
-    Circuit.Solver.Test
     FNV
     R1CS.Circom
 
