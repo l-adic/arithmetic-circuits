@@ -1,5 +1,3 @@
-{-# LANGUAGE TemplateHaskellQuotes #-}
-
 module Circuit.Solver.Circom
   ( ProgramEnv (..),
     mkProgramEnv,
@@ -15,13 +13,12 @@ module Circuit.Solver.Circom
     _setInputSignal,
     _getWitnessSize,
     _getWitness,
-    mkProgram,
   )
 where
 
 import Circuit
 import Data.Field.Galois (GaloisField, PrimeField (fromP), char)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, readIORef, writeIORef)
 import Data.Map qualified as Map
 import Data.Propagator (PropagatedNum)
 import Data.Set qualified as Set
@@ -29,11 +26,9 @@ import Data.Vector qualified as V
 import Data.Vector.Mutable (IOVector)
 import Data.Vector.Mutable qualified as MV
 import FNV (FNVHash (..), hashText, mkFNV)
-import Language.Haskell.TH
 import Protolude
 import R1CS (Inputs (..), Witness (..), oneVar)
 import R1CS.Circom (FieldSize (..), integerFromLittleEndian, integerToLittleEndian, n32)
-import System.IO.Unsafe (unsafePerformIO)
 
 data ProgramEnv f = ProgramEnv
   { peFieldSize :: FieldSize,
@@ -145,143 +140,6 @@ _getWitness env st i = do
   ProgramState {psWitness = Witness wtns} <- readIORef st
   let wtn = maybe (panic $ "missing witness " <> show i) fromP $ Map.lookup i wtns
    in writeBuffer env wtn
-
--- Unfortunately GHC-WASM doesn't support TemplateHaskell at this time, but leaving
--- this here in hopes that it will be supported in the future
-mkProgram ::
-  -- CircuitVars Text
-  Name ->
-  -- ArithCircuit f
-  Name ->
-  -- Prime p
-  Name ->
-  DecsQ
-mkProgram env s f = do
-  let stateName = mkName "programStateRef"
-  let envName = mkName "programEnv"
-  let mkForeignExport fName ty =
-        ty >>= \_t -> return (ForeignD $ ExportF CCall "" fName _t)
-  let stateRefDecls =
-        let ty =
-              (conT ''IORef) `appT` (conT ''ProgramState `appT` conT f)
-            body =
-              (varE 'unsafePerformIO) `appE` (varE 'newIORef `appE` (varE 'mkProgramState `appE` varE s))
-         in [ sigD stateName ty,
-              valD (varP stateName) (normalB body) []
-            ]
-      envDecls =
-        let ty = conT ''ProgramEnv `appT` conT f
-            body = varE 'unsafePerformIO `appE` (varE 'mkProgramEnv `appE` varE env)
-         in [ sigD envName ty,
-              valD (varP envName) (normalB body) []
-            ]
-      initDecls =
-        let fName = mkName "init"
-            ty = appT arrowT (conT ''Int) `appT` (conT ''IO `appT` conT ''())
-         in [ sigD fName ty,
-              valD (varP fName) (normalB [|mempty|]) [],
-              mkForeignExport fName ty
-            ]
-
-      getNVarsDecls =
-        let fName = mkName "getNVars"
-            ty = conT ''IO `appT` conT ''Int
-            body = varE '_getNVars `appE` varE stateName
-         in [ sigD fName ty,
-              valD (varP fName) (normalB body) [],
-              mkForeignExport fName ty
-            ]
-
-      getVersionDecls =
-        let fName = mkName "getVersion"
-            ty = conT ''Int
-            body = varE '_getVersion `appE` varE envName
-         in [ sigD fName ty,
-              valD (varP fName) (normalB body) [],
-              mkForeignExport fName ty
-            ]
-
-      getRawPrimeDecls =
-        let fName = mkName "getRawPrime"
-            ty = conT ''IO `appT` conT ''()
-            body = varE '_getRawPrime `appE` varE envName
-         in [ sigD fName ty,
-              valD (varP fName) (normalB body) [],
-              mkForeignExport fName ty
-            ]
-
-      writeSharedRWMemoryDecls = do
-        let fName = mkName "writeSharedRWMemory"
-            ty =
-              appT arrowT (conT ''Int)
-                `appT` (appT arrowT (conT ''Word32) `appT` (conT ''IO `appT` conT ''()))
-            body = varE '_writeSharedRWMemory `appE` varE envName
-         in [ sigD fName ty,
-              valD (varP fName) (normalB body) [],
-              mkForeignExport fName ty
-            ]
-
-      readSharedRWMemoryDecls =
-        let fName = mkName "readSharedRWMemory"
-            ty = appT arrowT (conT ''Int) `appT` (conT ''IO `appT` conT ''Word32)
-            body = varE '_readSharedRWMemory `appE` varE envName
-         in [ sigD fName ty,
-              valD (varP fName) (normalB body) [],
-              mkForeignExport fName ty
-            ]
-
-      getFieldNumLen32Decls =
-        let fName = mkName "getFieldNumLen32"
-            ty = conT ''Int
-            body = varE '_getFieldNumLen32 `appE` varE envName
-         in [ sigD fName ty,
-              valD (varP fName) (normalB body) [],
-              mkForeignExport fName ty
-            ]
-
-      setInputSignalDecls =
-        let fName = mkName "setInputSignal"
-            ty =
-              appT arrowT (conT ''Word32)
-                `appT` (appT arrowT (conT ''Word32) `appT` (appT arrowT (conT ''Int) `appT` (conT ''IO `appT` conT ''())))
-            body = varE '_setInputSignal `appE` varE envName `appE` varE stateName
-         in [ sigD fName ty,
-              valD (varP fName) (normalB body) [],
-              mkForeignExport fName ty
-            ]
-
-      getWitnessSizeDecls =
-        let fName = mkName "getWitnessSize"
-            ty = conT ''IO `appT` conT ''Int
-            body = varE '_getWitnessSize `appE` varE stateName
-         in [ sigD fName ty,
-              valD (varP fName) (normalB body) [],
-              mkForeignExport fName ty
-            ]
-
-      getWitnessDecls =
-        let fName = mkName "getWitness"
-            ty = appT arrowT (conT ''Int) `appT` (conT ''IO `appT` conT ''())
-            body = varE '_getWitness `appE` varE envName `appE` varE stateName
-         in [ sigD fName ty,
-              valD (varP fName) (normalB body) [],
-              mkForeignExport fName ty
-            ]
-
-  sequence . concat $
-    [ stateRefDecls,
-      envDecls,
-      initDecls,
-      getNVarsDecls,
-      getVersionDecls,
-      getRawPrimeDecls,
-      writeSharedRWMemoryDecls,
-      readSharedRWMemoryDecls,
-      getFieldNumLen32Decls,
-      setInputSignalDecls,
-      getWitnessSizeDecls,
-      getWitnessDecls
-    ]
 
 --------------------------------------------------------------------------------
 

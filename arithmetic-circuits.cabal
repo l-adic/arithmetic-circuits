@@ -88,7 +88,6 @@ library circom-compat
       arithmetic-circuits
     , binary
     , bytestring
-    , template-haskell
     , vector
 
   ghc-options:        -freverse-errors -O2 -Wall
