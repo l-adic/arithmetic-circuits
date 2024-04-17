@@ -22,7 +22,6 @@ import Circuit
 import Data.Field.Galois (GaloisField, PrimeField (fromP), char)
 import Data.IORef (IORef, readIORef, writeIORef)
 import Data.Map qualified as Map
-import Data.Propagator (PropagatedNum)
 import Data.Set qualified as Set
 import Data.Vector qualified as V
 import Data.Vector.Mutable (IOVector)
@@ -116,7 +115,6 @@ _getInputSignalSize _ _ = pure 1
 _setInputSignal ::
   forall f.
   (PrimeField f) =>
-  (PropagatedNum f) =>
   ProgramEnv f ->
   IORef (ProgramState f) ->
   Word32 ->

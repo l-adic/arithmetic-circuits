@@ -7,7 +7,6 @@ import Circuit
 import Data.Binary (encodeFile)
 import Data.Field.Galois (GaloisField, Prime)
 import Data.Map qualified as Map
-import Data.Propagator (Propagated, PropagatedNum)
 import Data.Set qualified as Set
 import Protolude
 import R1CS (Inputs (..), calculateWitness, isValidWitness)
@@ -25,10 +24,6 @@ main = do
   encodeFile "circom-compat/examples/factors/witness.wtns" $ witnessToCircomWitness wtns
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
-
-instance (KnownNat p) => Propagated (Prime p)
-
-instance (KnownNat p) => PropagatedNum (Prime p)
 
 program :: (GaloisField f) => ExprM f Wire
 program = do

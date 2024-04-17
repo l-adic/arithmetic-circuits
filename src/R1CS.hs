@@ -16,7 +16,6 @@ import Circuit (AffineCircuit (..), ArithCircuit (..), CircuitVars (..), Gate (.
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Field.Galois (PrimeField)
 import Data.Map qualified as Map
-import Data.Propagator (PropagatedNum)
 import Data.Set qualified as Set
 import Protolude
 import Text.PrettyPrint.Leijen.Text (Pretty (..), parens, vsep, (<+>))
@@ -155,7 +154,6 @@ toR1CS CircuitVars {..} (ArithCircuit gates) =
 calculateWitness ::
   forall f l.
   (PrimeField f) =>
-  (PropagatedNum f) =>
   CircuitVars l ->
   ArithCircuit f ->
   Inputs f ->
