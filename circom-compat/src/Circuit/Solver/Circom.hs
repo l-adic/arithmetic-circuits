@@ -10,6 +10,8 @@ module Circuit.Solver.Circom
     _writeSharedRWMemory,
     _readSharedRWMemory,
     _getFieldNumLen32,
+    _getInputSize,
+    _getInputSignalSize,
     _setInputSignal,
     _getWitnessSize,
     _getWitness,
@@ -102,6 +104,13 @@ _readSharedRWMemory stRef i =
 
 _getFieldNumLen32 :: ProgramEnv f -> Int
 _getFieldNumLen32 ProgramEnv {peFieldSize} = n32 peFieldSize
+
+_getInputSize :: ProgramEnv f -> Int
+_getInputSize = peInputsSize
+
+-- we dont (yet) support multiple values (e.g. arrays) for signal values
+_getInputSignalSize :: Word32 -> Word32 -> IO Int
+_getInputSignalSize _ _ = pure 1
 
 -- we ignore the last arugment because our signals don't have indices, only names
 _setInputSignal ::
