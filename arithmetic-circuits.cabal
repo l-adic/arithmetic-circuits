@@ -78,8 +78,10 @@ library circom-compat
   import: deps, extensions, warnings
   visibility: public
   exposed-modules:
-    R1CS.Circom
+    Circuit.Solver.Circom
+    Circuit.Solver.Test
     FNV
+    R1CS.Circom
 
   other-modules:      Paths_arithmetic_circuits
   hs-source-dirs:     circom-compat/src
@@ -87,6 +89,7 @@ library circom-compat
       arithmetic-circuits
     , binary
     , bytestring
+    , template-haskell
     , vector
 
   ghc-options:        -freverse-errors -O2 -Wall
