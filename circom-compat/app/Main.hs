@@ -19,7 +19,7 @@ main = do
       publicInputs = Map.fromList $ zip (Set.toAscList $ cvPublicInputs bsVars) [6]
       privateInputs = Map.fromList $ zip (Set.toAscList $ cvPrivateInputs bsVars) [2, 3]
       inputs = publicInputs <> privateInputs
-      (r1cs, wtns) = calculateWitness (Inputs inputs) bsCircuit
+      (r1cs, wtns) = calculateWitness bsVars bsCircuit (Inputs inputs)
   unless (isValidWitness wtns r1cs) $ panic "Invalid witness"
   encodeFile "circom-compat/examples/factors/circuit.r1cs" $ r1csToCircomR1CS r1cs
   encodeFile "circom-compat/examples/factors/witness.wtns" $ witnessToCircomWitness wtns

@@ -78,8 +78,9 @@ library circom-compat
   import: deps, extensions, warnings
   visibility: public
   exposed-modules:
-    R1CS.Circom
+    Circuit.Solver.Circom
     FNV
+    R1CS.Circom
 
   other-modules:      Paths_arithmetic_circuits
   hs-source-dirs:     circom-compat/src

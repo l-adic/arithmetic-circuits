@@ -12,7 +12,7 @@ module R1CS
   )
 where
 
-import Circuit (AffineCircuit (..), ArithCircuit (..), CircuitVars (..), Gate (..), Wire (..), collectCircuitVars, solve, unsplit, wireName)
+import Circuit (AffineCircuit (..), ArithCircuit (..), CircuitVars (..), Gate (..), Wire (..), solve, unsplit, wireName)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Field.Galois (PrimeField)
 import Data.Map qualified as Map
@@ -142,25 +142,25 @@ validateWitness (Witness w) (R1CS {r1csConstraints}) =
 isValidWitness :: (Eq f, Num f) => Witness f -> R1CS f -> Bool
 isValidWitness w r1cs = isRight $ validateWitness w r1cs
 
-toR1CS :: (Num f) => ArithCircuit f -> R1CS f
-toR1CS c@(ArithCircuit gates) =
-  let CircuitVars {..} = collectCircuitVars c
-   in R1CS
-        { r1csConstraints = mkR1C <$> gates,
-          r1csNumVars = Set.size $ Set.insert oneVar cvVars,
-          r1csNumPublicInputs = Set.size cvPublicInputs,
-          r1csNumPrivateInputs = Set.size cvPrivateInputs,
-          r1csNumOutputs = Set.size cvOutputs
-        }
+toR1CS :: (Num f) => CircuitVars l -> ArithCircuit f -> R1CS f
+toR1CS CircuitVars {..} (ArithCircuit gates) =
+  R1CS
+    { r1csConstraints = mkR1C <$> gates,
+      r1csNumVars = Set.size $ Set.insert oneVar cvVars,
+      r1csNumPublicInputs = Set.size cvPublicInputs,
+      r1csNumPrivateInputs = Set.size cvPrivateInputs,
+      r1csNumOutputs = Set.size cvOutputs
+    }
 
 calculateWitness ::
-  forall f.
+  forall f l.
   (PrimeField f) =>
   (PropagatedNum f) =>
-  Inputs f ->
+  CircuitVars l ->
   ArithCircuit f ->
+  Inputs f ->
   (R1CS f, Witness f)
-calculateWitness (Inputs m) circuit =
-  let r1cs = toR1CS circuit
-      w = solve (Map.insert oneVar 1 m) circuit
+calculateWitness vars circuit (Inputs m) =
+  let r1cs = toR1CS vars circuit
+      w = solve vars circuit (Map.insert oneVar 1 m)
    in (r1cs, Witness w)
