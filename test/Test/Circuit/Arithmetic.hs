@@ -9,7 +9,6 @@ import Circuit.Solver
 import Data.Field.Galois (Prime, char, fromP)
 import Data.List ((\\))
 import Data.Map qualified as Map
-import Data.Propagator (Propagated, PropagatedNum)
 import Math.NumberTheory.Logarithms (naturalLog2)
 import Protolude
 import Test.Tasty.QuickCheck
@@ -19,10 +18,6 @@ import Test.Tasty.QuickCheck
 -------------------------------------------------------------------------------
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
-
-instance (KnownNat p) => Propagated (Prime p)
-
-instance (KnownNat p) => PropagatedNum (Prime p)
 
 -------------------------------------------------------------------------------
 -- Generators

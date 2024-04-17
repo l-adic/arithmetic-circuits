@@ -2,7 +2,7 @@ module Circuit.Solver (solve) where
 
 import Circuit.Affine
 import Circuit.Arithmetic
-import Data.Field.Galois (PrimeField (fromP), pow)
+import Data.Field.Galois (GaloisField, PrimeField (fromP), pow)
 import Data.Map qualified as Map
 import Data.Propagator
 import Data.Propagator.Cell (unify)
@@ -16,7 +16,7 @@ newtype SolverEnv s f = SolverEnv
   }
 
 affineCircuitToCell ::
-  (PropagatedNum f, Fractional f, Eq f) =>
+  (GaloisField f) =>
   SolverEnv s f ->
   AffineCircuit f Wire ->
   ST s (Cell s f)
@@ -38,7 +38,7 @@ affineCircuitToCell env (Var i) =
 affineCircuitToCell _ Nil = cell
 
 gateToPropagator ::
-  (PropagatedNum f, PrimeField f) =>
+  (PrimeField f) =>
   SolverEnv s f ->
   Gate f Wire ->
   ST s ()
@@ -84,7 +84,6 @@ gateToPropagator env (Split i outs) = do
 solve ::
   forall k l.
   (PrimeField k) =>
-  (PropagatedNum k) =>
   CircuitVars l ->
   ArithCircuit k ->
   Map Int k ->
