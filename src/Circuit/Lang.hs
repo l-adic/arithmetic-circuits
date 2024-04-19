@@ -13,6 +13,7 @@ module Circuit.Lang
     e,
     cond,
     ret,
+    compileWithWire,
     publicInput,
     privateInput,
   )
