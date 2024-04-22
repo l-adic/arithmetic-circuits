@@ -408,13 +408,14 @@ compile expr = case expr of
     pure . Right $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
   ESplit input f -> do
     i <- compile input >>= addWire
-    let mkBoolVar w = do
-          squared <- mulToImm (Left w) (Left w)
-          emit $ Mul (Var squared) (ConstGate 1) w
-          pure w
     outputs <- traverse (\_ -> mkBoolVar =<< imm) $ universe @(NBits f)
     emit $ Split i (Vec.toList outputs)
     compile $ f (EVar . VarBool <$> outputs)
+    where
+      mkBoolVar w = do
+        squared <- mulToImm (Left w) (Left w)
+        emit $ Mul (Var squared) (ConstGate 1) w
+        pure w
 
 exprToArithCircuit ::
   (Num f) =>
@@ -426,34 +427,3 @@ exprToArithCircuit ::
 exprToArithCircuit expr output = do
   exprOut <- compile expr
   emit $ Mul (ConstGate 1) (addVar exprOut) output
-
-{-
--- | Translate an arithmetic expression to an arithmetic circuit
-exprToArithCircuit ::
-  (Num f, Nat.SNatI (NBits f)) =>
-  -- | expression to compile
-  Expr Int f ty ->
-  -- | Wire to assign the output of the expression to
-  Wire ->
-  ExprM f ()
-exprToArithCircuit expr output =
-  exprToArithCircuit' (mapVarsExpr (InputWire "" Public) expr) output
-
-exprToArithCircuit' :: (Num f, Nat.SNatI (NBits f)) => Expr Wire f ty -> Wire -> ExprM f ()
-exprToArithCircuit' expr output = do
-  exprOut <- compile expr
-  emit $ Mul (ConstGate 1) (addVar exprOut) output
-
--- | Apply function to variable names.
-mapVarsExpr :: (i -> j) -> Expr i f ty -> Expr j f ty
-mapVarsExpr f expr = case expr of
-  EVar var -> case var of
-    VarBool i -> EVar $ VarBool $ f i
-    VarField i -> EVar $ VarField $ f i
-  EVal v -> EVal v
-  EBinOp op e1 e2 -> EBinOp op (mapVarsExpr f e1) (mapVarsExpr f e2)
-  EUnOp op e1 -> EUnOp op (mapVarsExpr f e1)
-  EIf b tr fl -> EIf (mapVarsExpr f b) (mapVarsExpr f tr) (mapVarsExpr f fl)
-  EEq lhs rhs -> EEq (mapVarsExpr f lhs) (mapVarsExpr f rhs)
-  ESplit i g -> ESplit (mapVarsExpr f i) (\bs -> mapVarsExpr f bs)
--}
