@@ -3,6 +3,8 @@
 module Circuit.Expr
   ( UnOp (..),
     BinOp (..),
+    Val (..),
+    Var (..),
     Expr (..),
     ExprM,
     BuilderState (..),
@@ -54,13 +56,33 @@ opPrecedence BSub = 6
 opPrecedence BAdd = 6
 opPrecedence BMul = 7
 
+data Val f ty where
+  VField :: f -> Val f f
+  VBool :: f -> Val f Bool
+  VUnit :: Val f ()
+
+deriving instance (Show f) => Show (Val f ty)
+
+instance (Pretty f) => Pretty (Val f ty) where
+  pretty (VField f) = pretty f
+  pretty (VBool b) = pretty b
+  pretty VUnit = "()"
+
+data Var i f ty where
+  VarField :: i -> Var i f f
+  VarBool :: i -> Var i f Bool
+
+deriving instance (Show i, Show f) => Show (Var i f ty)
+
+instance (Pretty i) => Pretty (Var i f ty) where
+  pretty (VarField f) = pretty f
+  pretty (VarBool b) = pretty b
+
 -- | Expression data type of (arithmetic) expressions over a field @f@
 -- with variable names/indices coming from @i@.
 data Expr i f ty where
-  EConst :: f -> Expr i f f
-  EConstBool :: Bool -> Expr i f Bool
-  EVar :: i -> Expr i f f
-  EVarBool :: i -> Expr i f Bool
+  EVal :: Val f ty -> Expr i f ty
+  EVar :: Var i f ty -> Expr i f ty
   EUnOp :: UnOp f ty -> Expr i f ty -> Expr i f ty
   EBinOp :: BinOp f ty -> Expr i f ty -> Expr i f ty -> Expr i f ty
   EIf :: Expr i f Bool -> Expr i f ty -> Expr i f ty -> Expr i f ty
@@ -92,14 +114,10 @@ instance (Pretty f, Pretty i, Pretty ty) => Pretty (Expr i f ty) where
       prettyPrec :: Int -> Expr i f ty -> Doc
       prettyPrec p e =
         case e of
+          EVal v ->
+            pretty v
           EVar v ->
             pretty v
-          EVarBool v ->
-            pretty v
-          EConst l ->
-            pretty l
-          EConstBool b ->
-            pretty b
           -- TODO correct precedence
           EUnOp op e1 -> parens (pretty op <+> pretty e1)
           EBinOp op e1 e2 ->
@@ -152,14 +170,17 @@ evalExpr ::
   -- | resulting value
   ty
 evalExpr lookupVar expr vars = case expr of
-  EConst f -> f
-  EConstBool b -> b
-  EVar i -> case lookupVar i vars of
-    Just v -> v
-    Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
-  EVarBool i -> case lookupVar i vars of
-    Just v -> v == 1
-    Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
+  EVal v -> case v of
+    VBool b -> b == 1
+    VField f -> f
+    VUnit -> ()
+  EVar var -> case var of
+    VarField i -> case lookupVar i vars of
+      Just v -> v
+      Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
+    VarBool i -> case lookupVar i vars of
+      Just v -> v == 1
+      Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
   EUnOp UNeg e1 ->
     negate $ evalExpr lookupVar e1 vars
   EUnOp UNot e1 ->
@@ -304,10 +325,13 @@ addWire (Right c) = do
 
 compile :: (Num f) => Expr Wire f ty -> ExprM f (Either Wire (AffineCircuit f Wire))
 compile expr = case expr of
-  EConst n -> pure . Right $ ConstGate n
-  EConstBool b -> pure . Right $ ConstGate (if b then 1 else 0)
-  EVar v -> pure . Left $ v
-  EVarBool v -> pure . Left $ v
+  EVal v -> case v of
+    VField f -> pure . Right $ ConstGate f
+    VBool b -> pure . Right $ ConstGate b
+    VUnit -> pure . Right $ Nil
+  EVar var -> case var of
+    VarField i -> pure . Left $ i
+    VarBool i -> pure . Left $ i
   EUnOp op e1 -> do
     e1Out <- compile e1
     case op of
@@ -376,10 +400,10 @@ exprToArithCircuit' expr output = do
 -- | Apply function to variable names.
 mapVarsExpr :: (i -> j) -> Expr i f ty -> Expr j f ty
 mapVarsExpr f expr = case expr of
-  EVar i -> EVar $ f i
-  EVarBool i -> EVarBool $ f i
-  EConst v -> EConst v
-  EConstBool b -> EConstBool b
+  EVar var -> case var of
+    VarBool i -> EVar $ VarBool $ f i
+    VarField i -> EVar $ VarField $ f i
+  EVal v -> EVal v
   EBinOp op e1 e2 -> EBinOp op (mapVarsExpr f e1) (mapVarsExpr f e2)
   EUnOp op e1 -> EUnOp op (mapVarsExpr f e1)
   EIf b tr fl -> EIf (mapVarsExpr f b) (mapVarsExpr f tr) (mapVarsExpr f fl)

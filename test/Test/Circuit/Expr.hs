@@ -16,11 +16,11 @@ import Test.Tasty.QuickCheck
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-arbExprBool :: (Arbitrary f) => Int -> Int -> Gen (Expr Int f Bool)
+arbExprBool :: (Arbitrary f, Num f) => Int -> Int -> Gen (Expr Int f Bool)
 arbExprBool numVars size
   | size <= 0 =
       oneof $
-        [EConstBool <$> arbitrary]
+        [EVal . VBool <$> oneof [pure 0, pure 1]]
           ++ if numVars > 0
             then []
             else []
@@ -42,13 +42,13 @@ arbExprBool numVars size
             <*> arbExpr numVars (size - 1)
         ]
 
-arbExpr :: (Arbitrary f) => Int -> Int -> Gen (Expr Int f f)
+arbExpr :: (Arbitrary f, Num f) => Int -> Int -> Gen (Expr Int f f)
 arbExpr numVars size
   | size <= 0 =
       oneof $
-        [EConst <$> arbitrary]
+        [EVal . VField <$> arbitrary]
           ++ if numVars > 0
-            then [EVar <$> choose (0, numVars - 1)]
+            then [EVar . VarField <$> choose (0, numVars - 1)]
             else []
   | otherwise =
       oneof
@@ -65,7 +65,7 @@ arbExpr numVars size
 data ExprWithInputs f = ExprWithInputs (Expr Int f f) [Map Int f]
   deriving (Show)
 
-instance (Arbitrary f) => Arbitrary (ExprWithInputs f) where
+instance (Arbitrary f, Num f) => Arbitrary (ExprWithInputs f) where
   arbitrary = do
     numVars <- abs <$> arbitrary
     program <- scale (`div` 10) $ sized (arbExpr numVars)
@@ -87,13 +87,16 @@ prop_compiledCircuitValid (ExprWithInputs expr _) =
 prop_evalEqArithEval :: ExprWithInputs Fr -> Bool
 prop_evalEqArithEval (ExprWithInputs expr inputs) = all testInput inputs
   where
-    testInput input = exprResult input == arithResult input
+    testInput input =
+      let a = exprResult input
+          b = arithResult input
+       in trace ("\n\n\nlhs: " <> show a ++ "\n\nrhs:" ++ show b) $ a == b
     exprResult input = evalExpr (Map.lookup) expr input
-    arithResult input = arithOutput input Map.! (OutputWire 0)
+    arithResult input = arithOutput input Map.! (OutputWire 1)
     arithOutput input =
       evalArithCircuit
         (Map.lookup)
         (Map.insert)
         circuit
         (Map.mapKeys (InputWire "" Public) input)
-    circuit = (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 0))
+    circuit = (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 1))

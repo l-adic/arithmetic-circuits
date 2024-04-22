@@ -26,7 +26,7 @@ import Protolude
 
 -- | Convert constant to expression
 c :: f -> Expr Wire f f
-c = EConst
+c = EVal . VField
 
 -- | Binary arithmetic operations on expressions
 add, sub, mul :: Expr Wire f f -> Expr Wire f f -> Expr Wire f f
@@ -52,7 +52,7 @@ eq = EEq
 
 -- | Convert wire to expression
 deref :: Wire -> Expr Wire f f
-deref = EVar
+deref = EVar . VarField
 
 -- | Return compilation of expression into an intermediate wire
 e :: (Num f) => Expr Wire f f -> ExprM f Wire

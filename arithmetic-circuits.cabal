@@ -106,7 +106,7 @@ executable factors
   default-language: GHC2021
 
 test-suite circuit-tests
-  import: deps, extensions, warnings
+  import: deps, extensions
   type:               exitcode-stdio-1.0
   main-is:            Main.hs
 
