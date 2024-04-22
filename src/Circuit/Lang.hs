@@ -1,6 +1,7 @@
 -- | Surface language
 module Circuit.Lang
-  ( c,
+  ( cField,
+    cBool,
     add,
     sub,
     mul,
@@ -10,23 +11,34 @@ module Circuit.Lang
     not_,
     eq,
     deref,
-    e,
-    cond,
     ret,
+    -- fieldVar,
+    -- boolVar,
+    fieldInput,
+    boolInput,
+    cond,
     compileWithWire,
-    publicInput,
-    privateInput,
+    withBits,
+    elem_,
+    all_,
+    none_,
+    any_,
   )
 where
 
 import Circuit.Affine (AffineCircuit (..))
-import Circuit.Arithmetic (Gate (..), Wire (..))
+import Circuit.Arithmetic (Gate (..), InputType (Private, Public), Wire (..))
 import Circuit.Expr
+import Data.Type.Nat qualified as Nat
+import Data.Vec.Lazy (Vec)
 import Protolude
 
 -- | Convert constant to expression
-c :: f -> Expr Wire f f
-c = EVal . VField
+cField :: f -> Expr Wire f f
+cField = EVal . ValField
+
+cBool :: (Num f) => Bool -> Expr Wire f Bool
+cBool b = EVal . ValBool $ if b then 1 else 0
 
 -- | Binary arithmetic operations on expressions
 add, sub, mul :: Expr Wire f f -> Expr Wire f f -> Expr Wire f f
@@ -50,34 +62,63 @@ not_ = EUnOp UNot
 eq :: Expr Wire f f -> Expr Wire f f -> Expr Wire f Bool
 eq = EEq
 
--- | Convert wire to expression
-deref :: Wire -> Expr Wire f f
-deref = EVar . VarField
+---- | Return compilation of expression into an intermediate wire
+-- fieldVar :: (Num f) => Expr Wire f f -> ExprM f (Expr Wire f f)
+-- fieldVar = fmap (EVar . VarField) . compileWithWire imm
+--
+-- boolVar :: (Num f) => Expr Wire f Bool -> ExprM f (Expr Wire f Bool)
+-- boolVar = fmap (EVar . VarBool) . compileWithWire imm
 
--- | Return compilation of expression into an intermediate wire
-e :: (Num f) => Expr Wire f f -> ExprM f Wire
-e = compileWithWire imm
+fieldInput :: InputType -> Text -> ExprM f (Var Wire f f)
+fieldInput it label = case it of
+  Public -> VarField <$> freshPublicInput label
+  Private -> VarField <$> freshPrivateInput label
+
+boolInput :: InputType -> Text -> ExprM f (Var Wire f Bool)
+boolInput it label = case it of
+  Public -> VarBool <$> freshPublicInput label
+  Private -> VarBool <$> freshPrivateInput label
 
 -- | Conditional statement on expressions
 cond :: Expr Wire f Bool -> Expr Wire f ty -> Expr Wire f ty -> Expr Wire f ty
 cond = EIf
 
--- | Return compilation of expression into an output wire
-ret :: (Num f) => Expr Wire f f -> ExprM f Wire
-ret = compileWithWire freshOutput
+withBits ::
+  (Nat.SNatI (NBits f)) =>
+  Expr Wire f f ->
+  (Vec (NBits f) (Expr Wire f Bool) -> Expr Wire f ty) ->
+  Expr Wire f ty
+withBits = ESplit
 
-compileWithWire :: (Num f) => ExprM f Wire -> Expr Wire f f -> ExprM f Wire
+deref :: Var Wire f ty -> Expr Wire f ty
+deref = EVar
+
+compileWithWire :: (Num f) => ExprM f (Var Wire f ty) -> Expr Wire f ty -> ExprM f Wire
 compileWithWire freshWire expr = do
   compileOut <- compile expr
   case compileOut of
-    Left wire -> pure wire
+    Left wire -> do
+      wire' <- rawWire <$> freshWire
+      emit $ Mul (ConstGate 1) (Var wire') wire
+      pure wire
     Right circ -> do
-      wire <- freshWire
+      wire <- rawWire <$> freshWire
       emit $ Mul (ConstGate 1) circ wire
       pure wire
 
-publicInput :: Text -> ExprM f Wire
-publicInput = freshPublicInput
+ret :: (Num f) => Text -> Expr Wire f Bool -> ExprM f Wire
+ret label = compileWithWire (boolInput Public label)
 
-privateInput :: Text -> ExprM f Wire
-privateInput = freshPrivateInput
+--------------------------------------------------------------------------------
+
+elem_ :: (Num f, Functor t, Foldable t) => Expr Wire f f -> t (Expr Wire f f) -> Expr Wire f Bool
+elem_ a as = any_ $ map (eq a) as
+
+all_ :: (Num f, Foldable t) => t (Expr Wire f Bool) -> Expr Wire f Bool
+all_ = foldr and_ (cBool True)
+
+none_ :: (Num f, Foldable t) => t (Expr Wire f Bool) -> Expr Wire f Bool
+none_ = not_ . any_
+
+any_ :: (Num f, Foldable t) => t (Expr Wire f Bool) -> Expr Wire f Bool
+any_ = foldr or_ (cBool False)

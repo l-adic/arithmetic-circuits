@@ -27,8 +27,8 @@ type Fr = Prime 2188824287183927522224640574525727508854836440041603434369820418
 
 program :: (GaloisField f) => ExprM f Wire
 program = do
-  n <- deref <$> freshPublicInput "n"
-  a <- deref <$> freshPrivateInput "a"
-  b <- deref <$> freshPrivateInput "b"
+  n <- deref <$> fieldInput Public "n"
+  a <- deref <$> fieldInput Private "a"
+  b <- deref <$> fieldInput Private "b"
   let isFactorization = eq n (a `mul` b)
-  ret $ cond isFactorization (c 1) (c 0)
+  ret "out" $ isFactorization

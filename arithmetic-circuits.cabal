@@ -44,13 +44,16 @@ common deps
       aeson           >=1.4
     , base            >=4.10  && <5
     , containers      >=0.6.0
+    , distributive 
     , filepath        >=1.4.2
     , galois-field    >=2.0.0
+    , fin
     , process
     , propagators
     , protolude       >=0.2
     , semirings       >=0.7
     , text            >=1.2.3
+    , vec
     , wl-pprint-text  >=1.2.0
 
 library
@@ -116,14 +119,18 @@ test-suite circuit-tests
     Test.Circuit.Arithmetic
     Test.Circuit.Expr
     Test.Circuit.R1CS
+    Test.Circuit.Sudoku
 
   hs-source-dirs:     test
 
   ghc-options:        -freverse-errors -O2 -Wall -main-is Main
   build-depends:
       arithmetic-circuits
+    , array
     , integer-logarithms
     , quickcheck-instances  >=0.3
+    , QuickCheck
+    , random
     , tasty                 >=1.2
     , tasty-hunit           >=0.10
     , tasty-quickcheck      >=0.10

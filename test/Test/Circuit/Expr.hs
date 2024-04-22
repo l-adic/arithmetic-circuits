@@ -6,9 +6,11 @@ import Circuit.Arithmetic
 import Circuit.Expr
 import Data.Field.Galois (Prime)
 import Data.Map qualified as Map
-import Protolude
+import Protolude hiding (Show (..), show)
 import Test.Circuit.Affine
 import Test.Tasty.QuickCheck
+import Text.PrettyPrint.Leijen.Text hiding ((<$>))
+import Prelude (Show (..))
 
 -------------------------------------------------------------------------------
 -- Generators
@@ -16,11 +18,11 @@ import Test.Tasty.QuickCheck
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-arbExprBool :: (Arbitrary f, Num f) => Int -> Int -> Gen (Expr Int f Bool)
+arbExprBool :: (Arbitrary f, Num f) => Int -> Int -> Gen (Expr Wire f Bool)
 arbExprBool numVars size
   | size <= 0 =
       oneof $
-        [EVal . VBool <$> oneof [pure 0, pure 1]]
+        [EVal . ValBool <$> oneof [pure 0, pure 1]]
           ++ if numVars > 0
             then []
             else []
@@ -42,13 +44,13 @@ arbExprBool numVars size
             <*> arbExpr numVars (size - 1)
         ]
 
-arbExpr :: (Arbitrary f, Num f) => Int -> Int -> Gen (Expr Int f f)
+arbExpr :: (Arbitrary f, Num f) => Int -> Int -> Gen (Expr Wire f f)
 arbExpr numVars size
   | size <= 0 =
       oneof $
-        [EVal . VField <$> arbitrary]
+        [EVal . ValField <$> arbitrary]
           ++ if numVars > 0
-            then [EVar . VarField <$> choose (0, numVars - 1)]
+            then [EVar . VarField . InputWire "" Public <$> choose (0, numVars - 1)]
             else []
   | otherwise =
       oneof
@@ -62,8 +64,7 @@ arbExpr numVars size
             <*> arbExpr numVars (size - 1)
         ]
 
-data ExprWithInputs f = ExprWithInputs (Expr Int f f) [Map Int f]
-  deriving (Show)
+data ExprWithInputs f = ExprWithInputs (Expr Wire f f) [Map Int f]
 
 instance (Arbitrary f, Num f) => Arbitrary (ExprWithInputs f) where
   arbitrary = do
@@ -71,6 +72,9 @@ instance (Arbitrary f, Num f) => Arbitrary (ExprWithInputs f) where
     program <- scale (`div` 10) $ sized (arbExpr numVars)
     inputs <- vectorOf 5 $ arbInputVector numVars
     pure $ ExprWithInputs program inputs
+
+instance (Pretty f) => Show (ExprWithInputs f) where
+  show (ExprWithInputs expr inputs) = show $ pretty expr <+> pretty (Map.toList <$> inputs)
 
 -------------------------------------------------------------------------------
 -- Tests
@@ -88,10 +92,9 @@ prop_evalEqArithEval :: ExprWithInputs Fr -> Bool
 prop_evalEqArithEval (ExprWithInputs expr inputs) = all testInput inputs
   where
     testInput input =
-      let a = exprResult input
+      let a = evalExpr (Map.mapKeys (InputWire "" Public) input) expr
           b = arithResult input
        in trace ("\n\n\nlhs: " <> show a ++ "\n\nrhs:" ++ show b) $ a == b
-    exprResult input = evalExpr (Map.lookup) expr input
     arithResult input = arithOutput input Map.! (OutputWire 1)
     arithOutput input =
       evalArithCircuit
