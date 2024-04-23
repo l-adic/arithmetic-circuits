@@ -19,10 +19,12 @@ module Circuit.Lang
     cond,
     compileWithWire,
     withBits,
+    Any_ (..),
+    And_ (..),
     elem_,
-    all_,
-    none_,
     any_,
+    none_,
+    all_,
   )
 where
 
@@ -111,14 +113,32 @@ ret label = compileWithWire (boolInput Public label)
 
 --------------------------------------------------------------------------------
 
+newtype And_ f = And_ {unAnd_ :: Expr Wire f Bool}
+
+instance Semigroup (And_ f) where
+  And_ a <> And_ b = And_ $ EBinOp BAnd a b
+
+instance (Num f) => Monoid (And_ f) where
+  mempty = And_ $ cBool True
+
+newtype Any_ f = Any_ {unAny_ :: Expr Wire f Bool}
+
+instance Semigroup (Any_ f) where
+  Any_ a <> Any_ b = Any_ $ or_ a b
+
+instance (Num f) => Monoid (Any_ f) where
+  mempty = Any_ $ cBool False
+
+--------------------------------------------------------------------------------
+
 elem_ :: (Num f, Functor t, Foldable t) => Expr Wire f f -> t (Expr Wire f f) -> Expr Wire f Bool
 elem_ a as = any_ $ map (eq a) as
 
 all_ :: (Num f, Foldable t) => t (Expr Wire f Bool) -> Expr Wire f Bool
-all_ = foldr and_ (cBool True)
+all_ = unAnd_ . foldMap And_
 
 none_ :: (Num f, Foldable t) => t (Expr Wire f Bool) -> Expr Wire f Bool
-none_ = not_ . any_
+none_ = not_ . unAny_ . foldMap Any_
 
 any_ :: (Num f, Foldable t) => t (Expr Wire f Bool) -> Expr Wire f Bool
-any_ = foldr or_ (cBool False)
+any_ = unAny_ . foldMap Any_

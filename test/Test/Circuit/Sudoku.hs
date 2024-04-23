@@ -35,20 +35,18 @@ isPermutation ::
   [Expr Wire f f] ->
   Expr Wire f Bool
 isPermutation as bs =
-  let cs = zip as [0 ..]
-   in all_ $ flip map cs $ \(a, i) ->
-        let isPresent = elem_ a bs
-            isUnique = not_ $ elem_ a (take i as)
-         in isPresent `and_` isUnique
+  all_ $ flip map (zip as [0 ..]) $ \(a, i) ->
+    let isPresent = elem_ a bs
+        isUnique = not_ $ elem_ a (take i as)
+     in isPresent `and_` isUnique
 
 mkBoxes :: Board a -> BoxGrid a
 mkBoxes = Vec.chunks @Nat3 . fmap (Vec.chunks @Nat3)
 
 validateBoxes :: (Num f) => SudokuSet (Expr Wire f f) -> BoxGrid (Expr Wire f f) -> Expr Wire f Bool
 validateBoxes ss boxes =
-  let cs = flip Vec.map (Vec.concat boxes) $ \box ->
-        isPermutation (Vec.toList ss) (Vec.toList $ Vec.concat box)
-   in all_ cs
+  let f box = isPermutation (Vec.toList ss) (Vec.toList $ Vec.concat box)
+   in all_ $ map f (Vec.concat boxes)
 
 mkBoard :: ExprM f (Board (Expr Wire f f))
 mkBoard =

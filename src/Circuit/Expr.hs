@@ -32,14 +32,15 @@ where
 
 import Circuit.Affine
 import Circuit.Arithmetic
-import Data.Field.Galois (Prime, PrimeField (fromP))
+import Data.Field.Galois (GaloisField, Prime, PrimeField (fromP))
 import Data.Map qualified as Map
+import Data.Semiring (Ring (..), Semiring (..))
 import Data.Set qualified as Set
 import Data.Type.Nat qualified as Nat
 import Data.Vec.Lazy (Vec, universe)
 import Data.Vec.Lazy qualified as Vec
 import GHC.TypeNats (Log2, type (+))
-import Protolude
+import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 
 data UnOp f a where
@@ -52,6 +53,7 @@ data BinOp f a where
   BAdd :: BinOp f f
   BSub :: BinOp f f
   BMul :: BinOp f f
+  BDiv :: BinOp f f
   BAnd :: BinOp f Bool
   BOr :: BinOp f Bool
   BXor :: BinOp f Bool
@@ -63,6 +65,7 @@ opPrecedence BAnd = 5
 opPrecedence BSub = 6
 opPrecedence BAdd = 6
 opPrecedence BMul = 7
+opPrecedence BDiv = 8
 
 data Val f ty where
   ValField :: f -> Val f f
@@ -112,6 +115,7 @@ instance Pretty (BinOp f a) where
     BAdd -> text "+"
     BSub -> text "-"
     BMul -> text "*"
+    BDiv -> text "/"
     BAnd -> text "&&"
     BOr -> text "||"
     BXor -> text "xor"
@@ -201,7 +205,7 @@ evalExpr' expr = case expr of
           Just v -> v == 1
           Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
   EUnOp UNeg e1 ->
-    negate <$> evalExpr' e1
+    Protolude.negate <$> evalExpr' e1
   EUnOp UNot e1 ->
     not <$> evalExpr' e1
   EBinOp op e1 e2 -> apply <$> evalExpr' e1 <*> evalExpr' e2
@@ -210,6 +214,7 @@ evalExpr' expr = case expr of
         BAdd -> (+)
         BSub -> (-)
         BMul -> (*)
+        BDiv -> (/)
         BAnd -> (&&)
         BOr -> (||)
         BXor -> \x y -> (x || y) && not (x && y)
@@ -371,6 +376,13 @@ compile expr = case expr of
       BMul -> do
         tmp1 <- mulToImm (Right e1Out) (Right e2Out)
         pure . Left $ tmp1
+      BDiv -> do
+        _recip <- imm
+        _one <- addWire $ Right $ ConstGate 1
+        emit $ Mul e2Out (Var _recip) _one
+        out <- imm
+        emit $ Mul e1Out (Var _recip) out
+        pure $ Left out
       -- SUB(x, y) = x + (-y)
       BSub -> pure . Right $ Add e1Out (ScalarMul (-1) e2Out)
       BAnd -> do
@@ -427,3 +439,21 @@ exprToArithCircuit ::
 exprToArithCircuit expr output = do
   exprOut <- compile expr
   emit $ Mul (ConstGate 1) (addVar exprOut) output
+
+instance (GaloisField f) => Semiring (Expr Wire f f) where
+  plus = EBinOp BAdd
+  zero = EVal $ ValField 0
+  times = EBinOp BMul
+  one = EVal $ ValField 1
+
+instance (GaloisField f) => Ring (Expr Wire f f) where
+  negate = EUnOp UNeg
+
+instance (GaloisField f) => Num (Expr Wire f f) where
+  (+) = plus
+  (*) = times
+  (-) = EBinOp BSub
+  negate = EUnOp UNeg
+  abs = identity
+  signum = const 1
+  fromInteger = EVal . ValField . fromInteger
