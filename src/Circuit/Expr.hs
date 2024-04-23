@@ -27,19 +27,19 @@ module Circuit.Expr
     evalExpr,
     rawWire,
     exprToArithCircuit,
+    type Nat.FromGHC,
   )
 where
 
 import Circuit.Affine
 import Circuit.Arithmetic
-import Data.Field.Galois (GaloisField, Prime, PrimeField (fromP))
+import Data.Field.Galois (GaloisField, PrimeField (fromP))
 import Data.Map qualified as Map
 import Data.Semiring (Ring (..), Semiring (..))
 import Data.Set qualified as Set
 import Data.Type.Nat qualified as Nat
 import Data.Vec.Lazy (Vec, universe)
 import Data.Vec.Lazy qualified as Vec
-import GHC.TypeNats (Log2, type (+))
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 
@@ -92,8 +92,6 @@ rawWire (VarField i) = i
 rawWire (VarBool i) = i
 
 type family NBits a :: Nat.Nat
-
-type instance NBits (Prime p) = Nat.FromGHC ((Log2 p) + 1)
 
 -- | Expression data type of (arithmetic) expressions over a field @f@
 -- with variable names/indices coming from @i@.
@@ -449,17 +447,6 @@ compile expr = case expr of
     bs <- toList <$> compile bits
     ws <- traverse addWire bs
     pure . Identity . Right $ unsplit ws
-
---  EJoin :: (Num f, Nat.SNatI n) => Expr i f (Vec n) Bool -> Expr i f Identity f
---
---
--- unsplit ::
---  (Num f) =>
---  -- | (binary) wires containing a binary expansion,
---  -- small-endian
---  [Wire] ->
---  AffineCircuit f Wire
--- unsplit = snd . foldl (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (ScalarMul (2 ^ ix) (Var wire)))) (0, ConstGate 0)
 
 exprToArithCircuit ::
   (Num f, Foldable t) =>

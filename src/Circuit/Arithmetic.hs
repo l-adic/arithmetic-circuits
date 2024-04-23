@@ -35,6 +35,7 @@ import Text.PrettyPrint.Leijen.Text as PP
     parens,
     text,
     vcat,
+    (<+>),
   )
 
 data InputType = Public | Private deriving (Show, Eq, Ord, Generic, NFData)
@@ -261,6 +262,17 @@ data CircuitVars label = CircuitVars
     cvOutputs :: Set Int,
     cvInputsLabels :: Map label Int
   }
+  deriving (Show)
+
+instance (Pretty label) => Pretty (CircuitVars label) where
+  pretty CircuitVars {cvVars, cvPrivateInputs, cvPublicInputs, cvOutputs, cvInputsLabels} =
+    vcat
+      [ text "vars:" <+> pretty (toList cvVars),
+        text "private inputs:" <+> pretty (toList cvPrivateInputs),
+        text "public inputs:" <+> pretty (toList cvPublicInputs),
+        text "outputs:" <+> pretty (toList cvOutputs),
+        text "input labels:" <+> pretty (toList cvInputsLabels)
+      ]
 
 instance (Ord label) => Semigroup (CircuitVars label) where
   a <> b =

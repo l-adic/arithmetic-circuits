@@ -13,9 +13,8 @@ module Circuit.Lang
     not_,
     eq,
     deref,
-    ret,
-    -- fieldVar,
-    -- boolVar,
+    retBool,
+    retField,
     fieldInput,
     boolInput,
     cond,
@@ -111,8 +110,11 @@ compileWithWire freshWire expr = do
       emit $ Mul (ConstGate 1) circ wire
       pure wire
 
-ret :: (Num f) => Text -> Signal f Bool -> ExprM f Wire
-ret label = compileWithWire (boolInput Public label)
+retBool :: (Num f) => Text -> Signal f Bool -> ExprM f Wire
+retBool label = compileWithWire (boolInput Public label)
+
+retField :: (Num f) => Text -> Signal f f -> ExprM f Wire
+retField label = compileWithWire (fieldInput Public label)
 
 --------------------------------------------------------------------------------
 

@@ -120,6 +120,7 @@ test-suite circuit-tests
     Test.Circuit.Expr
     Test.Circuit.R1CS
     Test.Circuit.Sudoku
+    Test.Circuit.Lang
 
   hs-source-dirs:     test
 
