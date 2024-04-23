@@ -17,9 +17,6 @@ import Data.Vec.Lazy qualified as Vec
 import Protolude hiding (head)
 import Test.Hspec (Spec, describe, it, shouldBe)
 
-sudokuSet :: (Num f) => SudokuSet (Expr Wire f f)
-sudokuSet = fromJust $ Vec.fromList $ map (cField . fromInteger) [1 .. 9]
-
 type SudokuSet a = Vec Nat9 a
 
 type Board a = Vec Nat9 (Vec Nat9 a)
@@ -28,6 +25,14 @@ type Box a = Vec Nat3 (Vec Nat3 a)
 
 type BoxGrid a = Vec Nat3 (Vec Nat3 (Box a))
 
+mkBoxes :: Board a -> BoxGrid a
+mkBoxes = Vec.chunks @Nat3 . fmap (Vec.chunks @Nat3)
+
+sudokuSet ::
+  (Num f) =>
+  SudokuSet (Expr Wire f f)
+sudokuSet = Vec.tabulate (cField . fromIntegral)
+
 isPermutation ::
   forall f.
   (Num f) =>
@@ -35,18 +40,20 @@ isPermutation ::
   [Expr Wire f f] ->
   Expr Wire f Bool
 isPermutation as bs =
-  all_ $ flip map (zip as [0 ..]) $ \(a, i) ->
-    let isPresent = elem_ a bs
-        isUnique = not_ $ elem_ a (take i as)
-     in isPresent `and_` isUnique
+  let f (a, i) =
+        let isPresent = elem_ a bs
+            isUnique = not_ $ elem_ a (take i as)
+         in isPresent `and_` isUnique
+   in all_ f (zip as [0 ..])
 
-mkBoxes :: Board a -> BoxGrid a
-mkBoxes = Vec.chunks @Nat3 . fmap (Vec.chunks @Nat3)
-
-validateBoxes :: (Num f) => SudokuSet (Expr Wire f f) -> BoxGrid (Expr Wire f f) -> Expr Wire f Bool
+validateBoxes ::
+  (Num f) =>
+  SudokuSet (Expr Wire f f) ->
+  BoxGrid (Expr Wire f f) ->
+  Expr Wire f Bool
 validateBoxes ss boxes =
   let f box = isPermutation (Vec.toList ss) (Vec.toList $ Vec.concat box)
-   in all_ $ map f (Vec.concat boxes)
+   in all_ f $ Vec.concat boxes
 
 mkBoard :: ExprM f (Board (Expr Wire f f))
 mkBoard =
@@ -55,7 +62,10 @@ mkBoard =
       let varName = "cell_" <> show (i, j)
       EVar <$> fieldInput Public varName
 
-initializeBoard :: (Num f) => Board (Expr Wire f f) -> ExprM f (Board (Expr Wire f f))
+initializeBoard ::
+  (Num f) =>
+  Board (Expr Wire f f) ->
+  ExprM f (Board (Expr Wire f f))
 initializeBoard board = do
   for (universe @Nat9) $ \i ->
     for (universe @Nat9) $ \j -> do
@@ -67,8 +77,8 @@ initializeBoard board = do
 validate :: (Num f) => ExprM f Wire
 validate = do
   b <- mkBoard >>= initializeBoard
-  let rowsValid = all_ $ map (isPermutation (Vec.toList sudokuSet)) (Vec.toList <$> b)
-      colsValid = all_ $ map (isPermutation (Vec.toList sudokuSet)) (Vec.toList <$> distribute b)
+  let rowsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> b)
+      colsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> distribute b)
       boxesValid = validateBoxes sudokuSet (mkBoxes b)
   ret "out" $ rowsValid `and_` colsValid `and_` boxesValid
 

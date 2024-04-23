@@ -23,7 +23,6 @@ module Circuit.Lang
     And_ (..),
     elem_,
     any_,
-    none_,
     all_,
   )
 where
@@ -63,13 +62,6 @@ not_ = EUnOp UNot
 -- | Compare two expressions
 eq :: Expr Wire f f -> Expr Wire f f -> Expr Wire f Bool
 eq = EEq
-
----- | Return compilation of expression into an intermediate wire
--- fieldVar :: (Num f) => Expr Wire f f -> ExprM f (Expr Wire f f)
--- fieldVar = fmap (EVar . VarField) . compileWithWire imm
---
--- boolVar :: (Num f) => Expr Wire f Bool -> ExprM f (Expr Wire f Bool)
--- boolVar = fmap (EVar . VarBool) . compileWithWire imm
 
 fieldInput :: InputType -> Text -> ExprM f (Var Wire f f)
 fieldInput it label = case it of
@@ -131,14 +123,25 @@ instance (Num f) => Monoid (Any_ f) where
 
 --------------------------------------------------------------------------------
 
-elem_ :: (Num f, Functor t, Foldable t) => Expr Wire f f -> t (Expr Wire f f) -> Expr Wire f Bool
-elem_ a as = any_ $ map (eq a) as
+elem_ ::
+  (Num f, Foldable t) =>
+  Expr Wire f f ->
+  t (Expr Wire f f) ->
+  Expr Wire f Bool
+elem_ a as =
+  let f b = eq a b
+   in any_ f as
 
-all_ :: (Num f, Foldable t) => t (Expr Wire f Bool) -> Expr Wire f Bool
-all_ = unAnd_ . foldMap And_
+all_ ::
+  (Num f, Foldable t) =>
+  (a -> Expr Wire f Bool) ->
+  t a ->
+  Expr Wire f Bool
+all_ f = unAnd_ . foldMap (And_ . f)
 
-none_ :: (Num f, Foldable t) => t (Expr Wire f Bool) -> Expr Wire f Bool
-none_ = not_ . unAny_ . foldMap Any_
-
-any_ :: (Num f, Foldable t) => t (Expr Wire f Bool) -> Expr Wire f Bool
-any_ = unAny_ . foldMap Any_
+any_ ::
+  (Num f, Foldable t) =>
+  (a -> Expr Wire f Bool) ->
+  t a ->
+  Expr Wire f Bool
+any_ f = unAny_ . foldMap (Any_ . f)
