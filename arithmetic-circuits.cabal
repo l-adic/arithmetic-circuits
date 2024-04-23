@@ -131,8 +131,10 @@ test-suite circuit-tests
     , quickcheck-instances  >=0.3
     , QuickCheck
     , random
+    , hspec
     , tasty                 >=1.2
     , tasty-hunit           >=0.10
+    , tasty-hspec
     , tasty-quickcheck      >=0.10
 
   build-tool-depends: tasty-discover:tasty-discover >=4.2

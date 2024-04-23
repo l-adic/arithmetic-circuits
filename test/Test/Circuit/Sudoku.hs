@@ -15,8 +15,7 @@ import Data.Type.Nat qualified as Nat
 import Data.Vec.Lazy (Vec, universe)
 import Data.Vec.Lazy qualified as Vec
 import Protolude hiding (head)
-import Test.QuickCheck (Arbitrary (..), Property)
-import Test.QuickCheck.Monadic
+import Test.Hspec (Spec, describe, it, shouldBe)
 
 sudokuSet :: (Num f) => SudokuSet (Expr Wire f f)
 sudokuSet = fromJust $ Vec.fromList $ map (cField . fromInteger) [1 .. 9]
@@ -79,48 +78,48 @@ type Fr = Prime 2188824287183927522224640574525727508854836440041603434369820418
 
 --------------------------------------------------------------------------------
 
-prop_sudokuSolver :: RandSudokuBoard -> Property
-prop_sudokuSolver (RandSudokuBoard b) = monadicIO $ run $ do
-  sol <- Map.toAscList <$> solvePuzzle (concat b)
-  let pubAssignments =
-        map (first (\a -> "cell_" <> show a)) $
-          [((i, j), v) | i <- [0 .. 8], j <- [0 .. 8], let v = b !! i !! j]
-      privAssignments =
-        map (first (\a -> "private_cell_" <> show a)) $
-          filter (\(_, v) -> v /= 0) sol
-  let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
-      pubInputs =
-        Map.fromList $
-          [ (var, fromIntegral value)
-            | (label, var) <- Map.toList $ cvInputsLabels bsVars,
-              (l, value) <- pubAssignments,
-              l == label
-          ]
-      privInputs =
-        Map.fromList $
-          [ (var, fromIntegral value)
-            | (label, var) <- Map.toList $ cvInputsLabels bsVars,
-              (l, value) <- privAssignments,
-              l == label
-          ]
-      outVar = fromJust $ Map.lookup "out" $ cvInputsLabels bsVars
-      sol2 = solve bsVars bsCircuit (pubInputs `Map.union` privInputs)
-  pure $ verifier (map snd sol) && (Map.lookup outVar sol2 == Just 1)
+spec_sudokuSolver :: Spec
+spec_sudokuSolver = do
+  describe "Can solve example sudoku problems" $
+    it "Matches the pure implementation" $ do
+      for_ examplePuzzles $ \b -> do
+        sol <- Map.toAscList <$> solvePuzzle (concat b)
+        let pubAssignments =
+              map (first (\a -> "cell_" <> show a)) $
+                [((i, j), v) | i <- [0 .. 8], j <- [0 .. 8], let v = b !! i !! j]
+            privAssignments =
+              map (first (\a -> "private_cell_" <> show a)) $
+                filter (\(_, v) -> v /= 0) sol
+        let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
+            pubInputs =
+              Map.fromList $
+                [ (var, fromIntegral value)
+                  | (label, var) <- Map.toList $ cvInputsLabels bsVars,
+                    (l, value) <- pubAssignments,
+                    l == label
+                ]
+            privInputs =
+              Map.fromList $
+                [ (var, fromIntegral value)
+                  | (label, var) <- Map.toList $ cvInputsLabels bsVars,
+                    (l, value) <- privAssignments,
+                    l == label
+                ]
+            outVar = fromJust $ Map.lookup "out" $ cvInputsLabels bsVars
+            sol2 = solve bsVars bsCircuit (pubInputs `Map.union` privInputs)
+        verifier (map snd sol) `shouldBe` True
+        Map.lookup outVar sol2 `shouldBe` Just 1
 
 verifier :: [Int] -> Bool
 verifier _input =
-  if length _input /= 81
-    then panic $ "Invalid input length" <> show _input
-    else
-      let input :: Vec (Nat.FromGHC 81) Int
-          input = fromJust $ Vec.fromList _input
-          board :: Vec Nat9 (Vec Nat9 Int)
-          board = Vec.chunks @Nat9 input
-          validRows = all (\row -> sort (Vec.toList row) == [1 .. 9]) board
-          validCols = all (\col -> sort (Vec.toList col) == [1 .. 9]) (distribute board)
-          boxes = mkBoxes board
-          validBoxes = all (\box -> sort (Vec.toList $ Vec.concat box) == [1 .. 9]) (Vec.concat boxes)
-       in validRows && validCols && validBoxes
+  let input :: Vec (Nat.FromGHC 81) Int
+      input = fromJust $ Vec.fromList _input
+      board = Vec.chunks @Nat9 input
+      validRows = all (\row -> sort (Vec.toList row) == [1 .. 9]) board
+      validCols = all (\col -> sort (Vec.toList col) == [1 .. 9]) (distribute board)
+      boxes = mkBoxes board
+      validBoxes = all (\box -> sort (Vec.toList $ Vec.concat box) == [1 .. 9]) (Vec.concat boxes)
+   in validRows && validCols && validBoxes
 
 --------------------------------------------------------------------------------
 
@@ -144,10 +143,6 @@ readSudokuBoard :: SudokuBoard -> [Int] -> IO ()
 readSudokuBoard a xs = sequence_ $ do
   (i, n) <- zip [1 .. 81] xs
   return $ writeArray a i n
-
---  (i, ys) <- zip [1 .. 9] xs
---  (j, n) <- zip [1 .. 9] ys
---  return $ writeBoard a (j, i) n
 
 -- the meat of the program.  Checks the current square.
 -- If 0, then get the list of nums and try to "solveSudoku' "
@@ -199,20 +194,46 @@ writeBoard :: SudokuBoard -> (Int, Int) -> Int -> IO ()
 writeBoard a (x, y) e = writeArray a (x + 9 * (y - 1)) e
 
 --------------------------------------------------------------------------------
--- generator
-newtype RandSudokuBoard = RandSudokuBoard [[Int]] deriving (Show)
-
-instance Arbitrary RandSudokuBoard where
-  arbitrary = RandSudokuBoard <$> pure examplePuzzle
-    where
-      examplePuzzle =
-        [ [0, 6, 0, 1, 0, 4, 0, 5, 0],
-          [0, 0, 8, 3, 0, 5, 6, 0, 0],
-          [2, 0, 0, 0, 0, 0, 0, 0, 1],
-          [8, 0, 0, 4, 0, 7, 0, 0, 6],
-          [0, 0, 6, 0, 0, 0, 3, 0, 0],
-          [7, 0, 0, 9, 0, 1, 0, 0, 4],
-          [5, 0, 0, 0, 0, 0, 0, 0, 2],
-          [0, 0, 7, 2, 0, 6, 9, 0, 0],
-          [0, 4, 0, 5, 0, 8, 0, 7, 0]
-        ]
+examplePuzzles :: [[[Int]]]
+examplePuzzles =
+  [ [ [0, 6, 0, 1, 0, 4, 0, 5, 0],
+      [0, 0, 8, 3, 0, 5, 6, 0, 0],
+      [2, 0, 0, 0, 0, 0, 0, 0, 1],
+      [8, 0, 0, 4, 0, 7, 0, 0, 6],
+      [0, 0, 6, 0, 0, 0, 3, 0, 0],
+      [7, 0, 0, 9, 0, 1, 0, 0, 4],
+      [5, 0, 0, 0, 0, 0, 0, 0, 2],
+      [0, 0, 7, 2, 0, 6, 9, 0, 0],
+      [0, 4, 0, 5, 0, 8, 0, 7, 0]
+    ],
+    [ [0, 2, 0, 0, 9, 0, 0, 5, 3],
+      [0, 0, 0, 0, 0, 0, 0, 0, 7],
+      [8, 0, 0, 0, 5, 0, 9, 0, 2],
+      [5, 3, 0, 0, 0, 8, 0, 0, 9],
+      [0, 4, 8, 3, 6, 0, 0, 0, 0],
+      [0, 7, 0, 2, 4, 0, 1, 0, 0],
+      [0, 0, 0, 0, 8, 0, 0, 0, 1],
+      [0, 0, 0, 0, 1, 0, 0, 0, 0],
+      [2, 0, 0, 0, 0, 0, 0, 0, 0]
+    ],
+    [ [6, 7, 3, 0, 0, 0, 8, 1, 0],
+      [0, 2, 0, 1, 6, 3, 0, 9, 0],
+      [1, 0, 0, 0, 0, 0, 0, 0, 3],
+      [0, 0, 4, 0, 0, 0, 0, 2, 8],
+      [0, 0, 0, 0, 9, 0, 0, 3, 0],
+      [0, 5, 0, 2, 0, 8, 0, 0, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [3, 0, 0, 0, 8, 1, 0, 0, 0],
+      [0, 0, 0, 0, 0, 9, 0, 8, 0]
+    ],
+    [ [0, 5, 0, 0, 2, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0, 0, 5, 0, 2],
+      [0, 3, 1, 0, 5, 9, 4, 0, 8],
+      [3, 0, 2, 1, 0, 0, 0, 0, 0],
+      [1, 0, 0, 2, 6, 0, 7, 0, 4],
+      [0, 0, 0, 4, 0, 3, 0, 0, 0],
+      [0, 0, 0, 8, 7, 0, 0, 2, 0],
+      [0, 0, 0, 5, 0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0, 4, 0, 0, 0]
+    ]
+  ]
