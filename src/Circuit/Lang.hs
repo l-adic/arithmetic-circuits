@@ -1,6 +1,9 @@
 -- | Surface language
 module Circuit.Lang
-  ( c,
+  ( Signal,
+    Bundle,
+    cField,
+    cBool,
     add,
     sub,
     mul,
@@ -10,74 +13,154 @@ module Circuit.Lang
     not_,
     eq,
     deref,
-    e,
+    retBool,
+    retField,
+    fieldInput,
+    boolInput,
     cond,
-    ret,
     compileWithWire,
-    publicInput,
-    privateInput,
+    splitBits,
+    joinBits,
+    atIndex,
+    Any_ (..),
+    And_ (..),
+    elem_,
+    any_,
+    all_,
   )
 where
 
 import Circuit.Affine (AffineCircuit (..))
-import Circuit.Arithmetic (Gate (..), Wire (..))
+import Circuit.Arithmetic (Gate (..), InputType (Private, Public), Wire (..))
 import Circuit.Expr
+import Data.Field.Galois (GaloisField)
+import Data.Fin (Fin)
+import Data.Type.Nat qualified as Nat
+import Data.Vec.Lazy (Vec)
 import Protolude
 
+--------------------------------------------------------------------------------
+
+type Signal f a = Expr Wire f Identity a
+
+type Bundle f n a = Expr Wire f (Vec n) a
+
 -- | Convert constant to expression
-c :: f -> Expr Wire f f
-c = EConst
+cField :: f -> Signal f f
+cField = EVal . ValField
+
+cBool :: (Num f) => Bool -> Signal f Bool
+cBool b = EVal . ValBool $ if b then 1 else 0
 
 -- | Binary arithmetic operations on expressions
-add, sub, mul :: Expr Wire f f -> Expr Wire f f -> Expr Wire f f
-add = EBinOp BAdd
-sub = EBinOp BSub
-mul = EBinOp BMul
+add, sub, mul :: (GaloisField f) => Signal f f -> Signal f f -> Signal f f
+add = (+)
+sub = (-)
+mul = (*)
 
 -- | Binary logic operations on expressions
 -- Have to use underscore or similar to avoid shadowing @and@ and @or@
 -- from Prelude/Protolude.
-and_, or_, xor_ :: Expr Wire f Bool -> Expr Wire f Bool -> Expr Wire f Bool
+and_, or_, xor_ :: Signal f Bool -> Signal f Bool -> Signal f Bool
 and_ = EBinOp BAnd
 or_ = EBinOp BOr
 xor_ = EBinOp BXor
 
 -- | Negate expression
-not_ :: Expr Wire f Bool -> Expr Wire f Bool
+not_ :: Signal f Bool -> Signal f Bool
 not_ = EUnOp UNot
 
 -- | Compare two expressions
-eq :: Expr Wire f f -> Expr Wire f f -> Expr Wire f Bool
+eq :: Signal f f -> Signal f f -> Signal f Bool
 eq = EEq
 
--- | Convert wire to expression
-deref :: Wire -> Expr Wire f f
-deref = EVar
+fieldInput :: InputType -> Text -> ExprM f (Var Wire f f)
+fieldInput it label = case it of
+  Public -> VarField <$> freshPublicInput label
+  Private -> VarField <$> freshPrivateInput label
 
--- | Return compilation of expression into an intermediate wire
-e :: (Num f) => Expr Wire f f -> ExprM f Wire
-e = compileWithWire imm
+boolInput :: InputType -> Text -> ExprM f (Var Wire f Bool)
+boolInput it label = case it of
+  Public -> VarBool <$> freshPublicInput label
+  Private -> VarBool <$> freshPrivateInput label
 
 -- | Conditional statement on expressions
-cond :: Expr Wire f Bool -> Expr Wire f ty -> Expr Wire f ty -> Expr Wire f ty
+cond :: Signal f Bool -> Signal f ty -> Signal f ty -> Signal f ty
 cond = EIf
 
--- | Return compilation of expression into an output wire
-ret :: (Num f) => Expr Wire f f -> ExprM f Wire
-ret = compileWithWire freshOutput
+splitBits ::
+  (Nat.SNatI (NBits f)) =>
+  Signal f f ->
+  Bundle f (NBits f) Bool
+splitBits = ESplit
 
-compileWithWire :: (Num f) => ExprM f Wire -> Expr Wire f f -> ExprM f Wire
+joinBits :: (Num f, Nat.SNatI n) => Bundle f n Bool -> Signal f f
+joinBits = EJoin
+
+deref :: Var Wire f ty -> Signal f ty
+deref = EVar
+
+compileWithWire :: (Num f) => ExprM f (Var Wire f ty) -> Signal f ty -> ExprM f Wire
 compileWithWire freshWire expr = do
-  compileOut <- compile expr
+  compileOut <- runIdentity <$> compile expr
   case compileOut of
-    Left wire -> pure wire
+    Left wire -> do
+      wire' <- rawWire <$> freshWire
+      emit $ Mul (ConstGate 1) (Var wire') wire
+      pure wire
     Right circ -> do
-      wire <- freshWire
+      wire <- rawWire <$> freshWire
       emit $ Mul (ConstGate 1) circ wire
       pure wire
 
-publicInput :: Text -> ExprM f Wire
-publicInput = freshPublicInput
+retBool :: (Num f) => Text -> Signal f Bool -> ExprM f Wire
+retBool label = compileWithWire (boolInput Public label)
 
-privateInput :: Text -> ExprM f Wire
-privateInput = freshPrivateInput
+retField :: (Num f) => Text -> Signal f f -> ExprM f Wire
+retField label = compileWithWire (fieldInput Public label)
+
+atIndex :: (Nat.SNatI n) => Bundle f n ty -> Fin n -> Signal f ty
+atIndex = EAtIndex
+
+--------------------------------------------------------------------------------
+
+newtype And_ f = And_ {unAnd_ :: Signal f Bool}
+
+instance Semigroup (And_ f) where
+  And_ a <> And_ b = And_ $ EBinOp BAnd a b
+
+instance (Num f) => Monoid (And_ f) where
+  mempty = And_ $ cBool True
+
+newtype Any_ f = Any_ {unAny_ :: Signal f Bool}
+
+instance Semigroup (Any_ f) where
+  Any_ a <> Any_ b = Any_ $ or_ a b
+
+instance (Num f) => Monoid (Any_ f) where
+  mempty = Any_ $ cBool False
+
+--------------------------------------------------------------------------------
+
+elem_ ::
+  (Num f, Foldable t) =>
+  Signal f f ->
+  t (Signal f f) ->
+  Signal f Bool
+elem_ a as =
+  let f b = eq a b
+   in any_ f as
+
+all_ ::
+  (Num f, Foldable t) =>
+  (a -> Signal f Bool) ->
+  t a ->
+  Signal f Bool
+all_ f = unAnd_ . foldMap (And_ . f)
+
+any_ ::
+  (Num f, Foldable t) =>
+  (a -> Signal f Bool) ->
+  t a ->
+  Signal f Bool
+any_ f = unAny_ . foldMap (Any_ . f)

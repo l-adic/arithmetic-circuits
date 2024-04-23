@@ -1,11 +1,16 @@
-{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Circuit.Expr
   ( UnOp (..),
     BinOp (..),
+    Val (..),
+    Var (..),
     Expr (..),
     ExprM,
     BuilderState (..),
+    type NBits,
     compile,
     emit,
     imm,
@@ -18,18 +23,25 @@ module Circuit.Expr
     runCircuitBuilder,
     evalCircuitBuilder,
     execCircuitBuilder,
-    exprToArithCircuit,
-    evalExpr,
     truncRotate,
+    evalExpr,
+    rawWire,
+    exprToArithCircuit,
+    type Nat.FromGHC,
   )
 where
 
 import Circuit.Affine
 import Circuit.Arithmetic
-import Data.Field.Galois (PrimeField)
+import Data.Field.Galois (GaloisField, PrimeField (fromP))
+import Data.Fin (Fin)
 import Data.Map qualified as Map
+import Data.Semiring (Ring (..), Semiring (..))
 import Data.Set qualified as Set
-import Protolude
+import Data.Type.Nat qualified as Nat
+import Data.Vec.Lazy (Vec, universe)
+import Data.Vec.Lazy qualified as Vec
+import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 
 data UnOp f a where
@@ -42,6 +54,7 @@ data BinOp f a where
   BAdd :: BinOp f f
   BSub :: BinOp f f
   BMul :: BinOp f f
+  BDiv :: BinOp f f
   BAnd :: BinOp f Bool
   BOr :: BinOp f Bool
   BXor :: BinOp f Bool
@@ -53,20 +66,46 @@ opPrecedence BAnd = 5
 opPrecedence BSub = 6
 opPrecedence BAdd = 6
 opPrecedence BMul = 7
+opPrecedence BDiv = 8
+
+data Val f ty where
+  ValField :: f -> Val f f
+  ValBool :: f -> Val f Bool
+
+deriving instance (Show f) => Show (Val f ty)
+
+instance (Pretty f) => Pretty (Val f ty) where
+  pretty (ValField f) = pretty f
+  pretty (ValBool b) = pretty b
+
+data Var i f ty where
+  VarField :: i -> Var i f f
+  VarBool :: i -> Var i f Bool
+
+deriving instance (Show i, Show f) => Show (Var i f ty)
+
+instance (Pretty i) => Pretty (Var i f ty) where
+  pretty (VarField f) = pretty f
+  pretty (VarBool b) = pretty b
+
+rawWire :: Var i f ty -> i
+rawWire (VarField i) = i
+rawWire (VarBool i) = i
+
+type family NBits a :: Nat.Nat
 
 -- | Expression data type of (arithmetic) expressions over a field @f@
 -- with variable names/indices coming from @i@.
-data Expr i f ty where
-  EConst :: f -> Expr i f f
-  EConstBool :: Bool -> Expr i f Bool
-  EVar :: i -> Expr i f f
-  EVarBool :: i -> Expr i f Bool
-  EUnOp :: UnOp f ty -> Expr i f ty -> Expr i f ty
-  EBinOp :: BinOp f ty -> Expr i f ty -> Expr i f ty -> Expr i f ty
-  EIf :: Expr i f Bool -> Expr i f ty -> Expr i f ty -> Expr i f ty
-  EEq :: Expr i f f -> Expr i f f -> Expr i f Bool
-
-deriving instance (Show i, Show f) => Show (Expr i f ty)
+data Expr i f t ty where
+  EVal :: Val f ty -> Expr i f Identity ty
+  EVar :: Var i f ty -> Expr i f Identity ty
+  EUnOp :: UnOp f ty -> Expr i f Identity ty -> Expr i f Identity ty
+  EBinOp :: BinOp f ty -> Expr i f Identity ty -> Expr i f Identity ty -> Expr i f Identity ty
+  EIf :: Expr i f Identity Bool -> Expr i f Identity ty -> Expr i f Identity ty -> Expr i f Identity ty
+  EEq :: Expr i f Identity f -> Expr i f Identity f -> Expr i f Identity Bool
+  ESplit :: (Nat.SNatI (NBits f)) => Expr i f Identity f -> Expr i f (Vec (NBits f)) Bool
+  EJoin :: (Num f, Nat.SNatI n) => Expr i f (Vec n) Bool -> Expr i f Identity f
+  EAtIndex :: (Nat.SNatI n) => Expr i f (Vec n) ty -> Fin n -> Expr i f Identity ty
 
 deriving instance (Show f) => Show (BinOp f a)
 
@@ -77,6 +116,7 @@ instance Pretty (BinOp f a) where
     BAdd -> text "+"
     BSub -> text "-"
     BMul -> text "*"
+    BDiv -> text "/"
     BAnd -> text "&&"
     BOr -> text "||"
     BXor -> text "xor"
@@ -86,20 +126,16 @@ instance Pretty (UnOp f a) where
     UNeg -> text "neg"
     UNot -> text "!"
 
-instance (Pretty f, Pretty i, Pretty ty) => Pretty (Expr i f ty) where
+instance (Pretty f, Pretty i) => Pretty (Expr i f t ty) where
   pretty = prettyPrec 0
     where
-      prettyPrec :: Int -> Expr i f ty -> Doc
+      prettyPrec :: Int -> Expr i f t ty -> Doc
       prettyPrec p e =
         case e of
+          EVal v ->
+            pretty v
           EVar v ->
             pretty v
-          EVarBool v ->
-            pretty v
-          EConst l ->
-            pretty l
-          EConstBool b ->
-            pretty b
           -- TODO correct precedence
           EUnOp op e1 -> parens (pretty op <+> pretty e1)
           EBinOp op e1 e2 ->
@@ -112,6 +148,9 @@ instance (Pretty f, Pretty i, Pretty ty) => Pretty (Expr i f ty) where
           -- TODO correct precedence
           EEq l r ->
             parensPrec 1 p (pretty l) <+> text "=" <+> parensPrec 1 p (pretty r)
+          ESplit i -> text "split" <+> pretty i
+          EJoin i -> text "join" <+> pretty i
+          EAtIndex v ix -> pretty v <+> brackets (pretty $ toInteger ix)
 
 parensPrec :: Int -> Int -> Doc -> Doc
 parensPrec opPrec p = if p > opPrec then parens else identity
@@ -140,45 +179,73 @@ truncRotate nbits nrots x =
     zeroBits
     [0 .. nbits - 1]
 
+evalExpr :: (PrimeField f, Ord i, Show i) => Map i f -> Expr i f t ty -> t ty
+evalExpr inputs e = evalState (evalExpr' e) inputs
+
 -- | Evaluate arithmetic expressions directly, given an environment
-evalExpr ::
-  (PrimeField f, Show i) =>
+evalExpr' ::
+  forall f i t ty.
+  (PrimeField f, Ord i, Show i) =>
   -- | variable lookup
-  (i -> vars -> Maybe f) ->
   -- | expression to evaluate
-  Expr i f ty ->
+  Expr i f t ty ->
   -- | input values
-  vars ->
   -- | resulting value
-  ty
-evalExpr lookupVar expr vars = case expr of
-  EConst f -> f
-  EConstBool b -> b
-  EVar i -> case lookupVar i vars of
-    Just v -> v
-    Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
-  EVarBool i -> case lookupVar i vars of
-    Just v -> v == 1
-    Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
+  State (Map i f) (t ty)
+evalExpr' expr = case expr of
+  EVal v -> pure $ Identity $ case v of
+    ValBool b -> b == 1
+    ValField f -> f
+  EVar var -> do
+    m <- get
+    pure $ Identity $ case var of
+      VarField i -> do
+        case Map.lookup i m of
+          Just v -> v
+          Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
+      VarBool i ->
+        case Map.lookup i m of
+          Just v -> v == 1
+          Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
   EUnOp UNeg e1 ->
-    negate $ evalExpr lookupVar e1 vars
+    Protolude.negate <$> evalExpr' e1
   EUnOp UNot e1 ->
-    not $ evalExpr lookupVar e1 vars
-  EBinOp op e1 e2 ->
-    (evalExpr lookupVar e1 vars) `apply` (evalExpr lookupVar e2 vars)
+    fmap not <$> evalExpr' e1
+  EBinOp op e1 e2 -> do
+    e1' <- runIdentity <$> evalExpr' e1
+    e2' <- runIdentity <$> evalExpr' e2
+    pure $ Identity $ apply e1' e2'
     where
       apply = case op of
         BAdd -> (+)
         BSub -> (-)
         BMul -> (*)
+        BDiv -> (/)
         BAnd -> (&&)
         BOr -> (||)
         BXor -> \x y -> (x || y) && not (x && y)
-  EIf b true false ->
-    if evalExpr lookupVar b vars
-      then evalExpr lookupVar true vars
-      else evalExpr lookupVar false vars
-  EEq lhs rhs -> evalExpr lookupVar lhs vars == evalExpr lookupVar rhs vars
+  EIf b true false -> do
+    cond <- runIdentity <$> evalExpr' b
+    if cond
+      then evalExpr' true
+      else evalExpr' false
+  EEq lhs rhs -> do
+    lhs' <- runIdentity <$> evalExpr' lhs
+    rhs' <- runIdentity <$> evalExpr' rhs
+    pure $ Identity $ lhs' == rhs'
+  ESplit i -> do
+    x <- runIdentity <$> evalExpr' i
+    pure $ Vec.tabulate $ \ix -> testBit (fromP x) (fromIntegral ix)
+  EJoin i -> do
+    bits <- evalExpr' i
+    pure $
+      Identity $
+        Vec.ifoldMap (\ix b -> if b then fromInteger (2 ^ fromIntegral @_ @Integer ix) else 0) bits
+  EAtIndex v i -> do
+    _v <- evalExpr' v
+    pure $ Identity $ _v Vec.! i
+
+--   pure $ Vec.fromList $ map (testBit i) [0 .. Nat.toInt (Vec.length i) - 1]
 
 -------------------------------------------------------------------------------
 -- Circuit Builder
@@ -302,85 +369,120 @@ addWire (Right c) = do
   emit $ Mul (ConstGate 1) c mulOut
   pure mulOut
 
-compile :: (Num f) => Expr Wire f ty -> ExprM f (Either Wire (AffineCircuit f Wire))
+compile ::
+  forall f t ty.
+  (Num f) =>
+  Expr Wire f t ty ->
+  ExprM f (t (Either Wire (AffineCircuit f Wire)))
 compile expr = case expr of
-  EConst n -> pure . Right $ ConstGate n
-  EConstBool b -> pure . Right $ ConstGate (if b then 1 else 0)
-  EVar v -> pure . Left $ v
-  EVarBool v -> pure . Left $ v
+  EVal v -> case v of
+    ValField f -> pure . Identity $ Right $ ConstGate f
+    ValBool b -> pure . Identity $ Right $ ConstGate b
+  EVar var -> case var of
+    VarField i -> pure . Identity $ Left $ i
+    VarBool i -> do
+      squared <- mulToImm (Left i) (Left i)
+      emit $ Mul (Var squared) (ConstGate 1) i
+      pure $ Identity $ Left i
   EUnOp op e1 -> do
-    e1Out <- compile e1
+    e1Out <- runIdentity <$> compile e1
     case op of
-      UNeg -> pure . Right $ ScalarMul (-1) (addVar e1Out)
-      UNot -> pure . Right $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
+      UNeg -> pure . Identity . Right $ ScalarMul (-1) (addVar e1Out)
+      UNot -> pure . Identity . Right $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
   EBinOp op e1 e2 -> do
-    e1Out <- addVar <$> compile e1
-    e2Out <- addVar <$> compile e2
+    e1Out <- addVar . runIdentity <$> compile e1
+    e2Out <- addVar . runIdentity <$> compile e2
     case op of
-      BAdd -> pure . Right $ Add e1Out e2Out
+      BAdd -> pure . Identity . Right $ Add e1Out e2Out
       BMul -> do
         tmp1 <- mulToImm (Right e1Out) (Right e2Out)
-        pure . Left $ tmp1
+        pure . Identity . Left $ tmp1
+      BDiv -> do
+        _recip <- imm
+        _one <- addWire $ Right $ ConstGate 1
+        emit $ Mul e2Out (Var _recip) _one
+        out <- imm
+        emit $ Mul e1Out (Var _recip) out
+        pure $ Identity $ Left out
       -- SUB(x, y) = x + (-y)
-      BSub -> pure . Right $ Add e1Out (ScalarMul (-1) e2Out)
+      BSub -> pure . Identity . Right $ Add e1Out (ScalarMul (-1) e2Out)
       BAnd -> do
         tmp1 <- mulToImm (Right e1Out) (Right e2Out)
-        pure . Left $ tmp1
+        pure . Identity . Left $ tmp1
       BOr -> do
         -- OR(input1, input2) = (input1 + input2) - (input1 * input2)
         tmp1 <- imm
         emit $ Mul e1Out e2Out tmp1
-        pure . Right $ Add (Add e1Out e2Out) (ScalarMul (-1) (Var tmp1))
+        pure . Identity . Right $ Add (Add e1Out e2Out) (ScalarMul (-1) (Var tmp1))
       BXor -> do
         -- XOR(input1, input2) = (input1 + input2) - 2 * (input1 * input2)
         tmp1 <- imm
         emit $ Mul e1Out e2Out tmp1
-        pure . Right $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
+        pure . Identity . Right $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
   EIf cond true false -> do
-    condOut <- addVar <$> compile cond
-    trueOut <- addVar <$> compile true
-    falseOut <- addVar <$> compile false
+    condOut <- addVar . runIdentity <$> compile cond
+    trueOut <- addVar . runIdentity <$> compile true
+    falseOut <- addVar . runIdentity <$> compile false
     tmp1 <- imm
     tmp2 <- imm
     emit $ Mul condOut trueOut tmp1
     emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
-    pure . Right $ Add (Var tmp1) (Var tmp2)
+    pure . Identity . Right $ Add (Var tmp1) (Var tmp2)
   -- EQ(lhs, rhs) = (lhs - rhs == 1)
   EEq lhs rhs -> do
-    lhsSubRhs <- compile (EBinOp BSub lhs rhs)
+    lhsSubRhs <- runIdentity <$> compile (EBinOp BSub lhs rhs)
     eqInWire <- addWire lhsSubRhs
     eqFreeWire <- imm
     eqOutWire <- imm
     emit $ Equal eqInWire eqFreeWire eqOutWire
     -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
     -- neqOutWire instead.
-    pure . Right $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
+    pure . Identity $ Right $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
+  ESplit input -> do
+    i <- compile input >>= addWire . runIdentity
+    outputs <- traverse (\_ -> mkBoolVar =<< imm) $ universe @(NBits f)
+    emit $ Split i (Vec.toList outputs)
+    traverse (fmap runIdentity . compile . EVar . VarBool) outputs
+    where
+      mkBoolVar w = do
+        squared <- mulToImm (Left w) (Left w)
+        emit $ Mul (Var squared) (ConstGate 1) w
+        pure w
+  EJoin bits -> do
+    bs <- toList <$> compile bits
+    ws <- traverse addWire bs
+    pure . Identity . Right $ unsplit ws
+  EAtIndex v ix -> do
+    v' <- compile v
+    pure . Identity $ v' Vec.! ix
 
--- | Translate an arithmetic expression to an arithmetic circuit
 exprToArithCircuit ::
-  (Num f) =>
-  -- | expression to compile
-  Expr Int f ty ->
+  (Num f, Foldable t) =>
+  -- \| expression to compile
+  Expr Wire f t ty ->
   -- | Wire to assign the output of the expression to
-  Wire ->
+  t Wire ->
   ExprM f ()
-exprToArithCircuit expr output =
-  exprToArithCircuit' (mapVarsExpr (InputWire "" Public) expr) output
+exprToArithCircuit expr outputs = do
+  exprOuts <- toList <$> compile expr
+  for_ (zip (toList outputs) exprOuts) $ \(output, exprOut) ->
+    emit $ Mul (ConstGate 1) (addVar exprOut) output
 
-exprToArithCircuit' :: (Num f) => Expr Wire f ty -> Wire -> ExprM f ()
-exprToArithCircuit' expr output = do
-  exprOut <- compile expr
-  emit $ Mul (ConstGate 1) (addVar exprOut) output
+instance (GaloisField f) => Semiring (Expr Wire f Identity f) where
+  plus = EBinOp BAdd
+  zero = EVal $ ValField 0
+  times = EBinOp BMul
+  one = EVal $ ValField 1
 
--- | Apply function to variable names.
-mapVarsExpr :: (i -> j) -> Expr i f ty -> Expr j f ty
-mapVarsExpr f expr = case expr of
-  EVar i -> EVar $ f i
-  EVarBool i -> EVarBool $ f i
-  EConst v -> EConst v
-  EConstBool b -> EConstBool b
-  EBinOp op e1 e2 -> EBinOp op (mapVarsExpr f e1) (mapVarsExpr f e2)
-  EUnOp op e1 -> EUnOp op (mapVarsExpr f e1)
-  EIf b tr fl -> EIf (mapVarsExpr f b) (mapVarsExpr f tr) (mapVarsExpr f fl)
-  EEq lhs rhs -> EEq (mapVarsExpr f lhs) (mapVarsExpr f rhs)
+instance (GaloisField f) => Ring (Expr Wire f Identity f) where
+  negate = EUnOp UNeg
+
+instance (GaloisField f) => Num (Expr Wire f Identity f) where
+  (+) = plus
+  (*) = times
+  (-) = EBinOp BSub
+  negate = EUnOp UNeg
+  abs = identity
+  signum = const 1
+  fromInteger = EVal . ValField . fromInteger

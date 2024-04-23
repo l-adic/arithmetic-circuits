@@ -46,11 +46,13 @@ common deps
     , containers      >=0.6.0
     , filepath        >=1.4.2
     , galois-field    >=2.0.0
+    , fin
     , process
     , propagators
     , protolude       >=0.2
     , semirings       >=0.7
     , text            >=1.2.3
+    , vec
     , wl-pprint-text  >=1.2.0
 
 library
@@ -106,7 +108,7 @@ executable factors
   default-language: GHC2021
 
 test-suite circuit-tests
-  import: deps, extensions, warnings
+  import: deps, extensions
   type:               exitcode-stdio-1.0
   main-is:            Main.hs
 
@@ -116,16 +118,24 @@ test-suite circuit-tests
     Test.Circuit.Arithmetic
     Test.Circuit.Expr
     Test.Circuit.R1CS
+    Test.Circuit.Sudoku
+    Test.Circuit.Lang
 
   hs-source-dirs:     test
 
   ghc-options:        -freverse-errors -O2 -Wall -main-is Main
   build-depends:
       arithmetic-circuits
+    , array
+    , distributive 
     , integer-logarithms
     , quickcheck-instances  >=0.3
+    , QuickCheck
+    , random
+    , hspec
     , tasty                 >=1.2
     , tasty-hunit           >=0.10
+    , tasty-hspec
     , tasty-quickcheck      >=0.10
 
   build-tool-depends: tasty-discover:tasty-discover >=4.2
