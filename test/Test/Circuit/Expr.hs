@@ -2,11 +2,10 @@
 
 module Test.Circuit.Expr where
 
-import Circuit.Arithmetic
-import Circuit.Expr
+import Circuit
 import Data.Field.Galois (Prime)
 import Data.Map qualified as Map
-import Protolude hiding (Show (..), show)
+import Protolude hiding (Show, show)
 import Test.Circuit.Affine
 import Test.Tasty.QuickCheck
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
@@ -18,7 +17,7 @@ import Prelude (Show (..))
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-arbExprBool :: (Arbitrary f, Num f) => Int -> Int -> Gen (Expr Wire f Bool)
+arbExprBool :: (Arbitrary f, Num f) => Int -> Int -> Gen (Signal f Bool)
 arbExprBool numVars size
   | size <= 0 =
       oneof $
@@ -44,7 +43,7 @@ arbExprBool numVars size
             <*> arbExpr numVars (size - 1)
         ]
 
-arbExpr :: (Arbitrary f, Num f) => Int -> Int -> Gen (Expr Wire f f)
+arbExpr :: (Arbitrary f, Num f) => Int -> Int -> Gen (Signal f f)
 arbExpr numVars size
   | size <= 0 =
       oneof $
@@ -64,7 +63,7 @@ arbExpr numVars size
             <*> arbExpr numVars (size - 1)
         ]
 
-data ExprWithInputs f = ExprWithInputs (Expr Wire f f) [Map Int f]
+data ExprWithInputs f = ExprWithInputs (Signal f f) [Map Int f]
 
 instance (Arbitrary f, Num f) => Arbitrary (ExprWithInputs f) where
   arbitrary = do
@@ -83,7 +82,7 @@ instance (Pretty f) => Show (ExprWithInputs f) where
 -- | Check whether exprToArithCircuit produces valid circuits
 prop_compiledCircuitValid :: ExprWithInputs Fr -> Bool
 prop_compiledCircuitValid (ExprWithInputs expr _) =
-  validArithCircuit (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 0))
+  validArithCircuit (execCircuitBuilder $ exprToArithCircuit expr (Identity $ OutputWire 0))
 
 -- | Check whether evaluating an expression and
 -- evaluating the arithmetic circuit translation produces the same
@@ -92,9 +91,9 @@ prop_evalEqArithEval :: ExprWithInputs Fr -> Bool
 prop_evalEqArithEval (ExprWithInputs expr inputs) = all testInput inputs
   where
     testInput input =
-      let a = evalExpr (Map.mapKeys (InputWire "" Public) input) expr
+      let a = runIdentity $ evalExpr (Map.mapKeys (InputWire "" Public) input) expr
           b = arithResult input
-       in trace ("\n\n\nlhs: " <> show a ++ "\n\nrhs:" ++ show b) $ a == b
+       in a == b
     arithResult input = arithOutput input Map.! (OutputWire 1)
     arithOutput input =
       evalArithCircuit
@@ -102,4 +101,4 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) = all testInput inputs
         (Map.insert)
         circuit
         (Map.mapKeys (InputWire "" Public) input)
-    circuit = (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 1))
+    circuit = (execCircuitBuilder $ exprToArithCircuit expr (Identity $ OutputWire 1))

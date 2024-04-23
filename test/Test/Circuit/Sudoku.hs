@@ -30,15 +30,15 @@ mkBoxes = Vec.chunks @Nat3 . fmap (Vec.chunks @Nat3)
 
 sudokuSet ::
   (Num f) =>
-  SudokuSet (Expr Wire f f)
-sudokuSet = Vec.tabulate (cField . fromIntegral)
+  SudokuSet (Signal f f)
+sudokuSet = Vec.tabulate (cField . (+ 1) . fromIntegral)
 
 isPermutation ::
   forall f.
   (Num f) =>
-  [Expr Wire f f] ->
-  [Expr Wire f f] ->
-  Expr Wire f Bool
+  [Signal f f] ->
+  [Signal f f] ->
+  Signal f Bool
 isPermutation as bs =
   let f (a, i) =
         let isPresent = elem_ a bs
@@ -48,14 +48,14 @@ isPermutation as bs =
 
 validateBoxes ::
   (Num f) =>
-  SudokuSet (Expr Wire f f) ->
-  BoxGrid (Expr Wire f f) ->
-  Expr Wire f Bool
+  SudokuSet (Signal f f) ->
+  BoxGrid (Signal f f) ->
+  Signal f Bool
 validateBoxes ss boxes =
   let f box = isPermutation (Vec.toList ss) (Vec.toList $ Vec.concat box)
    in all_ f $ Vec.concat boxes
 
-mkBoard :: ExprM f (Board (Expr Wire f f))
+mkBoard :: ExprM f (Board (Signal f f))
 mkBoard =
   for (universe @Nat9) $ \i ->
     for (universe @Nat9) $ \j -> do
@@ -64,8 +64,8 @@ mkBoard =
 
 initializeBoard ::
   (Num f) =>
-  Board (Expr Wire f f) ->
-  ExprM f (Board (Expr Wire f f))
+  Board (Signal f f) ->
+  ExprM f (Board (Signal f f))
 initializeBoard board = do
   for (universe @Nat9) $ \i ->
     for (universe @Nat9) $ \j -> do

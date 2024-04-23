@@ -1,6 +1,8 @@
 -- | Surface language
 module Circuit.Lang
-  ( cField,
+  ( Signal,
+    Bundle,
+    cField,
     cBool,
     add,
     sub,
@@ -18,7 +20,8 @@ module Circuit.Lang
     boolInput,
     cond,
     compileWithWire,
-    withBits,
+    splitBits,
+    joinBits,
     Any_ (..),
     And_ (..),
     elem_,
@@ -34,15 +37,21 @@ import Data.Type.Nat qualified as Nat
 import Data.Vec.Lazy (Vec)
 import Protolude
 
+--------------------------------------------------------------------------------
+
+type Signal f a = Expr Wire f Identity a
+
+type Bundle f n a = Expr Wire f (Vec n) a
+
 -- | Convert constant to expression
-cField :: f -> Expr Wire f f
+cField :: f -> Signal f f
 cField = EVal . ValField
 
-cBool :: (Num f) => Bool -> Expr Wire f Bool
+cBool :: (Num f) => Bool -> Signal f Bool
 cBool b = EVal . ValBool $ if b then 1 else 0
 
 -- | Binary arithmetic operations on expressions
-add, sub, mul :: Expr Wire f f -> Expr Wire f f -> Expr Wire f f
+add, sub, mul :: Signal f f -> Signal f f -> Signal f f
 add = EBinOp BAdd
 sub = EBinOp BSub
 mul = EBinOp BMul
@@ -50,17 +59,17 @@ mul = EBinOp BMul
 -- | Binary logic operations on expressions
 -- Have to use underscore or similar to avoid shadowing @and@ and @or@
 -- from Prelude/Protolude.
-and_, or_, xor_ :: Expr Wire f Bool -> Expr Wire f Bool -> Expr Wire f Bool
+and_, or_, xor_ :: Signal f Bool -> Signal f Bool -> Signal f Bool
 and_ = EBinOp BAnd
 or_ = EBinOp BOr
 xor_ = EBinOp BXor
 
 -- | Negate expression
-not_ :: Expr Wire f Bool -> Expr Wire f Bool
+not_ :: Signal f Bool -> Signal f Bool
 not_ = EUnOp UNot
 
 -- | Compare two expressions
-eq :: Expr Wire f f -> Expr Wire f f -> Expr Wire f Bool
+eq :: Signal f f -> Signal f f -> Signal f Bool
 eq = EEq
 
 fieldInput :: InputType -> Text -> ExprM f (Var Wire f f)
@@ -74,22 +83,24 @@ boolInput it label = case it of
   Private -> VarBool <$> freshPrivateInput label
 
 -- | Conditional statement on expressions
-cond :: Expr Wire f Bool -> Expr Wire f ty -> Expr Wire f ty -> Expr Wire f ty
+cond :: Signal f Bool -> Signal f ty -> Signal f ty -> Signal f ty
 cond = EIf
 
-withBits ::
+splitBits ::
   (Nat.SNatI (NBits f)) =>
-  Expr Wire f f ->
-  (Vec (NBits f) (Expr Wire f Bool) -> Expr Wire f ty) ->
-  Expr Wire f ty
-withBits = ESplit
+  Signal f f ->
+  Bundle f (NBits f) Bool
+splitBits = ESplit
 
-deref :: Var Wire f ty -> Expr Wire f ty
+joinBits :: (Num f, Nat.SNatI n) => Bundle f n Bool -> Signal f f
+joinBits = EJoin
+
+deref :: Var Wire f ty -> Signal f ty
 deref = EVar
 
-compileWithWire :: (Num f) => ExprM f (Var Wire f ty) -> Expr Wire f ty -> ExprM f Wire
+compileWithWire :: (Num f) => ExprM f (Var Wire f ty) -> Signal f ty -> ExprM f Wire
 compileWithWire freshWire expr = do
-  compileOut <- compile expr
+  compileOut <- runIdentity <$> compile expr
   case compileOut of
     Left wire -> do
       wire' <- rawWire <$> freshWire
@@ -100,12 +111,12 @@ compileWithWire freshWire expr = do
       emit $ Mul (ConstGate 1) circ wire
       pure wire
 
-ret :: (Num f) => Text -> Expr Wire f Bool -> ExprM f Wire
+ret :: (Num f) => Text -> Signal f Bool -> ExprM f Wire
 ret label = compileWithWire (boolInput Public label)
 
 --------------------------------------------------------------------------------
 
-newtype And_ f = And_ {unAnd_ :: Expr Wire f Bool}
+newtype And_ f = And_ {unAnd_ :: Signal f Bool}
 
 instance Semigroup (And_ f) where
   And_ a <> And_ b = And_ $ EBinOp BAnd a b
@@ -113,7 +124,7 @@ instance Semigroup (And_ f) where
 instance (Num f) => Monoid (And_ f) where
   mempty = And_ $ cBool True
 
-newtype Any_ f = Any_ {unAny_ :: Expr Wire f Bool}
+newtype Any_ f = Any_ {unAny_ :: Signal f Bool}
 
 instance Semigroup (Any_ f) where
   Any_ a <> Any_ b = Any_ $ or_ a b
@@ -125,23 +136,23 @@ instance (Num f) => Monoid (Any_ f) where
 
 elem_ ::
   (Num f, Foldable t) =>
-  Expr Wire f f ->
-  t (Expr Wire f f) ->
-  Expr Wire f Bool
+  Signal f f ->
+  t (Signal f f) ->
+  Signal f Bool
 elem_ a as =
   let f b = eq a b
    in any_ f as
 
 all_ ::
   (Num f, Foldable t) =>
-  (a -> Expr Wire f Bool) ->
+  (a -> Signal f Bool) ->
   t a ->
-  Expr Wire f Bool
+  Signal f Bool
 all_ f = unAnd_ . foldMap (And_ . f)
 
 any_ ::
   (Num f, Foldable t) =>
-  (a -> Expr Wire f Bool) ->
+  (a -> Signal f Bool) ->
   t a ->
-  Expr Wire f Bool
+  Signal f Bool
 any_ f = unAny_ . foldMap (Any_ . f)
