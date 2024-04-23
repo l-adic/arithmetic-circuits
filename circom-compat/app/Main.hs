@@ -30,5 +30,4 @@ program = do
   n <- deref <$> fieldInput Public "n"
   a <- deref <$> fieldInput Private "a"
   b <- deref <$> fieldInput Private "b"
-  let isFactorization = eq n (a `mul` b)
-  ret "out" $ isFactorization
+  retBool "out" $ eq n (a * b)

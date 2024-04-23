@@ -32,6 +32,7 @@ where
 import Circuit.Affine (AffineCircuit (..))
 import Circuit.Arithmetic (Gate (..), InputType (Private, Public), Wire (..))
 import Circuit.Expr
+import Data.Field.Galois (GaloisField)
 import Data.Type.Nat qualified as Nat
 import Data.Vec.Lazy (Vec)
 import Protolude
@@ -50,10 +51,10 @@ cBool :: (Num f) => Bool -> Signal f Bool
 cBool b = EVal . ValBool $ if b then 1 else 0
 
 -- | Binary arithmetic operations on expressions
-add, sub, mul :: Signal f f -> Signal f f -> Signal f f
-add = EBinOp BAdd
-sub = EBinOp BSub
-mul = EBinOp BMul
+add, sub, mul :: (GaloisField f) => Signal f f -> Signal f f -> Signal f f
+add = (+)
+sub = (-)
+mul = (*)
 
 -- | Binary logic operations on expressions
 -- Have to use underscore or similar to avoid shadowing @and@ and @or@

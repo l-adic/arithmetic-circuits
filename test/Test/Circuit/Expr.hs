@@ -3,7 +3,7 @@
 module Test.Circuit.Expr where
 
 import Circuit
-import Data.Field.Galois (Prime)
+import Data.Field.Galois (GaloisField, Prime)
 import Data.Map qualified as Map
 import Protolude hiding (Show, show)
 import Test.Circuit.Affine
@@ -17,7 +17,7 @@ import Prelude (Show (..))
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-arbExprBool :: (Arbitrary f, Num f) => Int -> Int -> Gen (Signal f Bool)
+arbExprBool :: (GaloisField f) => Int -> Int -> Gen (Signal f Bool)
 arbExprBool numVars size
   | size <= 0 =
       oneof $
@@ -43,7 +43,7 @@ arbExprBool numVars size
             <*> arbExpr numVars (size - 1)
         ]
 
-arbExpr :: (Arbitrary f, Num f) => Int -> Int -> Gen (Signal f f)
+arbExpr :: (GaloisField f) => Int -> Int -> Gen (Signal f f)
 arbExpr numVars size
   | size <= 0 =
       oneof $
@@ -65,7 +65,7 @@ arbExpr numVars size
 
 data ExprWithInputs f = ExprWithInputs (Signal f f) [Map Int f]
 
-instance (Arbitrary f, Num f) => Arbitrary (ExprWithInputs f) where
+instance (GaloisField f) => Arbitrary (ExprWithInputs f) where
   arbitrary = do
     numVars <- abs <$> arbitrary
     program <- scale (`div` 10) $ sized (arbExpr numVars)

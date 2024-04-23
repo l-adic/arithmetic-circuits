@@ -230,9 +230,9 @@ evalExpr' expr = case expr of
     lhs' <- runIdentity <$> evalExpr' lhs
     rhs' <- runIdentity <$> evalExpr' rhs
     pure $ Identity $ lhs' == rhs'
-  ESplit i -> sequence $ Vec.tabulate $ \ix -> do
+  ESplit i -> do
     x <- runIdentity <$> evalExpr' i
-    pure $ testBit (fromP x) (fromIntegral ix)
+    pure $ Vec.tabulate $ \ix -> testBit (fromP x) (fromIntegral ix)
   EJoin i -> do
     bits <- evalExpr' i
     pure $

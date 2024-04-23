@@ -40,7 +40,7 @@ factors = do
   n <- deref <$> fieldInput Public "n"
   a <- deref <$> fieldInput Public "a"
   b <- deref <$> fieldInput Public "b"
-  let isFactorization = eq n (a `mul` b)
+  let isFactorization = eq n (a * b)
   retBool "out" isFactorization
 
 prop_factorization :: Fr -> Fr -> Bool

@@ -44,7 +44,6 @@ common deps
       aeson           >=1.4
     , base            >=4.10  && <5
     , containers      >=0.6.0
-    , distributive 
     , filepath        >=1.4.2
     , galois-field    >=2.0.0
     , fin
@@ -128,6 +127,7 @@ test-suite circuit-tests
   build-depends:
       arithmetic-circuits
     , array
+    , distributive 
     , integer-logarithms
     , quickcheck-instances  >=0.3
     , QuickCheck
