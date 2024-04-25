@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+
 -- | Surface language
 module Circuit.Lang
   ( Signal,
@@ -22,6 +24,7 @@ module Circuit.Lang
     splitBits,
     joinBits,
     atIndex,
+    updateIndex_,
     Any_ (..),
     And_ (..),
     elem_,
@@ -120,6 +123,9 @@ retField label = compileWithWire (fieldInput Public label)
 
 atIndex :: (KnownNat n) => Bundle f n ty -> Finite n -> Signal f ty
 atIndex = EAtIndex
+
+updateIndex_ :: (KnownNat n) => Finite n -> Signal f ty -> Bundle f n ty -> Bundle f n ty
+updateIndex_ p = EUpdateIndex p
 
 --------------------------------------------------------------------------------
 

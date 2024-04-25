@@ -47,6 +47,7 @@ common deps
     , filepath        >=1.4.2
     , finite-typelits >=0.1.0
     , galois-field    >=2.0.0
+    , microlens
     , process
     , propagators
     , protolude       >=0.2

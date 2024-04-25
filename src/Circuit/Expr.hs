@@ -41,6 +41,8 @@ import Data.Vector.Sized (Vector)
 import Data.Vector.Sized qualified as V
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
+import Lens.Micro ((.~))
+
 
 data UnOp f a where
   UNeg :: UnOp f f
@@ -104,6 +106,7 @@ data Expr i f t ty where
   ESplit :: (KnownNat (NBits f)) => Expr i f Identity f -> Expr i f (Vector (NBits f)) Bool
   EJoin :: (Num f, KnownNat n) => Expr i f (Vector n) Bool -> Expr i f Identity f
   EAtIndex :: (KnownNat n) => Expr i f (Vector n) ty -> Finite n -> Expr i f Identity ty
+  EUpdateIndex :: (KnownNat n) => Finite n -> (Expr i f Identity ty) -> Expr i f (Vector n) ty ->  Expr i f  (Vector n) ty
 
 deriving instance (Show f) => Show (BinOp f a)
 
@@ -149,6 +152,7 @@ instance (Pretty f, Pretty i) => Pretty (Expr i f t ty) where
           ESplit i -> text "split" <+> pretty i
           EJoin i -> text "join" <+> pretty i
           EAtIndex v ix -> pretty v <+> brackets (pretty $ toInteger ix)
+          EUpdateIndex _p b v -> text ("setIndex " <> show (natVal _p)) <+> pretty b <+> pretty v
 
 parensPrec :: Int -> Int -> Doc -> Doc
 parensPrec opPrec p = if p > opPrec then parens else identity
@@ -242,6 +246,11 @@ evalExpr' expr = case expr of
   EAtIndex v i -> do
     _v <- evalExpr' v
     pure $ Identity $ _v `V.index` i
+  EUpdateIndex p b v -> do
+    _v <- evalExpr' v
+    _b <- runIdentity <$> evalExpr' b
+    pure $ _v & V.ix p .~ _b
+
 
 --   pure $ Vec.fromList $ map (testBit i) [0 .. Nat.toInt (Vec.length i) - 1]
 
@@ -377,7 +386,7 @@ compile expr = case expr of
     ValField f -> pure . Identity $ Right $ ConstGate f
     ValBool b -> pure . Identity $ Right $ ConstGate b
   EVar var -> case var of
-    VarField i -> pure . Identity $ Left $ i
+    VarField i -> pure . Identity $ Left i
     VarBool i -> do
       squared <- mulToImm (Left i) (Left i)
       emit $ Mul (Var squared) (ConstGate 1) i
@@ -454,6 +463,10 @@ compile expr = case expr of
   EAtIndex v ix -> do
     v' <- compile v
     pure . Identity $ v' `V.index` ix
+  EUpdateIndex p b v -> do
+    v' <- compile v
+    b' <- runIdentity <$> compile b
+    pure $ v' & V.ix p .~ b'
 
 exprToArithCircuit ::
   (Num f, Foldable t) =>
