@@ -1,12 +1,11 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# OPTIONS_GHC -freduction-depth=0 #-}
 
 module Test.Circuit.Lang where
 
 import Circuit
 import Data.Field.Galois (Prime, PrimeField (fromP))
-import Data.Fin (Fin)
+import Data.Finite (Finite)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
 import Protolude hiding (Show, show)
@@ -14,7 +13,7 @@ import Test.QuickCheck (Property, (==>))
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-type instance NBits (Prime p) = FromGHC 256
+type instance NBits (Prime p) = 256
 
 bitSplitJoin :: ExprM Fr Wire
 bitSplitJoin = do
@@ -59,7 +58,7 @@ prop_factorizationContra x y z =
         w = solve bsVars bsCircuit inputs
      in lookupVar bsVars "out" w == Just 0
 
-bitIndex :: Fin (NBits Fr) -> ExprM Fr Wire
+bitIndex :: Finite (NBits Fr) -> ExprM Fr Wire
 bitIndex i = do
   x <- deref <$> fieldInput Public "x"
   let bits = splitBits x

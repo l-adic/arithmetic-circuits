@@ -34,16 +34,15 @@ import Circuit.Affine (AffineCircuit (..))
 import Circuit.Arithmetic (Gate (..), InputType (Private, Public), Wire (..))
 import Circuit.Expr
 import Data.Field.Galois (GaloisField)
-import Data.Fin (Fin)
-import Data.Type.Nat qualified as Nat
-import Data.Vec.Lazy (Vec)
+import Data.Finite (Finite)
+import Data.Vector.Sized (Vector)
 import Protolude
 
 --------------------------------------------------------------------------------
 
 type Signal f a = Expr Wire f Identity a
 
-type Bundle f n a = Expr Wire f (Vec n) a
+type Bundle f n a = Expr Wire f (Vector n) a
 
 -- | Convert constant to expression
 cField :: f -> Signal f f
@@ -89,12 +88,12 @@ cond :: Signal f Bool -> Signal f ty -> Signal f ty -> Signal f ty
 cond = EIf
 
 splitBits ::
-  (Nat.SNatI (NBits f)) =>
+  (KnownNat (NBits f)) =>
   Signal f f ->
   Bundle f (NBits f) Bool
 splitBits = ESplit
 
-joinBits :: (Num f, Nat.SNatI n) => Bundle f n Bool -> Signal f f
+joinBits :: (Num f, KnownNat n) => Bundle f n Bool -> Signal f f
 joinBits = EJoin
 
 deref :: Var Wire f ty -> Signal f ty
@@ -119,7 +118,7 @@ retBool label = compileWithWire (boolInput Public label)
 retField :: (Num f) => Text -> Signal f f -> ExprM f Wire
 retField label = compileWithWire (fieldInput Public label)
 
-atIndex :: (Nat.SNatI n) => Bundle f n ty -> Fin n -> Signal f ty
+atIndex :: (KnownNat n) => Bundle f n ty -> Finite n -> Signal f ty
 atIndex = EAtIndex
 
 --------------------------------------------------------------------------------

@@ -45,14 +45,14 @@ common deps
     , base            >=4.10  && <5
     , containers      >=0.6.0
     , filepath        >=1.4.2
+    , finite-typelits >=0.1.0
     , galois-field    >=2.0.0
-    , fin
     , process
     , propagators
     , protolude       >=0.2
     , semirings       >=0.7
     , text            >=1.2.3
-    , vec
+    , vector-sized
     , wl-pprint-text  >=1.2.0
 
 library
@@ -128,6 +128,7 @@ test-suite circuit-tests
       arithmetic-circuits
     , array
     , distributive 
+    , fin
     , integer-logarithms
     , quickcheck-instances  >=0.3
     , QuickCheck
@@ -137,6 +138,7 @@ test-suite circuit-tests
     , tasty-hunit           >=0.10
     , tasty-hspec
     , tasty-quickcheck      >=0.10
+    , vec
 
   build-tool-depends: tasty-discover:tasty-discover >=4.2
 

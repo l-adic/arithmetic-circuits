@@ -27,20 +27,18 @@ module Circuit.Expr
     evalExpr,
     rawWire,
     exprToArithCircuit,
-    type Nat.FromGHC,
   )
 where
 
 import Circuit.Affine
 import Circuit.Arithmetic
 import Data.Field.Galois (GaloisField, PrimeField (fromP))
-import Data.Fin (Fin)
+import Data.Finite (Finite)
 import Data.Map qualified as Map
 import Data.Semiring (Ring (..), Semiring (..))
 import Data.Set qualified as Set
-import Data.Type.Nat qualified as Nat
-import Data.Vec.Lazy (Vec, universe)
-import Data.Vec.Lazy qualified as Vec
+import Data.Vector.Sized (Vector)
+import Data.Vector.Sized qualified as V
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 
@@ -92,7 +90,7 @@ rawWire :: Var i f ty -> i
 rawWire (VarField i) = i
 rawWire (VarBool i) = i
 
-type family NBits a :: Nat.Nat
+type family NBits a :: Nat
 
 -- | Expression data type of (arithmetic) expressions over a field @f@
 -- with variable names/indices coming from @i@.
@@ -103,9 +101,9 @@ data Expr i f t ty where
   EBinOp :: BinOp f ty -> Expr i f Identity ty -> Expr i f Identity ty -> Expr i f Identity ty
   EIf :: Expr i f Identity Bool -> Expr i f Identity ty -> Expr i f Identity ty -> Expr i f Identity ty
   EEq :: Expr i f Identity f -> Expr i f Identity f -> Expr i f Identity Bool
-  ESplit :: (Nat.SNatI (NBits f)) => Expr i f Identity f -> Expr i f (Vec (NBits f)) Bool
-  EJoin :: (Num f, Nat.SNatI n) => Expr i f (Vec n) Bool -> Expr i f Identity f
-  EAtIndex :: (Nat.SNatI n) => Expr i f (Vec n) ty -> Fin n -> Expr i f Identity ty
+  ESplit :: (KnownNat (NBits f)) => Expr i f Identity f -> Expr i f (Vector (NBits f)) Bool
+  EJoin :: (Num f, KnownNat n) => Expr i f (Vector n) Bool -> Expr i f Identity f
+  EAtIndex :: (KnownNat n) => Expr i f (Vector n) ty -> Finite n -> Expr i f Identity ty
 
 deriving instance (Show f) => Show (BinOp f a)
 
@@ -235,15 +233,15 @@ evalExpr' expr = case expr of
     pure $ Identity $ lhs' == rhs'
   ESplit i -> do
     x <- runIdentity <$> evalExpr' i
-    pure $ Vec.tabulate $ \ix -> testBit (fromP x) (fromIntegral ix)
+    pure $ V.generate $ \ix -> testBit (fromP x) (fromIntegral ix)
   EJoin i -> do
     bits <- evalExpr' i
     pure $
       Identity $
-        Vec.ifoldMap (\ix b -> if b then fromInteger (2 ^ fromIntegral @_ @Integer ix) else 0) bits
+        V.ifoldl (\acc ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer ix) else 0) 0 bits
   EAtIndex v i -> do
     _v <- evalExpr' v
-    pure $ Identity $ _v Vec.! i
+    pure $ Identity $ _v `V.index` i
 
 --   pure $ Vec.fromList $ map (testBit i) [0 .. Nat.toInt (Vec.length i) - 1]
 
@@ -442,7 +440,7 @@ compile expr = case expr of
   ESplit input -> do
     i <- compile input >>= addWire . runIdentity
     outputs <- traverse (\_ -> mkBoolVar =<< imm) $ universe @(NBits f)
-    emit $ Split i (Vec.toList outputs)
+    emit $ Split i (V.toList outputs)
     traverse (fmap runIdentity . compile . EVar . VarBool) outputs
     where
       mkBoolVar w = do
@@ -455,7 +453,7 @@ compile expr = case expr of
     pure . Identity . Right $ unsplit ws
   EAtIndex v ix -> do
     v' <- compile v
-    pure . Identity $ v' Vec.! ix
+    pure . Identity $ v' `V.index` ix
 
 exprToArithCircuit ::
   (Num f, Foldable t) =>
@@ -486,3 +484,6 @@ instance (GaloisField f) => Num (Expr Wire f Identity f) where
   abs = identity
   signum = const 1
   fromInteger = EVal . ValField . fromInteger
+
+universe :: (KnownNat n) => Vector n (Finite n)
+universe = V.enumFromN 0
