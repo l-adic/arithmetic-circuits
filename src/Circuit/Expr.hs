@@ -46,7 +46,8 @@ import Data.Vector qualified as V
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Prelude (foldl1)
-import Lens.Micro (ix, (.~))
+import Lens.Micro ((.~))
+import Data.Reify
 
 data UnOp f a where
   UNeg :: UnOp f f
@@ -104,6 +105,68 @@ class (GaloisField f) => Ground f ty
 instance (GaloisField f) => Ground f f
 
 instance (GaloisField f) => Ground f Bool
+
+--------------------------------------------------------------------------------
+
+data UntypedExpr i f where
+  UEVal :: f -> UntypedExpr i f
+  UEVar :: i -> UntypedExpr i f
+  UEUnOp :: UnOp f ty -> UntypedExpr i f -> UntypedExpr i f
+  UEBinOp :: BinOp f ty -> UntypedExpr i f -> UntypedExpr i f -> UntypedExpr i f
+  UEIf :: UntypedExpr i f -> UntypedExpr i f -> UntypedExpr i f -> UntypedExpr i f
+  UEEq :: UntypedExpr i f -> UntypedExpr i f -> UntypedExpr i f
+  UESplit :: Int -> UntypedExpr i f -> UntypedExpr i f
+  UEJoin :: UntypedExpr i f -> UntypedExpr i f
+  UEAtIndex :: UntypedExpr i f -> Int -> UntypedExpr i f
+  UEUpdateIndex :: Int -> UntypedExpr i f -> UntypedExpr i f -> UntypedExpr i f
+  UEBundle :: V.Vector (UntypedExpr i f) -> UntypedExpr i f
+
+data SharedUntypedExpr i f s where
+  SUEVal :: f -> SharedUntypedExpr i f s
+  SUEVar :: i -> SharedUntypedExpr i f s
+  SUEUnOp :: UnOp f ty -> s -> SharedUntypedExpr i f s
+  SUEBinOp :: BinOp f ty -> s -> s -> SharedUntypedExpr i f s
+  SUEIf :: s -> s -> s -> SharedUntypedExpr i f s
+  SUEEq :: s -> s -> SharedUntypedExpr i f s
+  SUESplit :: Int -> s -> SharedUntypedExpr i f s
+  SUEJoin :: s -> SharedUntypedExpr i f s
+  SUEAtIndex :: s -> Int -> SharedUntypedExpr i f s
+  SUEUpdateIndex :: Int -> s -> s -> SharedUntypedExpr i f s
+  SUEBundle :: V.Vector s -> SharedUntypedExpr i f s
+
+instance MuRef (UntypedExpr i f) where
+  type DeRef (UntypedExpr i f) = SharedUntypedExpr i f
+  mapDeRef _ (UEVal x) = pure $ SUEVal x
+  mapDeRef _ (UEVar x) = pure $ SUEVar x
+  mapDeRef f (UEUnOp op e) = SUEUnOp op <$> f e
+  mapDeRef f (UEBinOp op e1 e2) = SUEBinOp op <$> f e1 <*> f e2
+  mapDeRef f (UEIf b t e) = SUEIf <$> f b <*> f t <*> f e
+  mapDeRef f (UEEq l r) = SUEEq <$> f l <*> f r
+  mapDeRef f (UESplit n i) = SUESplit n <$> f i
+  mapDeRef f (UEJoin i) = SUEJoin <$> f i
+  mapDeRef f (UEAtIndex v i) = SUEAtIndex <$> f v <*> pure i
+  mapDeRef f (UEUpdateIndex p b v) = SUEUpdateIndex p <$> f b <*> f v
+  mapDeRef f (UEBundle b) = SUEBundle <$> traverse f b
+
+toUntypedExpr :: forall f m ty. MonadState (BuilderState f) m => Expr Wire f ty -> m (UntypedExpr Wire f)
+toUntypedExpr = \case
+  EVal v -> pure $ UEVal $ case v of
+    ValField f -> f
+    ValBool b -> b
+  EVar v -> case v of
+    VarField i -> pure $ UEVar i
+    VarBool i -> do 
+      emit $ Mul (Var i) (Var i) i
+      pure $ UEVar i
+  EUnOp op e -> UEUnOp op <$> toUntypedExpr e
+  EBinOp op e1 e2 -> UEBinOp op <$> toUntypedExpr e1 <*> toUntypedExpr e2
+  EIf b t e -> UEIf <$> toUntypedExpr b <*> toUntypedExpr t <*> toUntypedExpr e
+  EEq l r -> UEEq <$> toUntypedExpr l <*> (toUntypedExpr r)
+  ESplit i -> UESplit (fromIntegral $ natVal (Proxy @(NBits f) )) <$> toUntypedExpr i
+  EJoin i -> UEJoin <$> toUntypedExpr i
+  EAtIndex v i -> UEAtIndex <$> toUntypedExpr v <*> pure (fromIntegral i)
+  EUpdateIndex p b v -> UEUpdateIndex (fromIntegral p) <$> toUntypedExpr b <*> toUntypedExpr v
+  EBundle b -> UEBundle <$> traverse toUntypedExpr (SV.fromSized b)
 
 -- | Expression data type of (arithmetic) expressions over a field @f@
 -- with variable names/indices coming from @i@.
@@ -271,7 +334,8 @@ evalExpr' expr = case expr of
 data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
-    bsVars :: CircuitVars Text
+    bsVars :: CircuitVars Text,
+    bsCompMap :: Map Unique (V.Vector (SignalSource f))
 
   }
 
@@ -280,7 +344,8 @@ defaultBuilderState =
   BuilderState
     { bsCircuit = ArithCircuit [],
       bsNextVar = 1,
-      bsVars = mempty
+      bsVars = mempty,
+      bsCompMap = mempty
     }
 
 -- non recoverable errors that can arise during circuit building
@@ -425,7 +490,7 @@ compileWithWire ::
   Expr Wire f ty ->
   m Wire
 compileWithWire freshWire expr = do
-  compileOut <- compile expr >>= assertSingleSource
+  compileOut <- toUntypedExpr expr >>= compile >>= assertSingleSource
   case compileOut of
     WireSource wire -> do
       wire' <- rawWire <$> freshWire
@@ -455,30 +520,25 @@ assertSameSourceSize l r =
       MismatchedWireTypes l r
 
 compile ::
-  forall f m ty.
+  forall f m .
   (Num f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  Expr Wire f ty ->
+  UntypedExpr Wire f ->
   m (V.Vector (SignalSource f))
 compile expr = case expr of
-  EVal v ->
+  UEVal v ->
     V.singleton <$> case v of
-      ValField f -> pure . AffineSource $ ConstGate f
-      ValBool b -> pure . AffineSource $ ConstGate b
-  EVar var ->
-    V.singleton <$> case var of
-      VarField i -> pure . WireSource $ i
-      VarBool i -> do
-        emit $ Mul (Var i) (Var i) i
-        pure . WireSource $ i
-  EUnOp op e1 -> do
+      f -> pure . AffineSource $ ConstGate f
+  UEVar var -> pure  $
+    V.singleton $ WireSource var
+  UEUnOp op e1 -> do
     e1Outs <- compile e1
     for e1Outs $ \e1Out ->
       case op of
         UNeg -> pure . AffineSource $ ScalarMul (-1) (addVar e1Out)
         UNot -> pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
-  EBinOp op e1 e2 -> do
+  UEBinOp op e1 e2 -> do
     e1Outs <- compile e1
     e2Outs <- compile e2
     assertSameSourceSize e1Outs e2Outs
@@ -511,7 +571,7 @@ compile expr = case expr of
           emit $ Mul e1Out e2Out tmp1
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
-  EIf cond true false -> V.singleton <$> do
+  UEIf cond true false -> V.singleton <$> do
     condOut <- addVar <$> (compile cond >>= assertSingleSource)
     trueOuts <- compile true
     falseOuts <- compile false
@@ -524,39 +584,39 @@ compile expr = case expr of
       emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
     pure . AffineSource $ Add (Var tmp1) (Var tmp2)
   -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
-  EEq lhs rhs ->
+  UEEq lhs rhs ->
     pure <$> do
       -- assertSingle is justified as the lhs and rhs must be of type f
-      eqInWire <- compile (EBinOp BSub lhs rhs) >>= assertSingleSource >>= addWire
+      eqInWire <- compile (UEBinOp BSub lhs rhs) >>= assertSingleSource >>= addWire
       eqFreeWire <- imm
       eqOutWire <- imm
       emit $ Equal eqInWire eqFreeWire eqOutWire
       -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
       -- neqOutWire instead.
       pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
-  ESplit input -> do
+  UESplit n input -> do
     -- assertSingle is justified as the input must be of type f
     i <- compile input >>= assertSingleSource >>= addWire
-    outputs <- traverse (const $ mkBoolVar =<< imm) $ universe @(NBits f)
-    emit $ Split i (SV.toList outputs)
-    fold <$> traverse (compile . EVar . VarBool) (SV.fromSized outputs)
+    outputs <- V.generateM n (const $ mkBoolVar =<< imm)
+    emit $ Split i (V.toList outputs)
+    fold <$> traverse (compile . UEVar) outputs
     where
       mkBoolVar w = do 
         emit $ Mul (Var w) (Var w) w
         pure w
-  EBundle as -> do
+  UEBundle as -> do
     as' <- traverse compile as
     pure $ Prelude.foldl1 (<>) (toList as')
-  EJoin bits ->
+  UEJoin bits ->
     V.singleton <$> do
       bs <- toList <$> compile bits
       ws <- traverse addWire bs
       pure . AffineSource $ unsplit ws
-  EAtIndex v _ix ->
+  UEAtIndex v _ix ->
     V.singleton <$> do
       v' <- compile v
       pure $ v' V.! (fromIntegral _ix)
-  EUpdateIndex p b v -> do
+  UEUpdateIndex p b v -> do
     v' <- compile v
     b' <- compile b >>= assertSingleSource
     let p' = fromIntegral p
@@ -570,7 +630,7 @@ exprToArithCircuit ::
   Wire ->
   ExprM f ()
 exprToArithCircuit expr output = do
-  exprOut <- compile expr >>= assertSingleSource
+  exprOut <- toUntypedExpr expr >>= compile >>= assertSingleSource
   emit $ Mul (ConstGate 1) (addVar exprOut) output
 
 instance (GaloisField f) => Semiring (Expr Wire f f) where
@@ -590,6 +650,3 @@ instance (GaloisField f) => Num (Expr Wire f f) where
   abs = identity
   signum = const 1
   fromInteger = EVal . ValField . fromInteger
-
-universe :: (KnownNat n) => SV.Vector n (Finite n)
-universe = SV.enumFromN 0

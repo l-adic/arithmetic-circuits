@@ -44,6 +44,7 @@ common deps
       aeson           >=1.4
     , base            >=4.10  && <5
     , containers      >=0.6.0
+    , data-reify
     , filepath        >=1.4.2
     , finite-typelits >=0.1.0
     , galois-field    >=2.0.0

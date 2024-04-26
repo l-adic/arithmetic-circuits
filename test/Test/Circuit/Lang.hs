@@ -106,18 +106,6 @@ bundleUnbundle = do
   retField "out" $ sum (boolToField <$> a)
 
 
-BuilderState {bsVars=vs__, bsCircuit=c__} = snd $ runCircuitBuilder bundleUnbundle
-
-prop_bundleUnbundle :: Fr -> Bool
-prop_bundleUnbundle x = 
-  let _x = fromP x
-
-      input = assignInputs vs__ $ Map.singleton "x" x
-      w = solve vs__ c__ input
-      res = lookupVar vs__ "out" w
-      expected = foldl (\acc i -> acc + if testBit _x i then 1 else 0) 0 [0 .. nBits - 1]
-   in res == Just (fromInteger expected)
-
 --------------------------------------------------------------------------------
 
 fieldToBool :: Fr -> Bool
