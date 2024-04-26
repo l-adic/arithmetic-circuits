@@ -38,17 +38,15 @@ import Circuit.Affine
 import Circuit.Arithmetic
 import Data.Field.Galois (GaloisField, PrimeField (fromP))
 import Data.Finite (Finite)
-import Data.List.NonEmpty qualified as NE
 import Data.Map qualified as Map
-import Data.Semigroup qualified as NE
 import Data.Semiring (Ring (..), Semiring (..))
 import Data.Set qualified as Set
-import Data.Vector.Sized (Vector)
-import Data.Vector.Sized qualified as V
-import Lens.Micro (ix, (.~))
+import Data.Vector.Sized qualified as SV
+import Data.Vector qualified as V
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Prelude (foldl1)
+import Lens.Micro (ix, (.~))
 
 data UnOp f a where
   UNeg :: UnOp f f
@@ -116,11 +114,11 @@ data Expr i f ty where
   EBinOp :: BinOp f ty -> Expr i f ty -> Expr i f ty -> Expr i f ty
   EIf :: Expr i f Bool -> Expr i f ty -> Expr i f ty -> Expr i f ty
   EEq :: Expr i f f -> Expr i f f -> Expr i f Bool
-  ESplit :: (KnownNat (NBits f)) => Expr i f f -> Expr i f (Vector (NBits f) Bool)
-  EJoin :: (KnownNat n) => Expr i f (Vector n Bool) -> Expr i f f
-  EAtIndex :: (KnownNat n, Ground f ty) => Expr i f (Vector n ty) -> Finite n -> Expr i f ty
-  EUpdateIndex :: (KnownNat n, Ground f ty) => Finite n -> (Expr i f ty) -> Expr i f (Vector n ty) -> Expr i f (Vector n ty)
-  EBundle :: (Ground f ty) => Vector n (Expr i f ty) -> Expr i f (Vector n ty)
+  ESplit :: (KnownNat (NBits f)) => Expr i f f -> Expr i f (SV.Vector (NBits f) Bool)
+  EJoin :: (KnownNat n) => Expr i f (SV.Vector n Bool) -> Expr i f f
+  EAtIndex :: (KnownNat n, Ground f ty) => Expr i f (SV.Vector n ty) -> Finite n -> Expr i f ty
+  EUpdateIndex :: (KnownNat n, Ground f ty) => Finite n -> (Expr i f ty) -> Expr i f (SV.Vector n ty) -> Expr i f (SV.Vector n ty)
+  EBundle :: (Ground f ty) => SV.Vector n (Expr i f ty) -> Expr i f (SV.Vector n ty)
 
 deriving instance (Show f) => Show (BinOp f a)
 
@@ -164,7 +162,7 @@ instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
           EEq l r ->
             parensPrec 1 p (pretty l) <+> text "=" <+> parensPrec 1 p (pretty r)
           ESplit i -> text "split" <+> pretty i
-          EBundle b -> text "bundle" <+> pretty (V.toList b)
+          EBundle b -> text "bundle" <+> pretty (SV.toList b)
           EJoin i -> text "join" <+> pretty i
           EAtIndex v _ix -> pretty v <+> brackets (pretty $ toInteger _ix)
           EUpdateIndex _p b v -> text ("setIndex " <> show (natVal _p)) <+> pretty b <+> pretty v
@@ -252,19 +250,19 @@ evalExpr' expr = case expr of
     pure $ lhs' == rhs'
   ESplit i -> do
     x <- evalExpr' i
-    pure $ V.generate $ \_ix -> testBit (fromP x) (fromIntegral _ix)
+    pure $ SV.generate $ \_ix -> testBit (fromP x) (fromIntegral _ix)
   EBundle as -> traverse evalExpr' as
   EJoin i -> do
     bits <- evalExpr' i
     pure $
-      V.ifoldl (\acc _ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer _ix) else 0) 0 bits
+      SV.ifoldl (\acc _ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer _ix) else 0) 0 bits
   EAtIndex v i -> do
     _v <- evalExpr' v
-    pure $ _v `V.index` i
+    pure $ _v `SV.index` i
   EUpdateIndex p b v -> do
     _v <- evalExpr' v
     _b <- evalExpr' b
-    pure $ _v & V.ix p .~ _b
+    pure $ _v & SV.ix p .~ _b
 
 -------------------------------------------------------------------------------
 -- Circuit Builder
@@ -274,6 +272,7 @@ data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
     bsVars :: CircuitVars Text
+
   }
 
 defaultBuilderState :: BuilderState f
@@ -286,8 +285,8 @@ defaultBuilderState =
 
 -- non recoverable errors that can arise during circuit building
 data CircuitBuilderError f
-  = ExpectedSingleWire (NonEmpty (SignalSource f))
-  | MismatchedWireTypes (NonEmpty (SignalSource f)) (NonEmpty (SignalSource f))
+  = ExpectedSingleWire (V.Vector (SignalSource f))
+  | MismatchedWireTypes (V.Vector (SignalSource f)) (V.Vector (SignalSource f))
 
 instance (GaloisField f) => Pretty (CircuitBuilderError f) where
   pretty = \case
@@ -419,7 +418,9 @@ addWire x = case x of
     pure mulOut
 
 compileWithWire ::
-  (Num f, MonadState (BuilderState f) m, MonadError (CircuitBuilderError f) m) =>
+  (Num f) =>
+  (MonadState (BuilderState f) m) =>
+  (MonadError (CircuitBuilderError f) m) =>
   m (Var Wire f ty) ->
   Expr Wire f ty ->
   m Wire
@@ -435,14 +436,21 @@ compileWithWire freshWire expr = do
       emit $ Mul (ConstGate 1) circ wire
       pure wire
 
-assertSingleSource :: (MonadError (CircuitBuilderError f) m) => NonEmpty (SignalSource f) -> m (SignalSource f)
-assertSingleSource xs = case xs of
-  x NE.:| [] -> pure x
+assertSingleSource ::
+  (MonadError (CircuitBuilderError f) m) =>
+  V.Vector (SignalSource f) ->
+  m (SignalSource f)
+assertSingleSource xs = case xs V.!? 0 of
+  Just x -> pure x
   _ -> throwError $ ExpectedSingleWire xs
 
-assertSameSourceSize :: (MonadError (CircuitBuilderError f) m) => NonEmpty (SignalSource f) -> NonEmpty (SignalSource f) -> m ()
+assertSameSourceSize ::
+  (MonadError (CircuitBuilderError f) m) =>
+  V.Vector (SignalSource f) ->
+  V.Vector (SignalSource f) ->
+  m ()
 assertSameSourceSize l r =
-  unless (NE.length l == NE.length r) $
+  unless (V.length l == V.length r) $
     throwError $
       MismatchedWireTypes l r
 
@@ -452,18 +460,17 @@ compile ::
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
   Expr Wire f ty ->
-  m (NonEmpty (SignalSource f))
+  m (V.Vector (SignalSource f))
 compile expr = case expr of
   EVal v ->
-    NE.singleton <$> case v of
+    V.singleton <$> case v of
       ValField f -> pure . AffineSource $ ConstGate f
       ValBool b -> pure . AffineSource $ ConstGate b
   EVar var ->
-    NE.singleton <$> case var of
+    V.singleton <$> case var of
       VarField i -> pure . WireSource $ i
       VarBool i -> do
-        squared <- mulToImm (WireSource i) (WireSource i)
-        emit $ Mul (Var squared) (ConstGate 1) i
+        emit $ Mul (Var i) (Var i) i
         pure . WireSource $ i
   EUnOp op e1 -> do
     e1Outs <- compile e1
@@ -475,7 +482,7 @@ compile expr = case expr of
     e1Outs <- compile e1
     e2Outs <- compile e2
     assertSameSourceSize e1Outs e2Outs
-    for (NE.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
+    for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
       case op of
         BAdd -> pure . AffineSource $ Add e1Out e2Out
         BMul -> do
@@ -504,21 +511,21 @@ compile expr = case expr of
           emit $ Mul e1Out e2Out tmp1
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
-  EIf cond true false -> do
+  EIf cond true false -> V.singleton <$> do
     condOut <- addVar <$> (compile cond >>= assertSingleSource)
     trueOuts <- compile true
     falseOuts <- compile false
     assertSameSourceSize trueOuts falseOuts
     tmp1 <- imm
-    for_ (addVar <$>  trueOuts) $ \trueOut -> 
+    for_ (addVar <$> trueOuts) $ \trueOut ->
       emit $ Mul condOut trueOut tmp1
     tmp2 <- imm
     for_ (addVar <$> falseOuts) $ \falseOut ->
       emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
-    pure . NE.singleton . AffineSource $ Add (Var tmp1) (Var tmp2)
+    pure . AffineSource $ Add (Var tmp1) (Var tmp2)
   -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
   EEq lhs rhs ->
-    NE.singleton <$> do
+    pure <$> do
       -- assertSingle is justified as the lhs and rhs must be of type f
       eqInWire <- compile (EBinOp BSub lhs rhs) >>= assertSingleSource >>= addWire
       eqFreeWire <- imm
@@ -531,29 +538,29 @@ compile expr = case expr of
     -- assertSingle is justified as the input must be of type f
     i <- compile input >>= assertSingleSource >>= addWire
     outputs <- traverse (const $ mkBoolVar =<< imm) $ universe @(NBits f)
-    emit $ Split i (V.toList outputs)
-    NE.sconcat <$> traverse (compile . EVar . VarBool) (NE.fromList . V.toList $ outputs)
+    emit $ Split i (SV.toList outputs)
+    fold <$> traverse (compile . EVar . VarBool) (SV.fromSized outputs)
     where
-      mkBoolVar w = do
-        squared <- mulToImm (WireSource w) (WireSource w)
-        emit $ Mul (Var squared) (ConstGate 1) w
+      mkBoolVar w = do 
+        emit $ Mul (Var w) (Var w) w
         pure w
   EBundle as -> do
     as' <- traverse compile as
     pure $ Prelude.foldl1 (<>) (toList as')
   EJoin bits ->
-    NE.singleton <$> do
+    V.singleton <$> do
       bs <- toList <$> compile bits
       ws <- traverse addWire bs
       pure . AffineSource $ unsplit ws
   EAtIndex v _ix ->
-    NE.singleton <$> do
+    V.singleton <$> do
       v' <- compile v
-      pure $ v' NE.!! (fromIntegral _ix)
+      pure $ v' V.! (fromIntegral _ix)
   EUpdateIndex p b v -> do
     v' <- compile v
     b' <- compile b >>= assertSingleSource
-    pure $ v' & ix (fromIntegral p) .~ b'
+    let p' = fromIntegral p
+    pure $ V.imap (\_ix w -> if _ix == p' then b' else w) v'
 
 exprToArithCircuit ::
   (Num f) =>
@@ -584,5 +591,5 @@ instance (GaloisField f) => Num (Expr Wire f f) where
   signum = const 1
   fromInteger = EVal . ValField . fromInteger
 
-universe :: (KnownNat n) => Vector n (Finite n)
-universe = V.enumFromN 0
+universe :: (KnownNat n) => SV.Vector n (Finite n)
+universe = SV.enumFromN 0

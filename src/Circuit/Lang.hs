@@ -27,6 +27,7 @@ module Circuit.Lang
     updateIndex_,
     bundle,
     unBundle,
+    boolToField,
 
     -- * Monoids
     Any_ (..),
@@ -44,6 +45,7 @@ import Data.Finite (Finite)
 import Data.Vector.Sized (Vector)
 import Data.Vector.Sized qualified as V
 import Protolude
+import Unsafe.Coerce (unsafeCoerce)
 
 --------------------------------------------------------------------------------
 type Signal f a = Expr Wire f a
@@ -122,6 +124,9 @@ bundle = EBundle
 
 unBundle :: (KnownNat n, Ground f ty) => Bundle f n ty -> Vector n (Signal f ty)
 unBundle b = V.generate $ atIndex b
+
+boolToField :: Signal f Bool -> Signal f f
+boolToField = unsafeCoerce
 
 --------------------------------------------------------------------------------
 

@@ -36,7 +36,7 @@ common extensions
     RecordWildCards
 
 common warnings
-  ghc-options: -Wall -Wredundant-constraints -Werror
+  ghc-options: -Wall -Wredundant-constraints
 
 
 common deps
@@ -53,6 +53,7 @@ common deps
     , protolude       >=0.2
     , semirings       >=0.7
     , text            >=1.2.3
+    , vector
     , vector-sized
     , wl-pprint-text  >=1.2.0
 

@@ -9,11 +9,17 @@ import Data.Finite (Finite)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
 import Protolude hiding (Show, show)
-import Test.QuickCheck (Property, (==>))
+import Test.QuickCheck (Property, (==>), withMaxSuccess)
+import qualified Data.Set as Set
+import qualified Prelude
+import Text.PrettyPrint.Leijen.Text (Pretty(pretty))
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-type instance NBits (Prime p) = 256
+type instance NBits (Prime p) = 254
+
+nBits :: Int
+nBits = 254
 
 bitSplitJoin :: ExprM Fr Wire
 bitSplitJoin = do
@@ -66,16 +72,51 @@ bitIndex i = do
 
 prop_bitIndex :: Int -> Fr -> Bool
 prop_bitIndex i x =
-  let _i = i `mod` 256
+  let _i = i `mod` nBits
       _x = fromP x
       BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (bitIndex $ fromIntegral _i)
       input = assignInputs bsVars $ Map.singleton "x" x
       w = solve bsVars bsCircuit input
    in (fieldToBool <$> lookupVar bsVars "out" w) == Just (testBit _x _i)
 
-{-
+setAtIndex :: Finite (NBits Fr) -> Bool -> ExprM Fr Wire
+setAtIndex i b = do
+  x <- deref <$> fieldInput Public "x"
+  let bits = splitBits x
+      bits' = updateIndex_ i (cBool b) bits
+  retField "out" $ joinBits bits'
 
--}
+prop_setAtIndex :: Int -> Fr -> Bool -> Bool
+prop_setAtIndex i x b =
+  let _i = i `mod` nBits
+      _x = fromP x
+      BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (setAtIndex (fromIntegral _i) b)
+      input = assignInputs bsVars $ Map.singleton "x" x
+      w = solve bsVars bsCircuit input
+      res = lookupVar bsVars "out" w
+   in res == Just (fromInteger $ if b then setBit _x _i else clearBit _x _i)
+
+
+-- TODO: investigate why this one is SCARY SLOW
+bundleUnbundle :: ExprM Fr Wire
+bundleUnbundle = do
+  x <- deref <$> fieldInput Public "x"
+  let bs = splitBits x
+      a = unBundle bs
+  retField "out" $ sum (boolToField <$> a)
+
+
+BuilderState {bsVars=vs__, bsCircuit=c__} = snd $ runCircuitBuilder bundleUnbundle
+
+prop_bundleUnbundle :: Fr -> Bool
+prop_bundleUnbundle x = 
+  let _x = fromP x
+
+      input = assignInputs vs__ $ Map.singleton "x" x
+      w = solve vs__ c__ input
+      res = lookupVar vs__ "out" w
+      expected = foldl (\acc i -> acc + if testBit _x i then 1 else 0) 0 [0 .. nBits - 1]
+   in res == Just (fromInteger expected)
 
 --------------------------------------------------------------------------------
 
