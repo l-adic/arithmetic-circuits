@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+
 -- | Surface language
 module Circuit.Lang
   ( Signal,
@@ -22,6 +24,11 @@ module Circuit.Lang
     splitBits,
     joinBits,
     atIndex,
+    updateIndex_,
+    bundle,
+    unBundle,
+
+    -- * Monoids
     Any_ (..),
     And_ (..),
     elem_,
@@ -30,19 +37,18 @@ module Circuit.Lang
   )
 where
 
-import Circuit.Affine (AffineCircuit (..))
-import Circuit.Arithmetic (Gate (..), InputType (Private, Public), Wire (..))
+import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
 import Circuit.Expr
 import Data.Field.Galois (GaloisField)
 import Data.Finite (Finite)
 import Data.Vector.Sized (Vector)
+import Data.Vector.Sized qualified as V
 import Protolude
 
 --------------------------------------------------------------------------------
+type Signal f a = Expr Wire f a
 
-type Signal f a = Expr Wire f Identity a
-
-type Bundle f n a = Expr Wire f (Vector n) a
+type Bundle f n a = Expr Wire f (Vector n a)
 
 -- | Convert constant to expression
 cField :: f -> Signal f f
@@ -93,33 +99,29 @@ splitBits ::
   Bundle f (NBits f) Bool
 splitBits = ESplit
 
-joinBits :: (Num f, KnownNat n) => Bundle f n Bool -> Signal f f
+joinBits :: (KnownNat n) => Bundle f n Bool -> Signal f f
 joinBits = EJoin
 
 deref :: Var Wire f ty -> Signal f ty
 deref = EVar
 
-compileWithWire :: (Num f) => ExprM f (Var Wire f ty) -> Signal f ty -> ExprM f Wire
-compileWithWire freshWire expr = do
-  compileOut <- runIdentity <$> compile expr
-  case compileOut of
-    Left wire -> do
-      wire' <- rawWire <$> freshWire
-      emit $ Mul (ConstGate 1) (Var wire') wire
-      pure wire
-    Right circ -> do
-      wire <- rawWire <$> freshWire
-      emit $ Mul (ConstGate 1) circ wire
-      pure wire
-
 retBool :: (Num f) => Text -> Signal f Bool -> ExprM f Wire
-retBool label = compileWithWire (boolInput Public label)
+retBool label sig = compileWithWire (boolInput Public label) sig
 
 retField :: (Num f) => Text -> Signal f f -> ExprM f Wire
-retField label = compileWithWire (fieldInput Public label)
+retField label sig = compileWithWire (fieldInput Public label) sig
 
-atIndex :: (KnownNat n) => Bundle f n ty -> Finite n -> Signal f ty
+atIndex :: (KnownNat n, Ground f ty) => Bundle f n ty -> Finite n -> Signal f ty
 atIndex = EAtIndex
+
+updateIndex_ :: (KnownNat n, Ground f ty) => Finite n -> Signal f ty -> Bundle f n ty -> Bundle f n ty
+updateIndex_ p = EUpdateIndex p
+
+bundle :: (Ground f ty) => Vector n (Signal f ty) -> Bundle f n ty
+bundle = EBundle
+
+unBundle :: (KnownNat n, Ground f ty) => Bundle f n ty -> Vector n (Signal f ty)
+unBundle b = V.generate $ atIndex b
 
 --------------------------------------------------------------------------------
 

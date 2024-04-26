@@ -82,7 +82,7 @@ instance (Pretty f) => Show (ExprWithInputs f) where
 -- | Check whether exprToArithCircuit produces valid circuits
 prop_compiledCircuitValid :: ExprWithInputs Fr -> Bool
 prop_compiledCircuitValid (ExprWithInputs expr _) =
-  validArithCircuit (execCircuitBuilder $ exprToArithCircuit expr (Identity $ OutputWire 0))
+  validArithCircuit (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 0))
 
 -- | Check whether evaluating an expression and
 -- evaluating the arithmetic circuit translation produces the same
@@ -91,7 +91,7 @@ prop_evalEqArithEval :: ExprWithInputs Fr -> Bool
 prop_evalEqArithEval (ExprWithInputs expr inputs) = all testInput inputs
   where
     testInput input =
-      let a = runIdentity $ evalExpr (Map.mapKeys (InputWire "" Public) input) expr
+      let a = evalExpr (Map.mapKeys (InputWire "" Public) input) expr
           b = arithResult input
        in a == b
     arithResult input = arithOutput input Map.! (OutputWire 1)
@@ -101,4 +101,4 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) = all testInput inputs
         (Map.insert)
         circuit
         (Map.mapKeys (InputWire "" Public) input)
-    circuit = (execCircuitBuilder $ exprToArithCircuit expr (Identity $ OutputWire 1))
+    circuit = (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 1))

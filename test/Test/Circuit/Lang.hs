@@ -73,6 +73,10 @@ prop_bitIndex i x =
       w = solve bsVars bsCircuit input
    in (fieldToBool <$> lookupVar bsVars "out" w) == Just (testBit _x _i)
 
+{-
+
+-}
+
 --------------------------------------------------------------------------------
 
 fieldToBool :: Fr -> Bool
