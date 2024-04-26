@@ -266,8 +266,6 @@ evalExpr' expr = case expr of
     _b <- evalExpr' b
     pure $ _v & V.ix p .~ _b
 
---   pure $ Vec.fromList $ map (testBit i) [0 .. Nat.toInt (Vec.length i) - 1]
-
 -------------------------------------------------------------------------------
 -- Circuit Builder
 -------------------------------------------------------------------------------
@@ -286,19 +284,34 @@ defaultBuilderState =
       bsVars = mempty
     }
 
-type ExprM f a = State (BuilderState f) a
+-- non recoverable errors that can arise during circuit building
+data CircuitBuilderError f
+  = ExpectedSingleWire (NonEmpty (SignalSource f))
+  | MismatchedWireTypes (NonEmpty (SignalSource f)) (NonEmpty (SignalSource f))
 
-execCircuitBuilder :: ExprM f a -> ArithCircuit f
-execCircuitBuilder m = reverseCircuit $ bsCircuit $ execState m defaultBuilderState
+instance (GaloisField f) => Pretty (CircuitBuilderError f) where
+  pretty = \case
+    ExpectedSingleWire wires -> "Expected a single wire, but got:" <+> pretty (toList wires)
+    MismatchedWireTypes l r -> "Mismatched wire types:" <+> pretty (toList l) <+> pretty (toList r)
+
+type ExprM f a = ExceptT (CircuitBuilderError f) (State (BuilderState f)) a
+
+runExprM :: (GaloisField f) => ExprM f a -> BuilderState f -> (a, BuilderState f)
+runExprM m s = case runState (runExceptT m) s of
+  (Left e, _) -> panic $ show $ pretty e
+  (Right a, s') -> (a, s')
+
+execCircuitBuilder :: (GaloisField f) => ExprM f a -> ArithCircuit f
+execCircuitBuilder m = reverseCircuit $ bsCircuit $ snd $ runExprM m defaultBuilderState
   where
     reverseCircuit = \(ArithCircuit cs) -> ArithCircuit $ reverse cs
 
-evalCircuitBuilder :: ExprM f a -> a
+evalCircuitBuilder :: (GaloisField f) => ExprM f a -> a
 evalCircuitBuilder = fst . runCircuitBuilder
 
-runCircuitBuilder :: ExprM f a -> (a, BuilderState f)
+runCircuitBuilder :: (GaloisField f) => ExprM f a -> (a, BuilderState f)
 runCircuitBuilder m =
-  let (a, s) = runState m defaultBuilderState
+  let (a, s) = runExprM m defaultBuilderState
    in ( a,
         s
           { bsCircuit = reverseCircuit $ bsCircuit s
@@ -309,7 +322,7 @@ runCircuitBuilder m =
 
 --------------------------------------------------------------------------------
 
-fresh :: ExprM f Int
+fresh :: (MonadState (BuilderState f) m) => m Int
 fresh = do
   v <- gets bsNextVar
   modify $ \s ->
@@ -320,11 +333,11 @@ fresh = do
   pure v
 
 -- | Fresh intermediate variables
-imm :: ExprM f Wire
+imm :: (MonadState (BuilderState f) m) => m Wire
 imm = IntermediateWire <$> fresh
 
 -- | Fresh input variables
-freshPublicInput :: Text -> ExprM f Wire
+freshPublicInput :: (MonadState (BuilderState f) m) => Text -> m Wire
 freshPublicInput label = do
   v <- InputWire label Public <$> fresh
   modify $ \s ->
@@ -337,7 +350,7 @@ freshPublicInput label = do
       }
   pure v
 
-freshPrivateInput :: Text -> ExprM f Wire
+freshPrivateInput :: (MonadState (BuilderState f) m) => Text -> m Wire
 freshPrivateInput label = do
   v <- InputWire label Private <$> fresh
   modify $ \s ->
@@ -351,7 +364,7 @@ freshPrivateInput label = do
   pure v
 
 -- | Fresh output variables
-freshOutput :: ExprM f Wire
+freshOutput :: (MonadState (BuilderState f) m) => m Wire
 freshOutput = do
   v <- OutputWire <$> fresh
   modify $ \s ->
@@ -363,15 +376,26 @@ freshOutput = do
       }
   pure v
 
+-- This allows for an optimization to avoid creating a new variable/constraint in the event that
+-- the output of an expression is already a wire
+data SignalSource f
+  = WireSource Wire
+  | AffineSource (AffineCircuit f Wire)
+
+instance (Show f) => Pretty (SignalSource f) where
+  pretty = \case
+    WireSource w -> pretty w
+    AffineSource c -> pretty c
+
 -- | Multiply two wires or affine circuits to an intermediate variable
-mulToImm :: Either Wire (AffineCircuit f Wire) -> Either Wire (AffineCircuit f Wire) -> ExprM f Wire
+mulToImm :: (MonadState (BuilderState f) m) => SignalSource f -> SignalSource f -> m Wire
 mulToImm l r = do
   o <- imm
   emit $ Mul (addVar l) (addVar r) o
   pure o
 
 -- | Add a Mul and its output to the ArithCircuit
-emit :: Gate f Wire -> ExprM f ()
+emit :: (MonadState (BuilderState f) m) => Gate f Wire -> m ()
 emit c = modify $ \s@(BuilderState {bsCircuit = ArithCircuit cs}) ->
   s {bsCircuit = ArithCircuit (c : cs)}
 
@@ -380,124 +404,138 @@ rotateList :: Int -> [a] -> [a]
 rotateList steps x = take (length x) $ drop steps $ cycle x
 
 -- | Turn a wire into an affine circuit, or leave it be
-addVar :: Either Wire (AffineCircuit f Wire) -> AffineCircuit f Wire
-addVar = either Var identity
+addVar :: SignalSource f -> AffineCircuit f Wire
+addVar s = case s of
+  WireSource w -> Var w
+  AffineSource c -> c
 
 -- | Turn an affine circuit into a wire, or leave it be
-addWire :: (Num f) => Either Wire (AffineCircuit f Wire) -> ExprM f Wire
+addWire :: (MonadState (BuilderState f) m, Num f) => SignalSource f -> m Wire
 addWire x = case x of
-  Left w -> pure w
-  Right c -> do
+  WireSource w -> pure w
+  AffineSource c -> do
     mulOut <- imm
     emit $ Mul (ConstGate 1) c mulOut
     pure mulOut
 
-compileWithWire :: (Num f) => ExprM f (Var Wire f ty) -> Expr Wire f ty -> ExprM f Wire
+compileWithWire ::
+  (Num f, MonadState (BuilderState f) m, MonadError (CircuitBuilderError f) m) =>
+  m (Var Wire f ty) ->
+  Expr Wire f ty ->
+  m Wire
 compileWithWire freshWire expr = do
-  -- the use of assertSingle here is justified because Var constraints what ty can be to either Bool or f
-  compileOut <- assertSingle <$> compile expr
+  compileOut <- compile expr >>= assertSingleSource
   case compileOut of
-    Left wire -> do
+    WireSource wire -> do
       wire' <- rawWire <$> freshWire
       emit $ Mul (ConstGate 1) (Var wire') wire
       pure wire
-    Right circ -> do
+    AffineSource circ -> do
       wire <- rawWire <$> freshWire
       emit $ Mul (ConstGate 1) circ wire
       pure wire
 
-assertSingle :: NonEmpty a -> a
-assertSingle xs = case xs of
-  x NE.:| [] -> x
-  _ -> panic "Expected single wire"
+assertSingleSource :: (MonadError (CircuitBuilderError f) m) => NonEmpty (SignalSource f) -> m (SignalSource f)
+assertSingleSource xs = case xs of
+  x NE.:| [] -> pure x
+  _ -> throwError $ ExpectedSingleWire xs
+
+assertSameSourceSize :: (MonadError (CircuitBuilderError f) m) => NonEmpty (SignalSource f) -> NonEmpty (SignalSource f) -> m ()
+assertSameSourceSize l r =
+  unless (NE.length l == NE.length r) $
+    throwError $
+      MismatchedWireTypes l r
 
 compile ::
-  forall f ty.
+  forall f m ty.
   (Num f) =>
+  (MonadState (BuilderState f) m) =>
+  (MonadError (CircuitBuilderError f) m) =>
   Expr Wire f ty ->
-  ExprM f (NonEmpty (Either Wire (AffineCircuit f Wire)))
+  m (NonEmpty (SignalSource f))
 compile expr = case expr of
   EVal v ->
     NE.singleton <$> case v of
-      ValField f -> pure . Right $ ConstGate f
-      ValBool b -> pure . Right $ ConstGate b
+      ValField f -> pure . AffineSource $ ConstGate f
+      ValBool b -> pure . AffineSource $ ConstGate b
   EVar var ->
     NE.singleton <$> case var of
-      VarField i -> pure . Left $ i
+      VarField i -> pure . WireSource $ i
       VarBool i -> do
-        squared <- mulToImm (Left i) (Left i)
+        squared <- mulToImm (WireSource i) (WireSource i)
         emit $ Mul (Var squared) (ConstGate 1) i
-        pure . Left $ i
+        pure . WireSource $ i
   EUnOp op e1 -> do
     e1Outs <- compile e1
     for e1Outs $ \e1Out ->
       case op of
-        UNeg -> pure . Right $ ScalarMul (-1) (addVar e1Out)
-        UNot -> pure . Right $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
+        UNeg -> pure . AffineSource $ ScalarMul (-1) (addVar e1Out)
+        UNot -> pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
   EBinOp op e1 e2 -> do
-    e1Outs <- fmap addVar <$> compile e1
-    e2Outs <- fmap addVar <$> compile e2
-    for (NE.zip e1Outs e2Outs) $ \(e1Out, e2Out) ->
+    e1Outs <- compile e1
+    e2Outs <- compile e2
+    assertSameSourceSize e1Outs e2Outs
+    for (NE.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
       case op of
-        BAdd -> pure . Right $ Add e1Out e2Out
+        BAdd -> pure . AffineSource $ Add e1Out e2Out
         BMul -> do
-          tmp1 <- mulToImm (Right e1Out) (Right e2Out)
-          pure . Left $ tmp1
+          tmp1 <- mulToImm (AffineSource e1Out) (AffineSource e2Out)
+          pure . WireSource $ tmp1
         BDiv -> do
           _recip <- imm
-          _one <- addWire $ Right $ ConstGate 1
+          _one <- addWire $ AffineSource $ ConstGate 1
           emit $ Mul e2Out (Var _recip) _one
           out <- imm
           emit $ Mul e1Out (Var _recip) out
-          pure $ Left out
+          pure $ WireSource out
         -- SUB(x, y) = x + (-y)
-        BSub -> pure . Right $ Add e1Out (ScalarMul (-1) e2Out)
+        BSub -> pure . AffineSource $ Add e1Out (ScalarMul (-1) e2Out)
         BAnd -> do
-          tmp1 <- mulToImm (Right e1Out) (Right e2Out)
-          pure . Left $ tmp1
+          tmp1 <- mulToImm (AffineSource e1Out) (AffineSource e2Out)
+          pure . WireSource $ tmp1
         BOr -> do
           -- OR(input1, input2) = (input1 + input2) - (input1 * input2)
           tmp1 <- imm
           emit $ Mul e1Out e2Out tmp1
-          pure . Right $ Add (Add e1Out e2Out) (ScalarMul (-1) (Var tmp1))
+          pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-1) (Var tmp1))
         BXor -> do
           -- XOR(input1, input2) = (input1 + input2) - 2 * (input1 * input2)
           tmp1 <- imm
           emit $ Mul e1Out e2Out tmp1
-          pure . Right $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
+          pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
   EIf cond true false -> do
-    -- assertSingle is justified as the cond must be of type bool
-    condOut <- addVar . assertSingle <$> compile cond
-    trueOuts <- fmap addVar <$> compile true
-    falseOuts <- fmap addVar <$> compile false
+    condOut <- addVar <$> (compile cond >>= assertSingleSource)
+    trueOuts <- compile true
+    falseOuts <- compile false
+    assertSameSourceSize trueOuts falseOuts
     tmp1 <- imm
-    for_ trueOuts $ \trueOut -> emit $ Mul condOut trueOut tmp1
+    for_ (addVar <$>  trueOuts) $ \trueOut -> 
+      emit $ Mul condOut trueOut tmp1
     tmp2 <- imm
-    for_ falseOuts $ \falseOut ->
+    for_ (addVar <$> falseOuts) $ \falseOut ->
       emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
-    pure . NE.singleton . Right $ Add (Var tmp1) (Var tmp2)
+    pure . NE.singleton . AffineSource $ Add (Var tmp1) (Var tmp2)
   -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
   EEq lhs rhs ->
     NE.singleton <$> do
       -- assertSingle is justified as the lhs and rhs must be of type f
-      lhsSubRhs <- assertSingle <$> compile (EBinOp BSub lhs rhs)
-      eqInWire <- addWire lhsSubRhs
+      eqInWire <- compile (EBinOp BSub lhs rhs) >>= assertSingleSource >>= addWire
       eqFreeWire <- imm
       eqOutWire <- imm
       emit $ Equal eqInWire eqFreeWire eqOutWire
       -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
       -- neqOutWire instead.
-      pure . Right $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
+      pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
   ESplit input -> do
     -- assertSingle is justified as the input must be of type f
-    i <- compile input >>= addWire . assertSingle
+    i <- compile input >>= assertSingleSource >>= addWire
     outputs <- traverse (const $ mkBoolVar =<< imm) $ universe @(NBits f)
     emit $ Split i (V.toList outputs)
     NE.sconcat <$> traverse (compile . EVar . VarBool) (NE.fromList . V.toList $ outputs)
     where
       mkBoolVar w = do
-        squared <- mulToImm (Left w) (Left w)
+        squared <- mulToImm (WireSource w) (WireSource w)
         emit $ Mul (Var squared) (ConstGate 1) w
         pure w
   EBundle as -> do
@@ -507,14 +545,14 @@ compile expr = case expr of
     NE.singleton <$> do
       bs <- toList <$> compile bits
       ws <- traverse addWire bs
-      pure . Right $ unsplit ws
+      pure . AffineSource $ unsplit ws
   EAtIndex v _ix ->
     NE.singleton <$> do
       v' <- compile v
       pure $ v' NE.!! (fromIntegral _ix)
   EUpdateIndex p b v -> do
     v' <- compile v
-    b' <- assertSingle <$> compile b
+    b' <- compile b >>= assertSingleSource
     pure $ v' & ix (fromIntegral p) .~ b'
 
 exprToArithCircuit ::
@@ -525,7 +563,7 @@ exprToArithCircuit ::
   Wire ->
   ExprM f ()
 exprToArithCircuit expr output = do
-  exprOut <- assertSingle <$> compile expr
+  exprOut <- compile expr >>= assertSingleSource
   emit $ Mul (ConstGate 1) (addVar exprOut) output
 
 instance (GaloisField f) => Semiring (Expr Wire f f) where
