@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use zipWithM" #-}
 
 module Circuit.Expr
   ( UnOp (..),
@@ -27,6 +28,7 @@ module Circuit.Expr
     evalExpr,
     rawWire,
     exprToArithCircuit,
+    assertSingle
   )
 where
 
@@ -41,7 +43,9 @@ import Data.Vector.Sized (Vector)
 import Data.Vector.Sized qualified as V
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
-import Lens.Micro ((.~))
+import Data.List.NonEmpty qualified as NE
+import Prelude (foldl1)
+import Lens.Micro ( (.~), ix )
 
 
 data UnOp f a where
@@ -96,17 +100,18 @@ type family NBits a :: Nat
 
 -- | Expression data type of (arithmetic) expressions over a field @f@
 -- with variable names/indices coming from @i@.
-data Expr i f t ty where
-  EVal :: Val f ty -> Expr i f Identity ty
-  EVar :: Var i f ty -> Expr i f Identity ty
-  EUnOp :: UnOp f ty -> Expr i f Identity ty -> Expr i f Identity ty
-  EBinOp :: BinOp f ty -> Expr i f Identity ty -> Expr i f Identity ty -> Expr i f Identity ty
-  EIf :: Expr i f Identity Bool -> Expr i f Identity ty -> Expr i f Identity ty -> Expr i f Identity ty
-  EEq :: Expr i f Identity f -> Expr i f Identity f -> Expr i f Identity Bool
-  ESplit :: (KnownNat (NBits f)) => Expr i f Identity f -> Expr i f (Vector (NBits f)) Bool
-  EJoin :: (Num f, KnownNat n) => Expr i f (Vector n) Bool -> Expr i f Identity f
-  EAtIndex :: (KnownNat n) => Expr i f (Vector n) ty -> Finite n -> Expr i f Identity ty
-  EUpdateIndex :: (KnownNat n) => Finite n -> (Expr i f Identity ty) -> Expr i f (Vector n) ty ->  Expr i f  (Vector n) ty
+data Expr i f ty where
+  EVal :: Val f ty -> Expr i f ty
+  EVar :: Var i f ty -> Expr i f  ty
+  EUnOp :: UnOp f ty -> Expr i f ty -> Expr i f  ty
+  EBinOp :: BinOp f ty -> Expr i f ty -> Expr i f  ty -> Expr i f  ty
+  EIf :: Expr i f  Bool -> Expr i f ty -> Expr i f  ty -> Expr i f  ty
+  EEq :: Expr i f f -> Expr i f  f -> Expr i f Bool
+  ESplit :: (KnownNat (NBits f)) => Expr i f f -> Expr i f (Vector (NBits f) Bool)
+  EBundle :: Vector n (Expr i f f) -> Expr i f (Vector n f)
+  EJoin :: (KnownNat n) => Expr i f (Vector n Bool) -> Expr i f f
+  EAtIndex :: (KnownNat n) => Expr i f (Vector n ty) -> Finite n -> Expr i f ty
+  EUpdateIndex :: (KnownNat n) => Finite n -> (Expr i f f) -> Expr i f (Vector n f) ->  Expr i f  (Vector n f)
 
 deriving instance (Show f) => Show (BinOp f a)
 
@@ -127,10 +132,10 @@ instance Pretty (UnOp f a) where
     UNeg -> text "neg"
     UNot -> text "!"
 
-instance (Pretty f, Pretty i) => Pretty (Expr i f t ty) where
+instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
   pretty = prettyPrec 0
     where
-      prettyPrec :: Int -> Expr i f t ty -> Doc
+      prettyPrec :: Int -> Expr i f ty -> Doc
       prettyPrec p e =
         case e of
           EVal v ->
@@ -150,8 +155,9 @@ instance (Pretty f, Pretty i) => Pretty (Expr i f t ty) where
           EEq l r ->
             parensPrec 1 p (pretty l) <+> text "=" <+> parensPrec 1 p (pretty r)
           ESplit i -> text "split" <+> pretty i
+          EBundle _ -> panic ""
           EJoin i -> text "join" <+> pretty i
-          EAtIndex v ix -> pretty v <+> brackets (pretty $ toInteger ix)
+          EAtIndex v _ix -> pretty v <+> brackets (pretty $ toInteger _ix)
           EUpdateIndex _p b v -> text ("setIndex " <> show (natVal _p)) <+> pretty b <+> pretty v
 
 parensPrec :: Int -> Int -> Doc -> Doc
@@ -173,34 +179,34 @@ truncRotate ::
   f
 truncRotate nbits nrots x =
   foldr
-    ( \ix rest ->
-        if testBit x ix
-          then setBit rest ((ix + nrots) `mod` nbits)
+    ( \_ix rest ->
+        if testBit x _ix
+          then setBit rest ((_ix + nrots) `mod` nbits)
           else rest
     )
     zeroBits
     [0 .. nbits - 1]
 
-evalExpr :: (PrimeField f, Ord i, Show i) => Map i f -> Expr i f t ty -> t ty
+evalExpr :: (PrimeField f, Ord i, Show i) => Map i f -> Expr i f ty -> ty
 evalExpr inputs e = evalState (evalExpr' e) inputs
 
 -- | Evaluate arithmetic expressions directly, given an environment
 evalExpr' ::
-  forall f i t ty.
+  forall f i ty.
   (PrimeField f, Ord i, Show i) =>
   -- | variable lookup
   -- | expression to evaluate
-  Expr i f t ty ->
+  Expr i f ty ->
   -- | input values
   -- | resulting value
-  State (Map i f) (t ty)
+  State (Map i f) ty
 evalExpr' expr = case expr of
-  EVal v -> pure $ Identity $ case v of
+  EVal v -> pure $ case v of
     ValBool b -> b == 1
     ValField f -> f
   EVar var -> do
     m <- get
-    pure $ Identity $ case var of
+    pure $  case var of
       VarField i -> do
         case Map.lookup i m of
           Just v -> v
@@ -212,11 +218,11 @@ evalExpr' expr = case expr of
   EUnOp UNeg e1 ->
     Protolude.negate <$> evalExpr' e1
   EUnOp UNot e1 ->
-    fmap not <$> evalExpr' e1
+    not <$> evalExpr' e1
   EBinOp op e1 e2 -> do
-    e1' <- runIdentity <$> evalExpr' e1
-    e2' <- runIdentity <$> evalExpr' e2
-    pure $ Identity $ apply e1' e2'
+    e1' <-  evalExpr' e1
+    e2' <-  evalExpr' e2
+    pure $ apply e1' e2'
     where
       apply = case op of
         BAdd -> (+)
@@ -227,28 +233,28 @@ evalExpr' expr = case expr of
         BOr -> (||)
         BXor -> \x y -> (x || y) && not (x && y)
   EIf b true false -> do
-    cond <- runIdentity <$> evalExpr' b
+    cond <- evalExpr' b
     if cond
       then evalExpr' true
       else evalExpr' false
   EEq lhs rhs -> do
-    lhs' <- runIdentity <$> evalExpr' lhs
-    rhs' <- runIdentity <$> evalExpr' rhs
-    pure $ Identity $ lhs' == rhs'
+    lhs' <- evalExpr' lhs
+    rhs' <- evalExpr' rhs
+    pure $ lhs' == rhs'
   ESplit i -> do
-    x <- runIdentity <$> evalExpr' i
-    pure $ V.generate $ \ix -> testBit (fromP x) (fromIntegral ix)
+    x <- evalExpr' i
+    pure $ V.generate $ \_ix -> testBit (fromP x) (fromIntegral _ix)
+  EBundle as -> traverse evalExpr' as
   EJoin i -> do
     bits <- evalExpr' i
     pure $
-      Identity $
-        V.ifoldl (\acc ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer ix) else 0) 0 bits
+        V.ifoldl (\acc _ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer _ix) else 0) 0 bits
   EAtIndex v i -> do
     _v <- evalExpr' v
-    pure $ Identity $ _v `V.index` i
+    pure $ _v `V.index` i
   EUpdateIndex p b v -> do
     _v <- evalExpr' v
-    _b <- runIdentity <$> evalExpr' b
+    _b <- evalExpr' b
     pure $ _v & V.ix p .~ _b
 
 
@@ -292,6 +298,8 @@ runCircuitBuilder m =
       )
   where
     reverseCircuit = \(ArithCircuit cs) -> ArithCircuit $ reverse cs
+
+--------------------------------------------------------------------------------
 
 fresh :: ExprM f Int
 fresh = do
@@ -365,131 +373,142 @@ rotateList steps x = take (length x) $ drop steps $ cycle x
 
 -- | Turn a wire into an affine circuit, or leave it be
 addVar :: Either Wire (AffineCircuit f Wire) -> AffineCircuit f Wire
-addVar (Left w) = Var w
-addVar (Right c) = c
+addVar = either Var identity
 
 -- | Turn an affine circuit into a wire, or leave it be
 addWire :: (Num f) => Either Wire (AffineCircuit f Wire) -> ExprM f Wire
-addWire (Left w) = pure w
-addWire (Right c) = do
-  mulOut <- imm
-  emit $ Mul (ConstGate 1) c mulOut
-  pure mulOut
+addWire x = case x of
+  Left w -> pure w
+  Right c -> do
+    mulOut <- imm
+    emit $ Mul (ConstGate 1) c mulOut
+    pure mulOut
+
+assertSingle :: NonEmpty a -> a 
+assertSingle xs = case xs of
+  x NE.:| [] -> x
+  _ -> panic "Expected single wire"
 
 compile ::
-  forall f t ty.
+  forall f ty.
   (Num f) =>
-  Expr Wire f t ty ->
-  ExprM f (t (Either Wire (AffineCircuit f Wire)))
+  Expr Wire f ty ->
+  ExprM f (NonEmpty (Either Wire (AffineCircuit f Wire)))
 compile expr = case expr of
-  EVal v -> case v of
-    ValField f -> pure . Identity $ Right $ ConstGate f
-    ValBool b -> pure . Identity $ Right $ ConstGate b
-  EVar var -> case var of
-    VarField i -> pure . Identity $ Left i
-    VarBool i -> do
-      squared <- mulToImm (Left i) (Left i)
+  EVal v -> NE.singleton <$> case v of
+    ValField f -> pure . Right $ ConstGate f
+    ValBool b -> pure . Right $ ConstGate b
+  EVar var ->  NE.singleton <$> case var of
+    VarField i -> pure . Left $ i
+    VarBool i ->do
+      squared <- mulToImm  (Left i) (Left i)
       emit $ Mul (Var squared) (ConstGate 1) i
-      pure $ Identity $ Left i
+      pure . Left $ i
   EUnOp op e1 -> do
-    e1Out <- runIdentity <$> compile e1
-    case op of
-      UNeg -> pure . Identity . Right $ ScalarMul (-1) (addVar e1Out)
-      UNot -> pure . Identity . Right $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
+    e1Outs <- compile e1
+    for e1Outs $ \e1Out ->
+      case op of
+          UNeg -> pure . Right $ ScalarMul (-1) (addVar e1Out)
+          UNot -> pure . Right $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
   EBinOp op e1 e2 -> do
-    e1Out <- addVar . runIdentity <$> compile e1
-    e2Out <- addVar . runIdentity <$> compile e2
-    case op of
-      BAdd -> pure . Identity . Right $ Add e1Out e2Out
-      BMul -> do
-        tmp1 <- mulToImm (Right e1Out) (Right e2Out)
-        pure . Identity . Left $ tmp1
-      BDiv -> do
-        _recip <- imm
-        _one <- addWire $ Right $ ConstGate 1
-        emit $ Mul e2Out (Var _recip) _one
-        out <- imm
-        emit $ Mul e1Out (Var _recip) out
-        pure $ Identity $ Left out
-      -- SUB(x, y) = x + (-y)
-      BSub -> pure . Identity . Right $ Add e1Out (ScalarMul (-1) e2Out)
-      BAnd -> do
-        tmp1 <- mulToImm (Right e1Out) (Right e2Out)
-        pure . Identity . Left $ tmp1
-      BOr -> do
-        -- OR(input1, input2) = (input1 + input2) - (input1 * input2)
-        tmp1 <- imm
-        emit $ Mul e1Out e2Out tmp1
-        pure . Identity . Right $ Add (Add e1Out e2Out) (ScalarMul (-1) (Var tmp1))
-      BXor -> do
-        -- XOR(input1, input2) = (input1 + input2) - 2 * (input1 * input2)
-        tmp1 <- imm
-        emit $ Mul e1Out e2Out tmp1
-        pure . Identity . Right $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
+    e1Outs <- fmap addVar <$> compile e1
+    e2Outs <- fmap addVar <$> compile e2
+    for (NE.zip e1Outs e2Outs) $ \(e1Out, e2Out) ->
+      case op of
+        BAdd -> pure . Right $ Add e1Out e2Out
+        BMul -> do
+          tmp1 <- mulToImm (Right e1Out) (Right e2Out)
+          pure . Left $ tmp1
+        BDiv -> do
+          _recip <- imm
+          _one <- addWire $ Right $ ConstGate 1
+          emit $ Mul e2Out (Var _recip) _one
+          out <- imm
+          emit $ Mul e1Out (Var _recip) out
+          pure $ Left out
+        -- SUB(x, y) = x + (-y)
+        BSub -> pure  . Right $ Add e1Out (ScalarMul (-1) e2Out)
+        BAnd -> do
+          tmp1 <- mulToImm (Right e1Out) (Right e2Out)
+          pure .  Left $ tmp1
+        BOr -> do
+          -- OR(input1, input2) = (input1 + input2) - (input1 * input2)
+          tmp1 <- imm
+          emit $ Mul e1Out e2Out tmp1
+          pure  . Right $ Add (Add e1Out e2Out) (ScalarMul (-1) (Var tmp1))
+        BXor -> do
+          -- XOR(input1, input2) = (input1 + input2) - 2 * (input1 * input2)
+          tmp1 <- imm
+          emit $ Mul e1Out e2Out tmp1
+          pure . Right $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
   EIf cond true false -> do
-    condOut <- addVar . runIdentity <$> compile cond
-    trueOut <- addVar . runIdentity <$> compile true
-    falseOut <- addVar . runIdentity <$> compile false
+    condOut <-   addVar . assertSingle <$> compile cond
+    trueOuts <- fmap addVar <$> compile true
+    falseOuts  <- fmap addVar <$> compile false
     tmp1 <- imm
+    for_ trueOuts $ \trueOut -> emit $ Mul condOut trueOut tmp1
     tmp2 <- imm
-    emit $ Mul condOut trueOut tmp1
-    emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
-    pure . Identity . Right $ Add (Var tmp1) (Var tmp2)
-  -- EQ(lhs, rhs) = (lhs - rhs == 1)
-  EEq lhs rhs -> do
-    lhsSubRhs <- runIdentity <$> compile (EBinOp BSub lhs rhs)
+    for_ falseOuts $ \falseOut -> 
+      emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
+    pure . NE.singleton . Right $ Add (Var tmp1) (Var tmp2)
+  -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
+  EEq lhs rhs -> NE.singleton <$> do
+    lhsSubRhs <- assertSingle <$> compile (EBinOp BSub lhs rhs)
     eqInWire <- addWire lhsSubRhs
     eqFreeWire <- imm
     eqOutWire <- imm
     emit $ Equal eqInWire eqFreeWire eqOutWire
     -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
     -- neqOutWire instead.
-    pure . Identity $ Right $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
+    pure . Right $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
+
   ESplit input -> do
-    i <- compile input >>= addWire . runIdentity
-    outputs <- traverse (\_ -> mkBoolVar =<< imm) $ universe @(NBits f)
+    i <- compile input >>= addWire . assertSingle
+    outputs <- traverse (const $ mkBoolVar =<< imm) $ universe @(NBits f)
     emit $ Split i (V.toList outputs)
-    traverse (fmap runIdentity . compile . EVar . VarBool) outputs
+    traverse (fmap assertSingle . compile . EVar . VarBool) (NE.fromList . V.toList $ outputs)
     where
       mkBoolVar w = do
         squared <- mulToImm (Left w) (Left w)
         emit $ Mul (Var squared) (ConstGate 1) w
         pure w
-  EJoin bits -> do
+  EBundle as -> do 
+      as' <- traverse compile as
+      pure $ Prelude.foldl1 (<>) (toList as')
+  EJoin bits -> NE.singleton <$> do
     bs <- toList <$> compile bits
     ws <- traverse addWire bs
-    pure . Identity . Right $ unsplit ws
-  EAtIndex v ix -> do
+    pure . Right $ unsplit ws
+  EAtIndex v _ix -> NE.singleton <$> do
     v' <- compile v
-    pure . Identity $ v' `V.index` ix
+    pure $ v' NE.!! (fromIntegral _ix)
   EUpdateIndex p b v -> do
     v' <- compile v
-    b' <- runIdentity <$> compile b
-    pure $ v' & V.ix p .~ b'
+    b' <- assertSingle <$> compile b
+    pure $ v' & ix (fromIntegral p) .~ b'
 
 exprToArithCircuit ::
-  (Num f, Foldable t) =>
+  (Num f) =>
   -- \| expression to compile
-  Expr Wire f t ty ->
+  Expr Wire f ty ->
   -- | Wire to assign the output of the expression to
-  t Wire ->
+  Wire ->
   ExprM f ()
-exprToArithCircuit expr outputs = do
-  exprOuts <- toList <$> compile expr
-  for_ (zip (toList outputs) exprOuts) $ \(output, exprOut) ->
-    emit $ Mul (ConstGate 1) (addVar exprOut) output
+exprToArithCircuit expr output = do
+  exprOut <- assertSingle <$> compile expr
+  emit $ Mul (ConstGate 1) (addVar exprOut) output
 
-instance (GaloisField f) => Semiring (Expr Wire f Identity f) where
+instance (GaloisField f) => Semiring (Expr Wire f  f) where
   plus = EBinOp BAdd
   zero = EVal $ ValField 0
   times = EBinOp BMul
   one = EVal $ ValField 1
 
-instance (GaloisField f) => Ring (Expr Wire f Identity f) where
+instance (GaloisField f) => Ring (Expr Wire f  f) where
   negate = EUnOp UNeg
 
-instance (GaloisField f) => Num (Expr Wire f Identity f) where
+instance (GaloisField f) => Num (Expr Wire f  f) where
   (+) = plus
   (*) = times
   (-) = EBinOp BSub

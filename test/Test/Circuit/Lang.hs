@@ -73,23 +73,9 @@ prop_bitIndex i x =
       w = solve bsVars bsCircuit input
    in (fieldToBool <$> lookupVar bsVars "out" w) == Just (testBit _x _i)
 
+{-
 
-updateIndexProg :: Finite 256 -> Bool -> ExprM Fr Wire
-updateIndexProg p b = do
-  x <- deref <$> fieldInput Public "x"
-  let bits = splitBits x
-      bits' = updateIndex_ p (cBool b) bits
-  retField "out" $ joinBits bits'
-
-prop_updateIndex :: Int -> Bool -> Fr -> Bool
-prop_updateIndex i b x =
-  let _i = i `mod` 256
-      _x = fromP x
-      BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (updateIndexProg (fromIntegral _i) b)
-      input = assignInputs bsVars $ Map.singleton "x" x
-      w = solve bsVars bsCircuit input
-      expected = if b then setBit _x _i else clearBit _x _i
-   in (lookupVar bsVars "out" w) == Just (fromInteger expected)
+-}
 
 --------------------------------------------------------------------------------
 

@@ -43,9 +43,9 @@ import Protolude
 
 --------------------------------------------------------------------------------
 
-type Signal f a = Expr Wire f Identity a
+type Signal f a = Expr Wire f a
 
-type Bundle f n a = Expr Wire f (Vector n) a
+type Bundle f n a = Expr Wire f (Vector n a)
 
 -- | Convert constant to expression
 cField :: f -> Signal f f
@@ -96,16 +96,17 @@ splitBits ::
   Bundle f (NBits f) Bool
 splitBits = ESplit
 
-joinBits :: (Num f, KnownNat n) => Bundle f n Bool -> Signal f f
+joinBits :: (KnownNat n) => Bundle f n Bool -> Signal f f
 joinBits = EJoin
+
 
 deref :: Var Wire f ty -> Signal f ty
 deref = EVar
 
-compileWithWire :: (Num f) => ExprM f (Var Wire f ty) -> Signal f ty -> ExprM f Wire
+compileWithWire :: (Num f) => ExprM f (Var Wire f ty) -> Signal f ty -> ExprM f (NonEmpty Wire)
 compileWithWire freshWire expr = do
-  compileOut <- runIdentity <$> compile expr
-  case compileOut of
+  compileOuts <- compile expr
+  for compileOuts $ \case
     Left wire -> do
       wire' <- rawWire <$> freshWire
       emit $ Mul (ConstGate 1) (Var wire') wire
@@ -116,15 +117,15 @@ compileWithWire freshWire expr = do
       pure wire
 
 retBool :: (Num f) => Text -> Signal f Bool -> ExprM f Wire
-retBool label = compileWithWire (boolInput Public label)
+retBool label =  fmap assertSingle . compileWithWire (boolInput Public label)
 
 retField :: (Num f) => Text -> Signal f f -> ExprM f Wire
-retField label = compileWithWire (fieldInput Public label)
+retField label = fmap assertSingle . compileWithWire (fieldInput Public label)
 
 atIndex :: (KnownNat n) => Bundle f n ty -> Finite n -> Signal f ty
 atIndex = EAtIndex
 
-updateIndex_ :: (KnownNat n) => Finite n -> Signal f ty -> Bundle f n ty -> Bundle f n ty
+updateIndex_ :: (KnownNat n) => Finite n -> Signal f f -> Bundle f n f -> Bundle f n f
 updateIndex_ p = EUpdateIndex p
 
 --------------------------------------------------------------------------------
