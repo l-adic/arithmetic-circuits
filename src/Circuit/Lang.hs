@@ -25,6 +25,8 @@ module Circuit.Lang
     joinBits,
     atIndex,
     updateIndex_,
+    bundle,
+    unBundle,
     Any_ (..),
     And_ (..),
     elem_,
@@ -33,12 +35,14 @@ module Circuit.Lang
   )
 where
 
+import qualified Data.List.NonEmpty as NE
 import Circuit.Affine (AffineCircuit (..))
 import Circuit.Arithmetic (Gate (..), InputType (Private, Public), Wire (..))
 import Circuit.Expr
 import Data.Field.Galois (GaloisField)
 import Data.Finite (Finite)
 import Data.Vector.Sized (Vector)
+import Data.Vector.Sized qualified as V
 import Protolude
 
 --------------------------------------------------------------------------------
@@ -117,16 +121,30 @@ compileWithWire freshWire expr = do
       pure wire
 
 retBool :: (Num f) => Text -> Signal f Bool -> ExprM f Wire
-retBool label =  fmap assertSingle . compileWithWire (boolInput Public label)
+retBool label sig =  do 
+  as <- compileWithWire (boolInput Public label) sig
+  case as of 
+    a NE.:| [] -> pure a
+    _ -> panic "retBool: expected single wire"
 
 retField :: (Num f) => Text -> Signal f f -> ExprM f Wire
-retField label = fmap assertSingle . compileWithWire (fieldInput Public label)
+retField label sig = do 
+  as <- compileWithWire (fieldInput Public label) sig
+  case as of 
+    a NE.:| [] -> pure a
+    _ -> panic "retField: expected single wire"
 
-atIndex :: (KnownNat n) => Bundle f n ty -> Finite n -> Signal f ty
+atIndex :: (KnownNat n, Ground f ty) => Bundle f n ty -> Finite n -> Signal f ty
 atIndex = EAtIndex
 
-updateIndex_ :: (KnownNat n) => Finite n -> Signal f f -> Bundle f n f -> Bundle f n f
+updateIndex_ :: (KnownNat n, Ground f ty) => Finite n -> Signal f ty -> Bundle f n ty -> Bundle f n ty
 updateIndex_ p = EUpdateIndex p
+
+bundle :: Ground f ty => Vector n (Signal f ty) -> Bundle f n ty
+bundle = EBundle
+
+unBundle :: (KnownNat n, Ground f ty) => Bundle f n ty -> Vector n (Signal f ty)
+unBundle b = V.generate $ atIndex b
 
 --------------------------------------------------------------------------------
 

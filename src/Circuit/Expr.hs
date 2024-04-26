@@ -12,6 +12,7 @@ module Circuit.Expr
     ExprM,
     BuilderState (..),
     type NBits,
+    Ground,
     compile,
     emit,
     imm,
@@ -28,7 +29,6 @@ module Circuit.Expr
     evalExpr,
     rawWire,
     exprToArithCircuit,
-    assertSingle
   )
 where
 
@@ -46,6 +46,7 @@ import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Data.List.NonEmpty qualified as NE
 import Prelude (foldl1)
 import Lens.Micro ( (.~), ix )
+import qualified Data.Semigroup as NE
 
 
 data UnOp f a where
@@ -98,20 +99,28 @@ rawWire (VarBool i) = i
 
 type family NBits a :: Nat
 
+
+-- | This constring prevents us from building up nested vectors inside the expression type
+class GaloisField f => Ground f ty
+
+instance GaloisField f => Ground f f 
+
+instance GaloisField f => Ground f Bool
+
 -- | Expression data type of (arithmetic) expressions over a field @f@
 -- with variable names/indices coming from @i@.
 data Expr i f ty where
   EVal :: Val f ty -> Expr i f ty
-  EVar :: Var i f ty -> Expr i f  ty
-  EUnOp :: UnOp f ty -> Expr i f ty -> Expr i f  ty
-  EBinOp :: BinOp f ty -> Expr i f ty -> Expr i f  ty -> Expr i f  ty
-  EIf :: Expr i f  Bool -> Expr i f ty -> Expr i f  ty -> Expr i f  ty
-  EEq :: Expr i f f -> Expr i f  f -> Expr i f Bool
+  EVar :: Var i f ty -> Expr i f ty
+  EUnOp :: UnOp f ty -> Expr i f ty -> Expr i f ty
+  EBinOp :: BinOp f ty -> Expr i f ty -> Expr i f  ty -> Expr i f ty
+  EIf :: Expr i f  Bool -> Expr i f ty -> Expr i f ty -> Expr i f ty
+  EEq :: Expr i f f -> Expr i f f -> Expr i f Bool
   ESplit :: (KnownNat (NBits f)) => Expr i f f -> Expr i f (Vector (NBits f) Bool)
-  EBundle :: Vector n (Expr i f f) -> Expr i f (Vector n f)
   EJoin :: (KnownNat n) => Expr i f (Vector n Bool) -> Expr i f f
-  EAtIndex :: (KnownNat n) => Expr i f (Vector n ty) -> Finite n -> Expr i f ty
-  EUpdateIndex :: (KnownNat n) => Finite n -> (Expr i f f) -> Expr i f (Vector n f) ->  Expr i f  (Vector n f)
+  EAtIndex :: (KnownNat n, Ground f ty) => Expr i f (Vector n ty) -> Finite n -> Expr i f ty
+  EUpdateIndex :: (KnownNat n, Ground f ty) => Finite n -> (Expr i f ty) -> Expr i f (Vector n ty) ->  Expr i f  (Vector n ty)
+  EBundle :: Ground f ty => Vector n (Expr i f ty) -> Expr i f (Vector n ty)
 
 deriving instance (Show f) => Show (BinOp f a)
 
@@ -155,7 +164,7 @@ instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
           EEq l r ->
             parensPrec 1 p (pretty l) <+> text "=" <+> parensPrec 1 p (pretty r)
           ESplit i -> text "split" <+> pretty i
-          EBundle _ -> panic ""
+          EBundle b -> text "bundle" <+> pretty (V.toList b)
           EJoin i -> text "join" <+> pretty i
           EAtIndex v _ix -> pretty v <+> brackets (pretty $ toInteger _ix)
           EUpdateIndex _p b v -> text ("setIndex " <> show (natVal _p)) <+> pretty b <+> pretty v
@@ -443,7 +452,8 @@ compile expr = case expr of
           pure . Right $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
   EIf cond true false -> do
-    condOut <-   addVar . assertSingle <$> compile cond
+    -- assertSingle is justified as the cond must be of type bool
+    condOut <- addVar . assertSingle <$> compile cond
     trueOuts <- fmap addVar <$> compile true
     falseOuts  <- fmap addVar <$> compile false
     tmp1 <- imm
@@ -454,6 +464,7 @@ compile expr = case expr of
     pure . NE.singleton . Right $ Add (Var tmp1) (Var tmp2)
   -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
   EEq lhs rhs -> NE.singleton <$> do
+    -- assertSingle is justified as the lhs and rhs must be of type f
     lhsSubRhs <- assertSingle <$> compile (EBinOp BSub lhs rhs)
     eqInWire <- addWire lhsSubRhs
     eqFreeWire <- imm
@@ -462,12 +473,12 @@ compile expr = case expr of
     -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
     -- neqOutWire instead.
     pure . Right $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
-
   ESplit input -> do
+    -- assertSingle is justified as the input must be of type f
     i <- compile input >>= addWire . assertSingle
     outputs <- traverse (const $ mkBoolVar =<< imm) $ universe @(NBits f)
     emit $ Split i (V.toList outputs)
-    traverse (fmap assertSingle . compile . EVar . VarBool) (NE.fromList . V.toList $ outputs)
+    NE.sconcat <$> traverse (compile . EVar . VarBool) (NE.fromList . V.toList $ outputs)
     where
       mkBoolVar w = do
         squared <- mulToImm (Left w) (Left w)
