@@ -29,10 +29,11 @@ module Circuit.Expr
     truncRotate,
     evalExpr,
     rawWire,
-    exprToArithCircuit,
     compileWithWire,
+    exprToArithCircuit
   )
 where
+
 
 import Circuit.Affine
 import Circuit.Arithmetic
@@ -45,9 +46,10 @@ import Data.Vector.Sized qualified as SV
 import Data.Vector qualified as V
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
-import Prelude (foldl1)
+import Prelude as P
 import Lens.Micro ((.~))
 import Data.Reify
+import Data.Maybe (fromJust)
 
 data UnOp f a where
   UNeg :: UnOp f f
@@ -228,7 +230,7 @@ instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
           EBundle b -> text "bundle" <+> pretty (SV.toList b)
           EJoin i -> text "join" <+> pretty i
           EAtIndex v _ix -> pretty v <+> brackets (pretty $ toInteger _ix)
-          EUpdateIndex _p b v -> text ("setIndex " <> show (natVal _p)) <+> pretty b <+> pretty v
+          EUpdateIndex _p b v -> text ("setIndex " <> Protolude.show (natVal _p)) <+> pretty b <+> pretty v
 
 parensPrec :: Int -> Int -> Doc -> Doc
 parensPrec opPrec p = if p > opPrec then parens else identity
@@ -280,11 +282,11 @@ evalExpr' expr = case expr of
       VarField i -> do
         case Map.lookup i m of
           Just v -> v
-          Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
+          Nothing -> panic $ "TODO: incorrect var lookup: " <> Protolude.show i
       VarBool i ->
         case Map.lookup i m of
           Just v -> v == 1
-          Nothing -> panic $ "TODO: incorrect var lookup: " <> show i
+          Nothing -> panic $ "TODO: incorrect var lookup: " <> Protolude.show i
   EUnOp UNeg e1 ->
     Protolude.negate <$> evalExpr' e1
   EUnOp UNot e1 ->
@@ -336,7 +338,6 @@ data BuilderState f = BuilderState
     bsNextVar :: Int,
     bsVars :: CircuitVars Text,
     bsCompMap :: Map Unique (V.Vector (SignalSource f))
-
   }
 
 defaultBuilderState :: BuilderState f
@@ -358,25 +359,27 @@ instance (GaloisField f) => Pretty (CircuitBuilderError f) where
     ExpectedSingleWire wires -> "Expected a single wire, but got:" <+> pretty (toList wires)
     MismatchedWireTypes l r -> "Mismatched wire types:" <+> pretty (toList l) <+> pretty (toList r)
 
-type ExprM f a = ExceptT (CircuitBuilderError f) (State (BuilderState f)) a
+type ExprM f a = ExceptT (CircuitBuilderError f) (StateT (BuilderState f) IO) a
 
-runExprM :: (GaloisField f) => ExprM f a -> BuilderState f -> (a, BuilderState f)
-runExprM m s = case runState (runExceptT m) s of
-  (Left e, _) -> panic $ show $ pretty e
-  (Right a, s') -> (a, s')
+runExprM :: (GaloisField f) => ExprM f a -> BuilderState f -> IO (a, BuilderState f)
+runExprM m s = do 
+  res <- runStateT (runExceptT m) s
+  case res of
+    (Left e, _) -> panic $ Protolude.show $ pretty e
+    (Right a, s') -> pure $ (a, s')
 
-execCircuitBuilder :: (GaloisField f) => ExprM f a -> ArithCircuit f
-execCircuitBuilder m = reverseCircuit $ bsCircuit $ snd $ runExprM m defaultBuilderState
+execCircuitBuilder :: (GaloisField f) => ExprM f a -> IO (ArithCircuit f)
+execCircuitBuilder m = reverseCircuit . bsCircuit . snd <$> runExprM m defaultBuilderState
   where
     reverseCircuit = \(ArithCircuit cs) -> ArithCircuit $ reverse cs
 
-evalCircuitBuilder :: (GaloisField f) => ExprM f a -> a
-evalCircuitBuilder = fst . runCircuitBuilder
+evalCircuitBuilder :: (GaloisField f) => ExprM f a -> IO a
+evalCircuitBuilder e = fst <$> runCircuitBuilder e
 
-runCircuitBuilder :: (GaloisField f) => ExprM f a -> (a, BuilderState f)
-runCircuitBuilder m =
-  let (a, s) = runExprM m defaultBuilderState
-   in ( a,
+runCircuitBuilder :: (GaloisField f) => ExprM f a -> IO (a, BuilderState f)
+runCircuitBuilder m = do
+  (a, s) <- runExprM m defaultBuilderState
+  pure ( a,
         s
           { bsCircuit = reverseCircuit $ bsCircuit s
           }
@@ -484,14 +487,19 @@ addWire x = case x of
 
 compileWithWire ::
   (Num f) =>
+  MonadIO m =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
   m (Var Wire f ty) ->
   Expr Wire f ty ->
   m Wire
 compileWithWire freshWire expr = do
-  compileOut <- toUntypedExpr expr >>= compile >>= assertSingleSource
-  case compileOut of
+  compileOut <- toUntypedExpr expr
+  g@(Graph graph root) <- liftIO $ reifyGraph compileOut
+  let rootExpr = fromJust $ P.lookup root graph
+  o <- compile g rootExpr >>= assertSingleSource
+  -- >>= compile >>= assertSingleSource
+  case o of
     WireSource wire -> do
       wire' <- rawWire <$> freshWire
       emit $ Mul (ConstGate 1) (Var wire') wire
@@ -524,23 +532,24 @@ compile ::
   (Num f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  UntypedExpr Wire f ->
+  Graph (SharedUntypedExpr Wire f) ->
+  SharedUntypedExpr Wire f Unique ->
   m (V.Vector (SignalSource f))
-compile expr = case expr of
-  UEVal v ->
+compile g@(Graph graph _) expr = case expr of
+  SUEVal v ->
     V.singleton <$> case v of
       f -> pure . AffineSource $ ConstGate f
-  UEVar var -> pure  $
+  SUEVar var -> pure  $
     V.singleton $ WireSource var
-  UEUnOp op e1 -> do
-    e1Outs <- compile e1
+  SUEUnOp op e1 -> do
+    e1Outs <- lookupShared e1
     for e1Outs $ \e1Out ->
       case op of
         UNeg -> pure . AffineSource $ ScalarMul (-1) (addVar e1Out)
         UNot -> pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
-  UEBinOp op e1 e2 -> do
-    e1Outs <- compile e1
-    e2Outs <- compile e2
+  SUEBinOp op e1 e2 -> do
+    e1Outs <- lookupShared e1
+    e2Outs <- lookupShared e2
     assertSameSourceSize e1Outs e2Outs
     for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
       case op of
@@ -571,10 +580,10 @@ compile expr = case expr of
           emit $ Mul e1Out e2Out tmp1
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
-  UEIf cond true false -> V.singleton <$> do
-    condOut <- addVar <$> (compile cond >>= assertSingleSource)
-    trueOuts <- compile true
-    falseOuts <- compile false
+  SUEIf cond true false -> V.singleton <$> do
+    condOut <- addVar <$> (lookupShared cond >>= assertSingleSource)
+    trueOuts <- lookupShared true
+    falseOuts <- lookupShared false
     assertSameSourceSize trueOuts falseOuts
     tmp1 <- imm
     for_ (addVar <$> trueOuts) $ \trueOut ->
@@ -584,43 +593,54 @@ compile expr = case expr of
       emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
     pure . AffineSource $ Add (Var tmp1) (Var tmp2)
   -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
-  UEEq lhs rhs ->
+  SUEEq lhs rhs ->
     pure <$> do
       -- assertSingle is justified as the lhs and rhs must be of type f
-      eqInWire <- compile (UEBinOp BSub lhs rhs) >>= assertSingleSource >>= addWire
+      eqInWire <- compile g (SUEBinOp BSub lhs rhs) >>= assertSingleSource >>= addWire
       eqFreeWire <- imm
       eqOutWire <- imm
       emit $ Equal eqInWire eqFreeWire eqOutWire
       -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
       -- neqOutWire instead.
       pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
-  UESplit n input -> do
+  SUESplit n input -> do
     -- assertSingle is justified as the input must be of type f
-    i <- compile input >>= assertSingleSource >>= addWire
+    i <- lookupShared input >>= assertSingleSource >>= addWire
     outputs <- V.generateM n (const $ mkBoolVar =<< imm)
     emit $ Split i (V.toList outputs)
-    fold <$> traverse (compile . UEVar) outputs
+    fold <$> traverse (compile g . SUEVar) outputs
     where
       mkBoolVar w = do 
         emit $ Mul (Var w) (Var w) w
         pure w
-  UEBundle as -> do
-    as' <- traverse compile as
-    pure $ Prelude.foldl1 (<>) (toList as')
-  UEJoin bits ->
+  SUEBundle as -> do
+    as' <- traverse lookupShared as
+    pure $ fold as'
+  SUEJoin bits ->
     V.singleton <$> do
-      bs <- toList <$> compile bits
+      bs <- toList <$> lookupShared bits
       ws <- traverse addWire bs
       pure . AffineSource $ unsplit ws
-  UEAtIndex v _ix ->
+  SUEAtIndex v _ix ->
     V.singleton <$> do
-      v' <- compile v
+      v' <- lookupShared v
       pure $ v' V.! (fromIntegral _ix)
-  UEUpdateIndex p b v -> do
-    v' <- compile v
-    b' <- compile b >>= assertSingleSource
+  SUEUpdateIndex p b v -> do
+    v' <- lookupShared v
+    b' <- lookupShared b >>= assertSingleSource
     let p' = fromIntegral p
     pure $ V.imap (\_ix w -> if _ix == p' then b' else w) v'
+  where
+    lookupShared u = do
+      m <- gets bsCompMap
+      case Map.lookup u m of
+        Just v -> pure v
+        Nothing -> 
+          let e = fromJust (P.lookup u graph)
+          in do 
+              a <- compile g e
+              modify $ \s -> s { bsCompMap = Map.insert u a (bsCompMap s) }
+              pure a
 
 exprToArithCircuit ::
   (Num f) =>
@@ -630,7 +650,10 @@ exprToArithCircuit ::
   Wire ->
   ExprM f ()
 exprToArithCircuit expr output = do
-  exprOut <- toUntypedExpr expr >>= compile >>= assertSingleSource
+  compileOut <- toUntypedExpr expr
+  g@(Graph graph root) <- liftIO $ reifyGraph compileOut
+  let rootExpr = fromJust $ P.lookup root graph
+  exprOut<- compile g rootExpr >>= assertSingleSource
   emit $ Mul (ConstGate 1) (addVar exprOut) output
 
 instance (GaloisField f) => Semiring (Expr Wire f f) where

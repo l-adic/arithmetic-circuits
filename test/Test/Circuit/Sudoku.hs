@@ -85,7 +85,6 @@ validate = do
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 --------------------------------------------------------------------------------
-
 spec_sudokuSolver :: Spec
 spec_sudokuSolver = do
   describe "Can solve example sudoku problems" $
@@ -98,8 +97,8 @@ spec_sudokuSolver = do
             privAssignments =
               map (first (\a -> "private_cell_" <> show a)) $
                 filter (\(_, v) -> v /= 0) sol
-        let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
-            pubInputs =
+        BuilderState {bsVars, bsCircuit} <- snd <$> runCircuitBuilder (validate @Fr)
+        let pubInputs =
               Map.fromList $
                 [ (var, fromIntegral value)
                   | (label, var) <- Map.toList $ cvInputsLabels bsVars,

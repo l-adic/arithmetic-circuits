@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use <$>" #-}
 
 module Test.Circuit.Expr where
 
@@ -10,6 +12,7 @@ import Test.Circuit.Affine
 import Test.Tasty.QuickCheck
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Prelude (Show (..))
+import Test.QuickCheck.Monadic (monadicIO, run)
 
 -------------------------------------------------------------------------------
 -- Generators
@@ -79,26 +82,28 @@ instance (Pretty f) => Show (ExprWithInputs f) where
 -- Tests
 -------------------------------------------------------------------------------
 
+
 -- | Check whether exprToArithCircuit produces valid circuits
-prop_compiledCircuitValid :: ExprWithInputs Fr -> Bool
-prop_compiledCircuitValid (ExprWithInputs expr _) =
-  validArithCircuit (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 0))
+prop_compiledCircuitValid :: ExprWithInputs Fr -> Property
+prop_compiledCircuitValid (ExprWithInputs expr _) = monadicIO $ run $ do
+
+  validArithCircuit <$> execCircuitBuilder (exprToArithCircuit expr (OutputWire 0))
 
 -- | Check whether evaluating an expression and
 -- evaluating the arithmetic circuit translation produces the same
 -- result
-prop_evalEqArithEval :: ExprWithInputs Fr -> Bool
-prop_evalEqArithEval (ExprWithInputs expr inputs) = all testInput inputs
+prop_evalEqArithEval :: ExprWithInputs Fr -> Property
+prop_evalEqArithEval (ExprWithInputs expr inputs) = monadicIO $ run $ do 
+  circuit <- (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 1))
+  pure $ all (testInput circuit) inputs
   where
-    testInput input =
+    testInput  circuit input  =
       let a = evalExpr (Map.mapKeys (InputWire "" Public) input) expr
-          b = arithResult input
+          b = arithOutput input circuit Map.! (OutputWire 1)
        in a == b
-    arithResult input = arithOutput input Map.! (OutputWire 1)
-    arithOutput input =
+    arithOutput input circuit =
       evalArithCircuit
         (Map.lookup)
         (Map.insert)
         circuit
         (Map.mapKeys (InputWire "" Public) input)
-    circuit = (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 1))
