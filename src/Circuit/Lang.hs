@@ -27,6 +27,8 @@ module Circuit.Lang
     updateIndex_,
     bundle,
     unBundle,
+
+    -- * Monoids
     Any_ (..),
     And_ (..),
     elem_,
@@ -35,9 +37,7 @@ module Circuit.Lang
   )
 where
 
-import qualified Data.List.NonEmpty as NE
-import Circuit.Affine (AffineCircuit (..))
-import Circuit.Arithmetic (Gate (..), InputType (Private, Public), Wire (..))
+import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
 import Circuit.Expr
 import Data.Field.Galois (GaloisField)
 import Data.Finite (Finite)
@@ -46,7 +46,6 @@ import Data.Vector.Sized qualified as V
 import Protolude
 
 --------------------------------------------------------------------------------
-
 type Signal f a = Expr Wire f a
 
 type Bundle f n a = Expr Wire f (Vector n a)
@@ -103,36 +102,14 @@ splitBits = ESplit
 joinBits :: (KnownNat n) => Bundle f n Bool -> Signal f f
 joinBits = EJoin
 
-
 deref :: Var Wire f ty -> Signal f ty
 deref = EVar
 
-compileWithWire :: (Num f) => ExprM f (Var Wire f ty) -> Signal f ty -> ExprM f (NonEmpty Wire)
-compileWithWire freshWire expr = do
-  compileOuts <- compile expr
-  for compileOuts $ \case
-    Left wire -> do
-      wire' <- rawWire <$> freshWire
-      emit $ Mul (ConstGate 1) (Var wire') wire
-      pure wire
-    Right circ -> do
-      wire <- rawWire <$> freshWire
-      emit $ Mul (ConstGate 1) circ wire
-      pure wire
-
 retBool :: (Num f) => Text -> Signal f Bool -> ExprM f Wire
-retBool label sig =  do 
-  as <- compileWithWire (boolInput Public label) sig
-  case as of 
-    a NE.:| [] -> pure a
-    _ -> panic "retBool: expected single wire"
+retBool label sig = compileWithWire (boolInput Public label) sig
 
 retField :: (Num f) => Text -> Signal f f -> ExprM f Wire
-retField label sig = do 
-  as <- compileWithWire (fieldInput Public label) sig
-  case as of 
-    a NE.:| [] -> pure a
-    _ -> panic "retField: expected single wire"
+retField label sig = compileWithWire (fieldInput Public label) sig
 
 atIndex :: (KnownNat n, Ground f ty) => Bundle f n ty -> Finite n -> Signal f ty
 atIndex = EAtIndex
@@ -140,7 +117,7 @@ atIndex = EAtIndex
 updateIndex_ :: (KnownNat n, Ground f ty) => Finite n -> Signal f ty -> Bundle f n ty -> Bundle f n ty
 updateIndex_ p = EUpdateIndex p
 
-bundle :: Ground f ty => Vector n (Signal f ty) -> Bundle f n ty
+bundle :: (Ground f ty) => Vector n (Signal f ty) -> Bundle f n ty
 bundle = EBundle
 
 unBundle :: (KnownNat n, Ground f ty) => Bundle f n ty -> Vector n (Signal f ty)
