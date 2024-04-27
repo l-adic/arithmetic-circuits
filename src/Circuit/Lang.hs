@@ -107,10 +107,10 @@ joinBits = EJoin
 deref :: Var Wire f ty -> Signal f ty
 deref = EVar
 
-retBool :: (Num f) => Text -> Signal f Bool -> ExprM f Wire
+retBool :: (Num f, Show f) => Text -> Signal f Bool -> ExprM f Wire
 retBool label sig = compileWithWire (boolInput Public label) sig
 
-retField :: (Num f) => Text -> Signal f f -> ExprM f Wire
+retField :: (Num f, Show f) => Text -> Signal f f -> ExprM f Wire
 retField label sig = compileWithWire (fieldInput Public label) sig
 
 atIndex :: (KnownNat n, Ground f ty) => Bundle f n ty -> Finite n -> Signal f ty
@@ -123,7 +123,7 @@ bundle :: (Ground f ty) => Vector n (Signal f ty) -> Bundle f n ty
 bundle = EBundle
 
 unBundle :: (KnownNat n, Ground f ty) => Bundle f n ty -> Vector n (Signal f ty)
-unBundle b = V.generate $ atIndex b
+unBundle b = V.generate (atIndex b)
 
 boolToField :: Signal f Bool -> Signal f f
 boolToField = unsafeCoerce

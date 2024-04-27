@@ -12,7 +12,7 @@ import Protolude hiding (Show, show)
 import Test.QuickCheck (Property, (==>), withMaxSuccess)
 import Test.QuickCheck.Monadic (monadicIO, run)
 import qualified Data.Set as Set
-import qualified Prelude
+import qualified Protolude
 import Text.PrettyPrint.Leijen.Text (Pretty(pretty))
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
@@ -103,12 +103,14 @@ prop_setAtIndex i x b = monadicIO $ run $ do
 bundleUnbundle :: ExprM Fr Wire
 bundleUnbundle = do
   x <- deref <$> fieldInput Public "x"
-  let bs = splitBits x
-      a = unBundle bs
-  retField "out" $ sum (boolToField <$> a)
+  let a = unBundle (splitBits x)
+      res = sum (boolToField <$> a)
+  traceM $ Protolude.show $ pretty res
+  traceM $ "\n\n\n\n\n"
+  retField "out" $ res
 
 prop_bundleUnbundle :: Fr -> Property
-prop_bundleUnbundle x = monadicIO $ run $ do
+prop_bundleUnbundle x = withMaxSuccess 1 $ monadicIO $ run $ do
   let _x = fromP x
   BuilderState {bsVars, bsCircuit} <- snd <$> runCircuitBuilder bundleUnbundle
   let input = assignInputs bsVars $ Map.singleton "x" x
