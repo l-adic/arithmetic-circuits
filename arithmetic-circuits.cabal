@@ -48,6 +48,8 @@ common deps
     , filepath        >=1.4.2
     , finite-typelits >=0.1.0
     , galois-field    >=2.0.0
+    , hashable
+    , intern
     , microlens
     , process
     , propagators

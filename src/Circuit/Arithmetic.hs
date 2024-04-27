@@ -55,6 +55,9 @@ instance FromJSON Wire
 
 instance ToJSON Wire
 
+instance Hashable Wire where
+  hashWithSalt s w = s `hashWithSalt` (0 :: Int) `hashWithSalt` (wireName w)
+
 instance Pretty Wire where
   pretty (InputWire label t v) =
     let a = case t of

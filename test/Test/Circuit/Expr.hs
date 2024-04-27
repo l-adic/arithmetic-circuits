@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
 {-# HLINT ignore "Use <$>" #-}
 
 module Test.Circuit.Expr where
@@ -9,10 +10,10 @@ import Data.Field.Galois (GaloisField, Prime)
 import Data.Map qualified as Map
 import Protolude hiding (Show, show)
 import Test.Circuit.Affine
+import Test.QuickCheck.Monadic (monadicIO, run)
 import Test.Tasty.QuickCheck
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Prelude (Show (..))
-import Test.QuickCheck.Monadic (monadicIO, run)
 
 -------------------------------------------------------------------------------
 -- Generators
@@ -82,22 +83,20 @@ instance (Pretty f) => Show (ExprWithInputs f) where
 -- Tests
 -------------------------------------------------------------------------------
 
-
 -- | Check whether exprToArithCircuit produces valid circuits
 prop_compiledCircuitValid :: ExprWithInputs Fr -> Property
 prop_compiledCircuitValid (ExprWithInputs expr _) = monadicIO $ run $ do
-
   validArithCircuit <$> execCircuitBuilder (exprToArithCircuit expr (OutputWire 0))
 
 -- | Check whether evaluating an expression and
 -- evaluating the arithmetic circuit translation produces the same
 -- result
 prop_evalEqArithEval :: ExprWithInputs Fr -> Property
-prop_evalEqArithEval (ExprWithInputs expr inputs) = monadicIO $ run $ do 
+prop_evalEqArithEval (ExprWithInputs expr inputs) = monadicIO $ run $ do
   circuit <- (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 1))
   pure $ all (testInput circuit) inputs
   where
-    testInput  circuit input  =
+    testInput circuit input =
       let a = evalExpr (Map.mapKeys (InputWire "" Public) input) expr
           b = arithOutput input circuit Map.! (OutputWire 1)
        in a == b

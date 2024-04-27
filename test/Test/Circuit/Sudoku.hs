@@ -5,7 +5,7 @@ module Test.Circuit.Sudoku where
 import Circuit
 import Data.Array.IO (IOArray, getElems, newArray, readArray, writeArray)
 import Data.Distributive (Distributive (distribute))
-import Data.Field.Galois (GaloisField, Prime)
+import Data.Field.Galois (Prime, PrimeField)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (union, (!!), (\\))
 import Data.Map qualified as Map
@@ -35,7 +35,7 @@ sudokuSet = Vec.tabulate (cField . (+ 1) . fromIntegral)
 
 isPermutation ::
   forall f.
-  (GaloisField f) =>
+  (PrimeField f) =>
   [Signal f f] ->
   [Signal f f] ->
   Signal f Bool
@@ -47,7 +47,7 @@ isPermutation as bs =
    in all_ f (zip as [0 ..])
 
 validateBoxes ::
-  (GaloisField f) =>
+  (PrimeField f) =>
   SudokuSet (Signal f f) ->
   BoxGrid (Signal f f) ->
   Signal f Bool
@@ -63,7 +63,7 @@ mkBoard =
       EVar <$> fieldInput Public varName
 
 initializeBoard ::
-  (GaloisField f) =>
+  (PrimeField f) =>
   Board (Signal f f) ->
   ExprM f (Board (Signal f f))
 initializeBoard board = do
@@ -74,7 +74,7 @@ initializeBoard board = do
       v <- EVar <$> fieldInput Private varName
       pure $ cond (cell `eq` cField 0) v cell
 
-validate :: (GaloisField f) => ExprM f Wire
+validate :: (PrimeField f) => ExprM f Wire
 validate = do
   b <- mkBoard >>= initializeBoard
   let rowsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> b)

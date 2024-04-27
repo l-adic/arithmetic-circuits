@@ -13,7 +13,7 @@ module Circuit.Expr
     ExprM,
     BuilderState (..),
     type NBits,
-    Ground,
+    Ground(..),
     compile,
     emit,
     imm,
@@ -29,27 +29,30 @@ module Circuit.Expr
     truncRotate,
     evalExpr,
     rawWire,
+    compileWithWires,
     compileWithWire,
-    exprToArithCircuit
+    exprToArithCircuit,
   )
 where
-
 
 import Circuit.Affine
 import Circuit.Arithmetic
 import Data.Field.Galois (GaloisField, PrimeField (fromP))
 import Data.Finite (Finite)
 import Data.Map qualified as Map
+import Data.Maybe (fromJust)
+import Data.Reify
 import Data.Semiring (Ring (..), Semiring (..))
 import Data.Set qualified as Set
-import Data.Vector.Sized qualified as SV
 import Data.Vector qualified as V
+import Data.Vector.Sized qualified as SV
+import Lens.Micro ((.~))
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
-import Prelude as P
-import Lens.Micro ((.~))
-import Data.Reify
-import Data.Maybe (fromJust)
+import Unsafe.Coerce (unsafeCoerce)
+import Data.Interned
+import Data.Hashable
+
 
 data UnOp f a where
   UNeg :: UnOp f f
@@ -99,18 +102,39 @@ rawWire :: Var i f ty -> i
 rawWire (VarField i) = i
 rawWire (VarBool i) = i
 
+newtype UVar i = UVar i deriving (Show, Eq, Generic)
+
+instance Hashable i => Hashable (UVar i)
+
+instance (Pretty i) => Pretty (UVar i) where
+  pretty (UVar i) = "Var" <+> pretty i
+
 type family NBits a :: Nat
 
 -- | This constring prevents us from building up nested vectors inside the expression type
-class (GaloisField f) => Ground f ty
+class Ground (t :: Type -> Type) (ty :: Type) (f :: Type) where
+  coerceGroundType :: t ty  -> t f
 
-instance (GaloisField f) => Ground f f
+instance Ground (Expr i f) f f where
+  coerceGroundType = identity
 
-instance (GaloisField f) => Ground f Bool
+instance Ground (Expr i f) Bool f where
+  coerceGroundType = unsafeCoerce
+
+instance Ground (Val f) ty f where
+  coerceGroundType (ValBool b) = ValField b
+  coerceGroundType (ValField f) = ValField f
+
+instance Ground (Var i f) ty f where
+  coerceGroundType (VarField i) = VarField i
+  coerceGroundType (VarBool i) = VarField i
+
 
 --------------------------------------------------------------------------------
 
-data UBinOp = UAdd | USub | UMul | UDiv | UAnd | UOr | UXor deriving (Show)
+data UBinOp = UAdd | USub | UMul | UDiv | UAnd | UOr | UXor deriving (Show, Eq, Generic)
+
+instance Hashable UBinOp
 
 untypeBinOp :: BinOp f a -> UBinOp
 untypeBinOp = \case
@@ -122,75 +146,167 @@ untypeBinOp = \case
   BOr -> UOr
   BXor -> UXor
 
-data UUnOp = UUNeg | UUNot deriving (Show)
+data UUnOp = UUNeg | UUNot deriving (Show,Eq, Generic)
+
+instance Hashable UUnOp
+
+instance Pretty UBinOp where
+  pretty = \case
+    UAdd -> "+"
+    USub -> "-"
+    UMul -> "*"
+    UDiv -> "/"
+    UAnd -> "&&"
+    UOr -> "||"
+    UXor -> "xor"
+
+instance Pretty UUnOp where
+  pretty = \case
+    UUNeg -> "-"
+    UUNot -> "!"
 
 untypeUnOp :: UnOp f a -> UUnOp
 untypeUnOp = \case
   UNeg -> UUNeg
   UNot -> UUNot
 
-data UntypedExpr i f =
-  UEVal f |
-  UEVar i |
-  UEUnOp UUnOp (UntypedExpr i f) |
-  UEBinOp UBinOp (UntypedExpr i f) (UntypedExpr i f) |
-  UEIf (UntypedExpr i f) (UntypedExpr i f) (UntypedExpr i f) |
-  UEEq (UntypedExpr i f) (UntypedExpr i f) |
-  UESplit Int (UntypedExpr i f) |
-  UEJoin (UntypedExpr i f) |
-  UEAtIndex (UntypedExpr i f) Int |
-  UEUpdateIndex Int (UntypedExpr i f) (UntypedExpr i f) |
-  UEBundle (V.Vector (UntypedExpr i f))
+data UntypedExpr i f
+  = UEVal f
+  | UEVar (UVar i)
+  | UEUnOp UUnOp (SharedUntypedExpr i f)
+  | UEBinOp UBinOp (SharedUntypedExpr i f) (SharedUntypedExpr i f)
+  | UEIf (SharedUntypedExpr i f) (SharedUntypedExpr i f) (SharedUntypedExpr i f)
+  | UEEq (SharedUntypedExpr i f) (SharedUntypedExpr i f)
+  | UESplit Int (SharedUntypedExpr i f)
+  | UEJoin (SharedUntypedExpr i f)
+  | UEAtIndex (SharedUntypedExpr i f) Int
+  | UEUpdateIndex Int (SharedUntypedExpr i f) (SharedUntypedExpr i f)
+  | UEBundle (V.Vector (SharedUntypedExpr i f))
+  deriving Eq
 
-data SharedUntypedExpr i f s =
-  SUEVal f |
-  SUEVar i |
-  SUEUnOp UUnOp !s |
-  SUEBinOp UBinOp !s !s |
-  SUEIf !s !s !s |
-  SUEEq !s !s |
-  SUESplit Int !s |
-  SUEJoin !s |
-  SUEAtIndex !s Int |
-  SUEUpdateIndex Int !s !s |
-  SUEBundle !(V.Vector s)
+data SharedUntypedExpr i f
+  = SUEVal Id f
+  | SUEVar Id (UVar i)
+  | SUEUnOp Id UUnOp (SharedUntypedExpr i f)
+  | SUEBinOp Id UBinOp (SharedUntypedExpr i f) (SharedUntypedExpr i f)
+  | SUEIf Id (SharedUntypedExpr i f) (SharedUntypedExpr i f) (SharedUntypedExpr i f)
+  | SUEEq Id (SharedUntypedExpr i f) (SharedUntypedExpr i f)
+  | SUESplit Id Int (SharedUntypedExpr i f)
+  | SUEJoin Id (SharedUntypedExpr i f)
+  | SUEAtIndex Id (SharedUntypedExpr i f) Int
+  | SUEUpdateIndex Id Int (SharedUntypedExpr i f) (SharedUntypedExpr i f)
+  | SUEBundle Id !(V.Vector (SharedUntypedExpr i f))
+  deriving Eq
 
-deriving instance (Show s, Show i, Show f) => Show (SharedUntypedExpr i f s)
+instance (Pretty i, Pretty f) => Pretty (SharedUntypedExpr i f) where
+  pretty = \case
+    SUEVal i f -> "Id" <+> pretty i <+> text ":" <+> parens (pretty f)
+    SUEVar i v -> "Id" <+> pretty i <+> text ":" <+> pretty v
+    SUEUnOp i op e -> "Id" <+> pretty i <+> text ":" <+> parens (pretty op <+> pretty e)
+    SUEBinOp i op e1 e2 -> "Id" <+> pretty i <+> text ":" <+> parens (pretty op <+> pretty e1 <+> pretty e2)
+    SUEIf i b t e -> "Id" <+> pretty i <+> text ":" <+> parens (text "if" <+> pretty b <+> text "then" <+> pretty t <+> text "else" <+> pretty e)
+    SUEEq i l r -> "Id" <+> pretty i <+> text ":" <+> parens (pretty l <+> text "=" <+> pretty r)
+    SUESplit i n e -> "Id" <+> pretty i <+> text ":" <+> parens (text "split" <+> pretty n <+> pretty e)
+    SUEJoin i e -> "Id" <+> pretty i <+> text ":" <+> parens (text "join" <+> pretty e)
+    SUEAtIndex i v ix -> "Id" <+> pretty i <+> text ":" <+> parens (pretty v <+> brackets (pretty ix))
+    SUEUpdateIndex i p b v -> "Id" <+> pretty i <+> text ":" <+> parens (text ("setIndex " <> Protolude.show p) <+> pretty b <+> pretty v)
+    SUEBundle i b -> "Id" <+> pretty i <+> text ":" <+> parens (text "bundle" <+> pretty (toList b))
 
 
-instance MuRef (UntypedExpr i f) where
-  type DeRef (UntypedExpr i f) = SharedUntypedExpr i f
-  mapDeRef _ (UEVal x) = pure $ SUEVal x
-  mapDeRef _ (UEVar x) = pure $ SUEVar x
-  mapDeRef f (UEUnOp op e) = SUEUnOp op <$> f e
-  mapDeRef f (UEBinOp op e1 e2) = SUEBinOp op <$> f e1 <*> f e2
-  mapDeRef f (UEIf b t e) = SUEIf <$> f b <*> f t <*> f e
-  mapDeRef f (UEEq l r) = SUEEq <$> f l <*> f r
-  mapDeRef f (UESplit n i) = SUESplit n <$> f i
-  mapDeRef f (UEJoin i) = SUEJoin <$> f i
-  mapDeRef f (UEAtIndex v i) = SUEAtIndex <$> f v <*> pure i
-  mapDeRef f (UEUpdateIndex p b v) = SUEUpdateIndex p <$> f b <*> f v
-  mapDeRef f (UEBundle b) = SUEBundle <$> traverse f b
+instance (Eq i, Hashable i, PrimeField f) => Interned (SharedUntypedExpr i f) where
+  type Uninterned (SharedUntypedExpr i f) = UntypedExpr i f
+  data Description (SharedUntypedExpr i f) = 
+                    DVal f
+                  | DVar (UVar i)
+                  | DUnOp UUnOp Id
+                  | DBinOp UBinOp Id Id
+                  | DIf Id Id Id
+                  | DEq Id Id
+                  | DSplit Int Id
+                  | DJoin Id
+                  | DAtIndex Id Id Int
+                  | DUpdateIndex Id Int Id Id
+                  | DBundle (V.Vector Id)
+                  deriving Eq
+  describe = \case
+    UEVal f -> DVal f
+    UEVar v -> DVar v
+    UEUnOp op e -> DUnOp op (getId e)
+    UEBinOp op e1 e2 -> DBinOp op (getId e1) (getId e2)
+    UEIf b t e -> DIf (getId b) (getId t) (getId e)
+    UEEq l r -> DEq (getId l) (getId r)
+    UESplit n e -> DSplit n (getId e)
+    UEJoin e -> DJoin (getId e)
+    UEAtIndex v ix -> DAtIndex (getId v) (getId v) ix
+    UEUpdateIndex p b v -> DUpdateIndex (getId b) p (getId b) (getId v)
+    UEBundle b -> DBundle (fmap getId b)
 
-toUntypedExpr :: forall f m ty. MonadState (BuilderState f) m => Expr Wire f ty -> m (UntypedExpr Wire f)
+
+  identify i = go where
+    go (UEVal f) = SUEVal i f
+    go (UEVar v) = SUEVar i v
+    go (UEUnOp op e) = SUEUnOp i op e
+    go (UEBinOp op e1 e2) = SUEBinOp i op e1 e2
+    go (UEIf b t e) = SUEIf i b t e
+    go (UEEq l r) = SUEEq i l r
+    go (UESplit n e) = SUESplit i n e
+    go (UEJoin e) = SUEJoin i e
+    go (UEAtIndex v ix) = SUEAtIndex i v ix
+    go (UEUpdateIndex p b v) = SUEUpdateIndex i p b v
+    go (UEBundle b) = SUEBundle i b
+  cache = termCache
+
+getId :: SharedUntypedExpr i f -> Id
+getId = \case
+  SUEVal i _ -> i
+  SUEVar i _ -> i
+  SUEUnOp i _ _ -> i
+  SUEBinOp i _ _ _ -> i
+  SUEIf i _ _ _ -> i
+  SUEEq i _ _ -> i
+  SUESplit i _ _ -> i
+  SUEJoin i _ -> i
+  SUEAtIndex i _ _ -> i
+  SUEUpdateIndex i _ _ _ -> i
+  SUEBundle i _ -> i
+
+termCache :: (Hashable i, PrimeField f) => Cache (SharedUntypedExpr i f)
+termCache = mkCache
+{-# NOINLINE termCache #-}
+
+instance (Eq i, Hashable i, PrimeField f) => Hashable (Description (SharedUntypedExpr i f)) where
+  hashWithSalt s (DVal f)   = s `hashWithSalt` (0 :: Int) `hashWithSalt` (fromP f)
+  hashWithSalt s (DVar v)   = s `hashWithSalt` (1 :: Int) `hashWithSalt` v
+  hashWithSalt s (DUnOp op e) = s `hashWithSalt` (2 :: Int) `hashWithSalt` op `hashWithSalt` e
+  hashWithSalt s (DBinOp op e1 e2) = s `hashWithSalt` (3 :: Int) `hashWithSalt` op `hashWithSalt` e1 `hashWithSalt` e2
+  hashWithSalt s (DIf b t e) = s `hashWithSalt` (4 :: Int) `hashWithSalt` b `hashWithSalt` t `hashWithSalt` e
+  hashWithSalt s (DEq l r) = s `hashWithSalt` (5 :: Int) `hashWithSalt` l `hashWithSalt` r
+  hashWithSalt s (DSplit n e) = s `hashWithSalt` (6 :: Int) `hashWithSalt` n `hashWithSalt` e
+  hashWithSalt s (DJoin e) = s `hashWithSalt` (7 :: Int) `hashWithSalt` e
+  hashWithSalt s (DAtIndex ix v e) = s `hashWithSalt` (8 :: Int) `hashWithSalt` ix `hashWithSalt` v `hashWithSalt` e
+  hashWithSalt s (DUpdateIndex p b v e) = s `hashWithSalt` (9 :: Int) `hashWithSalt` p `hashWithSalt` b `hashWithSalt` v `hashWithSalt` e
+  hashWithSalt s (DBundle b) = s `hashWithSalt` (10 :: Int) `hashWithSalt` (toList b)
+
+
+toUntypedExpr :: forall f m ty. (PrimeField f, MonadState (BuilderState f) m) => Expr Wire f ty -> m (SharedUntypedExpr Wire f)
 toUntypedExpr = \case
-  EVal v -> pure $ UEVal $ case v of
+  EVal v -> pure $ intern (UEVal $ case v of
     ValField f -> f
-    ValBool b -> b
+    ValBool b -> b)
   EVar v -> case v of
-    VarField i -> pure $ UEVar i
-    VarBool i -> do 
+    VarField i -> pure $ intern $ UEVar (UVar i)
+    VarBool i -> do
       emit $ Mul (Var i) (Var i) i
-      pure $ UEVar i
-  EUnOp op e -> UEUnOp (untypeUnOp op) <$> toUntypedExpr e
-  EBinOp op e1 e2 -> UEBinOp (untypeBinOp op) <$> toUntypedExpr e1 <*> toUntypedExpr e2
-  EIf b t e -> UEIf <$> toUntypedExpr b <*> toUntypedExpr t <*> toUntypedExpr e
-  EEq l r -> UEEq <$> toUntypedExpr l <*> (toUntypedExpr r)
-  ESplit i -> UESplit (fromIntegral $ natVal (Proxy @(NBits f) )) <$> toUntypedExpr i
-  EJoin i -> UEJoin <$> toUntypedExpr i
-  EAtIndex v i -> UEAtIndex <$> toUntypedExpr v <*> pure (fromIntegral i)
-  EUpdateIndex p b v -> UEUpdateIndex (fromIntegral p) <$> toUntypedExpr b <*> toUntypedExpr v
-  EBundle b -> UEBundle <$> traverse toUntypedExpr (SV.fromSized b)
+      pure $ intern $ UEVar (UVar i)
+  EUnOp op e -> intern . UEUnOp (untypeUnOp op) <$> toUntypedExpr e
+  EBinOp op e1 e2 -> fmap intern . UEBinOp (untypeBinOp op) <$> toUntypedExpr e1 <*> toUntypedExpr e2
+  EIf b t e -> fmap intern $ UEIf <$> toUntypedExpr b <*> toUntypedExpr t <*> toUntypedExpr e
+  EEq l r -> fmap intern . UEEq <$> toUntypedExpr l <*> (toUntypedExpr r)
+  ESplit i -> intern . UESplit (fromIntegral $ natVal (Proxy @(NBits f))) <$> toUntypedExpr i
+  EJoin i -> intern . UEJoin <$> toUntypedExpr i
+  EAtIndex v i -> fmap intern . UEAtIndex <$> toUntypedExpr v <*> pure (fromIntegral i)
+  EUpdateIndex p b v -> fmap intern . UEUpdateIndex (fromIntegral p) <$> toUntypedExpr b <*> toUntypedExpr v
+  EBundle b -> intern . UEBundle <$> traverse toUntypedExpr (SV.fromSized b)
 
 -- | Expression data type of (arithmetic) expressions over a field @f@
 -- with variable names/indices coming from @i@.
@@ -203,9 +319,9 @@ data Expr i f ty where
   EEq :: Expr i f f -> Expr i f f -> Expr i f Bool
   ESplit :: (KnownNat (NBits f)) => Expr i f f -> Expr i f (SV.Vector (NBits f) Bool)
   EJoin :: (KnownNat n) => Expr i f (SV.Vector n Bool) -> Expr i f f
-  EAtIndex :: (KnownNat n, Ground f ty) => Expr i f (SV.Vector n ty) -> Finite n -> Expr i f ty
-  EUpdateIndex :: (KnownNat n, Ground f ty) => Finite n -> (Expr i f ty) -> Expr i f (SV.Vector n ty) -> Expr i f (SV.Vector n ty)
-  EBundle :: (Ground f ty) => SV.Vector n (Expr i f ty) -> Expr i f (SV.Vector n ty)
+  EAtIndex :: (KnownNat n) => Expr i f (SV.Vector n ty) -> Finite n -> Expr i f ty
+  EUpdateIndex :: (KnownNat n) => Finite n -> (Expr i f ty) -> Expr i f (SV.Vector n ty) -> Expr i f (SV.Vector n ty)
+  EBundle :: SV.Vector n (Expr i f ty) -> Expr i f (SV.Vector n ty)
 
 deriving instance (Show f) => Show (BinOp f a)
 
@@ -358,8 +474,7 @@ evalExpr' expr = case expr of
 data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
-    bsVars :: CircuitVars Text,
-    bsCompMap :: Map Unique (V.Vector (SignalSource f))
+    bsVars :: CircuitVars Text
   }
 
 defaultBuilderState :: BuilderState f
@@ -367,8 +482,7 @@ defaultBuilderState =
   BuilderState
     { bsCircuit = ArithCircuit [],
       bsNextVar = 1,
-      bsVars = mempty,
-      bsCompMap = mempty
+      bsVars = mempty
     }
 
 -- non recoverable errors that can arise during circuit building
@@ -384,7 +498,7 @@ instance (GaloisField f) => Pretty (CircuitBuilderError f) where
 type ExprM f a = ExceptT (CircuitBuilderError f) (StateT (BuilderState f) IO) a
 
 runExprM :: (GaloisField f) => ExprM f a -> BuilderState f -> IO (a, BuilderState f)
-runExprM m s = do 
+runExprM m s = do
   res <- runStateT (runExceptT m) s
   case res of
     (Left e, _) -> panic $ Protolude.show $ pretty e
@@ -401,11 +515,12 @@ evalCircuitBuilder e = fst <$> runCircuitBuilder e
 runCircuitBuilder :: (GaloisField f) => ExprM f a -> IO (a, BuilderState f)
 runCircuitBuilder m = do
   (a, s) <- runExprM m defaultBuilderState
-  pure ( a,
-        s
-          { bsCircuit = reverseCircuit $ bsCircuit s
-          }
-      )
+  pure
+    ( a,
+      s
+        { bsCircuit = reverseCircuit $ bsCircuit s
+        }
+    )
   where
     reverseCircuit = \(ArithCircuit cs) -> ArithCircuit $ reverse cs
 
@@ -470,6 +585,7 @@ freshOutput = do
 data SignalSource f
   = WireSource Wire
   | AffineSource (AffineCircuit f Wire)
+    deriving (Show)
 
 instance (Show f) => Pretty (SignalSource f) where
   pretty = \case
@@ -508,30 +624,39 @@ addWire x = case x of
     pure mulOut
 
 compileWithWire ::
-  (Num f, Show f) =>
-  MonadIO m =>
+  (PrimeField f) =>
+  (MonadIO m) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
   m (Var Wire f ty) ->
   Expr Wire f ty ->
   m Wire
-compileWithWire freshWire expr = do
-  compileOut <- toUntypedExpr expr
-  g@(Graph graph root) <- liftIO $ reifyGraph compileOut
-  traceM $ Protolude.show graph
-  let m = Map.fromList graph
-      rootExpr = fromJust $ Map.lookup root m
-  o <- compile m rootExpr >>= assertSingleSource
-  -- >>= compile >>= assertSingleSource
-  case o of
-    WireSource wire -> do
-      wire' <- rawWire <$> freshWire
-      emit $ Mul (ConstGate 1) (Var wire') wire
-      pure wire
-    AffineSource circ -> do
-      wire <- rawWire <$> freshWire
-      emit $ Mul (ConstGate 1) circ wire
-      pure wire
+compileWithWire freshWire e =
+  V.head
+    <$> compileWithWires (V.singleton $ fmap coerceGroundType freshWire) e
+
+compileWithWires ::
+  (PrimeField f) =>
+  (MonadIO m) =>
+  (MonadState (BuilderState f) m) =>
+  (MonadError (CircuitBuilderError f) m) =>
+  V.Vector (m (Var Wire f f)) ->
+  Expr Wire f ty ->
+  m (V.Vector Wire)
+compileWithWires ws expr = do
+  compileOut <- do 
+    ut <- toUntypedExpr expr
+    compile ut
+  for (V.zip compileOut ws) $ \(o, freshWire) -> do
+    case o of
+      WireSource wire -> do
+        wire' <- rawWire <$> freshWire
+        emit $ Mul (ConstGate 1) (Var wire') wire
+        pure wire
+      AffineSource circ -> do
+        wire <- rawWire <$> freshWire
+        emit $ Mul (ConstGate 1) circ wire
+        pure wire
 
 assertSingleSource ::
   (MonadError (CircuitBuilderError f) m) =>
@@ -552,28 +677,29 @@ assertSameSourceSize l r =
       MismatchedWireTypes l r
 
 compile ::
-  forall f m .
-  (Num f) =>
+  forall f m.
+  (PrimeField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  Map Unique (SharedUntypedExpr Wire f Unique) ->
-  SharedUntypedExpr Wire f Unique ->
+  SharedUntypedExpr Wire f ->
   m (V.Vector (SignalSource f))
-compile g expr = case expr of
-  SUEVal v ->
+compile expr = case expr of
+  SUEVal _ v -> do
     V.singleton <$> case v of
       f -> pure . AffineSource $ ConstGate f
-  SUEVar var -> pure  $
-    V.singleton $ WireSource var
-  SUEUnOp op e1 -> do
-    e1Outs <- lookupShared e1
+  SUEVar _ (UVar var) -> do
+    pure $
+      V.singleton $
+        WireSource var
+  SUEUnOp _ op e1 -> do
+    e1Outs <- compile e1
     for e1Outs $ \e1Out ->
       case op of
         UUNeg -> pure . AffineSource $ ScalarMul (-1) (addVar e1Out)
         UUNot -> pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
-  SUEBinOp op e1 e2 -> do
-    e1Outs <- lookupShared e1
-    e2Outs <- lookupShared e2
+  SUEBinOp _ op e1 e2 -> do
+    e1Outs <- compile e1
+    e2Outs <- compile e2
     assertSameSourceSize e1Outs e2Outs
     for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
       case op of
@@ -604,82 +730,68 @@ compile g expr = case expr of
           emit $ Mul e1Out e2Out tmp1
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
-  SUEIf cond true false -> V.singleton <$> do
-    condOut <- addVar <$> (lookupShared cond >>= assertSingleSource)
-    trueOuts <- lookupShared true
-    falseOuts <- lookupShared false
-    assertSameSourceSize trueOuts falseOuts
-    tmp1 <- imm
-    for_ (addVar <$> trueOuts) $ \trueOut ->
-      emit $ Mul condOut trueOut tmp1
-    tmp2 <- imm
-    for_ (addVar <$> falseOuts) $ \falseOut ->
-      emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
-    pure . AffineSource $ Add (Var tmp1) (Var tmp2)
+  SUEIf _ cond true false ->
+    V.singleton <$> do
+      condOut <- addVar <$> (compile cond >>= assertSingleSource)
+      trueOuts <- compile true
+      falseOuts <- compile false
+      assertSameSourceSize trueOuts falseOuts
+      tmp1 <- imm
+      for_ (addVar <$> trueOuts) $ \trueOut ->
+        emit $ Mul condOut trueOut tmp1
+      tmp2 <- imm
+      for_ (addVar <$> falseOuts) $ \falseOut ->
+        emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
+      pure . AffineSource $ Add (Var tmp1) (Var tmp2)
   -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
-  SUEEq lhs rhs ->
+  SUEEq _ lhs rhs ->
     pure <$> do
       -- assertSingle is justified as the lhs and rhs must be of type f
-      eqInWire <- compile g (SUEBinOp USub lhs rhs) >>= assertSingleSource >>= addWire
+      eqInWire <- compile (intern $ UEBinOp USub lhs rhs) >>= assertSingleSource >>= addWire
       eqFreeWire <- imm
       eqOutWire <- imm
       emit $ Equal eqInWire eqFreeWire eqOutWire
       -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
       -- neqOutWire instead.
       pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
-  SUESplit n input -> do
+  SUESplit _ n input -> do
     -- assertSingle is justified as the input must be of type f
-    i <- lookupShared input >>= assertSingleSource >>= addWire
+    i <- compile input >>= assertSingleSource >>= addWire
     outputs <- V.generateM n (const $ mkBoolVar =<< imm)
     emit $ Split i (V.toList outputs)
-    fold <$> traverse (compile g . SUEVar) outputs
+    fold <$> traverse (compile . intern . UEVar . UVar) outputs
     where
-      mkBoolVar w = do 
+      mkBoolVar w = do
         emit $ Mul (Var w) (Var w) w
         pure w
-  SUEBundle as -> do
-    as' <- traverse lookupShared as
+  SUEBundle _ as -> do
+    as' <- traverse compile as
     pure $ fold as'
-  SUEJoin bits ->
+  SUEJoin _ bits ->
     V.singleton <$> do
-      bs <- toList <$> lookupShared bits
+      bs <- toList <$> compile bits
       ws <- traverse addWire bs
       pure . AffineSource $ unsplit ws
-  SUEAtIndex v _ix -> trace @Text "AtIndex" $ 
+  SUEAtIndex _ v _ix ->
     V.singleton <$> do
-      v' <- lookupShared v
+      v' <- compile v
       pure $ v' V.! (fromIntegral _ix)
-  SUEUpdateIndex p b v -> do
-    v' <- lookupShared v
-    b' <- lookupShared b >>= assertSingleSource
+  SUEUpdateIndex _ p b v -> do
+    v' <- compile v
+    b' <- compile b >>= assertSingleSource
     let p' = fromIntegral p
     pure $ V.imap (\_ix w -> if _ix == p' then b' else w) v'
-  where
-    lookupShared u = do
-      m <- gets bsCompMap
-      case Map.lookup u m of
-        Just v -> trace @Text "cache hit" $ pure v
-        Nothing ->
-          let e = fromJust (Map.lookup u g)
-          in do 
-              a <- compile g e
-              modify $ \s -> s { bsCompMap = Map.insert u a (bsCompMap s) }
-              pure a
 
 exprToArithCircuit ::
-  (Num f) =>
+  (PrimeField f) =>
   -- \| expression to compile
   Expr Wire f ty ->
   -- | Wire to assign the output of the expression to
   Wire ->
   ExprM f ()
 exprToArithCircuit expr output = do
-  compileOut <- toUntypedExpr expr
-  g@(Graph graph root) <- liftIO $ reifyGraph compileOut
-  let m = Map.fromList graph
-      rootExpr = fromJust $ Map.lookup root m
-  exprOut<- compile m rootExpr >>= assertSingleSource
-  emit $ Mul (ConstGate 1) (addVar exprOut) output
+  compileOut <- toUntypedExpr expr >>= compile >>= assertSingleSource
+  emit $ Mul (ConstGate 1) (addVar compileOut) output
 
 instance (GaloisField f) => Semiring (Expr Wire f f) where
   plus = EBinOp BAdd
