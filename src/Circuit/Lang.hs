@@ -111,10 +111,10 @@ joinBits = EJoin
 deref :: Var Wire f ty -> Signal f ty
 deref = EVar
 
-retBool :: (PrimeField f) => Text -> Signal f Bool -> ExprM f Wire
+retBool :: (GaloisField f, Hashable f) => Text -> Signal f Bool -> ExprM f Wire
 retBool label sig = compileWithWire (boolInput Public label) sig
 
-retField :: (PrimeField f) => Text -> Signal f f -> ExprM f Wire
+retField :: (PrimeField f, Hashable f) => Text -> Signal f f -> ExprM f Wire
 retField label sig = compileWithWire (fieldInput Public label) sig
 
 atIndex :: (KnownNat n) => Bundle f n ty -> Finite n -> Signal f ty
@@ -131,12 +131,15 @@ boolToField = unsafeCoerce
 
 
 unBundle :: forall n f ty. 
-  (KnownNat n, PrimeField f) => 
+  (KnownNat n, GaloisField f, Hashable f) => 
   Expr Wire f (Vector n ty) -> 
   ExprM f (Vector n (Expr Wire f f))
 unBundle b = do
   let freshWires = V.replicate (fromIntegral $ natVal $ Proxy @n) (VarField <$> imm)
+  m <- gets bsSharedMap
+  modify $ \s -> s {bsSharedMap = mempty}
   bis <- compileWithWires freshWires b 
+  modify $ \s -> s {bsSharedMap = m}
   pure $ fromJust $ SV.toSized (EVar . VarField <$> bis)
 
 --------------------------------------------------------------------------------

@@ -14,7 +14,7 @@ module Circuit.Expr
     BuilderState (..),
     type NBits,
     Ground(..),
-    compile,
+    memoizedCompile,
     emit,
     imm,
     addVar,
@@ -52,6 +52,7 @@ import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
 import Data.Interned
 import Data.Hashable
+import GHC.Conc.Sync (ThreadId(ThreadId))
 
 
 data UnOp f a where
@@ -170,19 +171,19 @@ untypeUnOp = \case
   UNeg -> UUNeg
   UNot -> UUNot
 
-data UntypedExpr i f
-  = UEVal f
-  | UEVar (UVar i)
-  | UEUnOp UUnOp (SharedUntypedExpr i f)
-  | UEBinOp UBinOp (SharedUntypedExpr i f) (SharedUntypedExpr i f)
-  | UEIf (SharedUntypedExpr i f) (SharedUntypedExpr i f) (SharedUntypedExpr i f)
-  | UEEq (SharedUntypedExpr i f) (SharedUntypedExpr i f)
-  | UESplit Int (SharedUntypedExpr i f)
-  | UEJoin (SharedUntypedExpr i f)
-  | UEAtIndex (SharedUntypedExpr i f) Int
-  | UEUpdateIndex Int (SharedUntypedExpr i f) (SharedUntypedExpr i f)
-  | UEBundle (V.Vector (SharedUntypedExpr i f))
-  deriving Eq
+data UntypedExpr a i f
+  = UEVal a f
+  | UEVar a (UVar i)
+  | UEUnOp a UUnOp (UntypedExpr a i f)
+  | UEBinOp a UBinOp (UntypedExpr a i f) (UntypedExpr a i f)
+  | UEIf a (UntypedExpr a i f) (UntypedExpr a i f) (UntypedExpr a i f)
+  | UEEq a (UntypedExpr a i f) (UntypedExpr a i f)
+  | UESplit a Int (UntypedExpr a i f)
+  | UEJoin a (UntypedExpr a i f)
+  | UEAtIndex a (UntypedExpr a i f) Int
+  | UEUpdateIndex a Int (UntypedExpr a i f) (UntypedExpr a i f)
+  | UEBundle a (V.Vector (UntypedExpr a i f))
+  deriving (Eq, Show)
 
 data SharedUntypedExpr i f
   = SUEVal Id f
@@ -196,7 +197,7 @@ data SharedUntypedExpr i f
   | SUEAtIndex Id (SharedUntypedExpr i f) Int
   | SUEUpdateIndex Id Int (SharedUntypedExpr i f) (SharedUntypedExpr i f)
   | SUEBundle Id !(V.Vector (SharedUntypedExpr i f))
-  deriving Eq
+  deriving (Eq, Show)
 
 instance (Pretty i, Pretty f) => Pretty (SharedUntypedExpr i f) where
   pretty = \case
@@ -213,100 +214,97 @@ instance (Pretty i, Pretty f) => Pretty (SharedUntypedExpr i f) where
     SUEBundle i b -> "Id" <+> pretty i <+> text ":" <+> parens (text "bundle" <+> pretty (toList b))
 
 
-instance (Eq i, Hashable i, PrimeField f) => Interned (SharedUntypedExpr i f) where
-  type Uninterned (SharedUntypedExpr i f) = UntypedExpr i f
-  data Description (SharedUntypedExpr i f) = 
-                    DVal f
-                  | DVar (UVar i)
-                  | DUnOp UUnOp Id
-                  | DBinOp UBinOp Id Id
-                  | DIf Id Id Id
-                  | DEq Id Id
-                  | DSplit Int Id
-                  | DJoin Id
-                  | DAtIndex Id Id Int
-                  | DUpdateIndex Id Int Id Id
-                  | DBundle (V.Vector Id)
-                  deriving Eq
-  describe = \case
-    UEVal f -> DVal f
-    UEVar v -> DVar v
-    UEUnOp op e -> DUnOp op (getId e)
-    UEBinOp op e1 e2 -> DBinOp op (getId e1) (getId e2)
-    UEIf b t e -> DIf (getId b) (getId t) (getId e)
-    UEEq l r -> DEq (getId l) (getId r)
-    UESplit n e -> DSplit n (getId e)
-    UEJoin e -> DJoin (getId e)
-    UEAtIndex v ix -> DAtIndex (getId v) (getId v) ix
-    UEUpdateIndex p b v -> DUpdateIndex (getId b) p (getId b) (getId v)
-    UEBundle b -> DBundle (fmap getId b)
 
 
-  identify i = go where
-    go (UEVal f) = SUEVal i f
-    go (UEVar v) = SUEVar i v
-    go (UEUnOp op e) = SUEUnOp i op e
-    go (UEBinOp op e1 e2) = SUEBinOp i op e1 e2
-    go (UEIf b t e) = SUEIf i b t e
-    go (UEEq l r) = SUEEq i l r
-    go (UESplit n e) = SUESplit i n e
-    go (UEJoin e) = SUEJoin i e
-    go (UEAtIndex v ix) = SUEAtIndex i v ix
-    go (UEUpdateIndex p b v) = SUEUpdateIndex i p b v
-    go (UEBundle b) = SUEBundle i b
-  cache = termCache
+unType :: forall f i ty. Expr i f ty -> UntypedExpr () i f
+unType = \case
+  EVal v -> case v of
+    ValBool b -> UEVal () b
+    ValField f -> UEVal () f
+  EVar v -> UEVar () (UVar $ rawWire v)
+  EUnOp op e -> UEUnOp () (untypeUnOp op) (unType e)
+  EBinOp op e1 e2 -> UEBinOp () (untypeBinOp op) (unType e1) (unType e2)
+  EIf b t e -> UEIf () (unType b) (unType t) (unType e)
+  EEq l r -> UEEq () (unType l) (unType r)
+  ESplit i -> UESplit () (fromIntegral $ natVal (Proxy @(NBits f))) (unType i)
+  EJoin i -> UEJoin () (unType i)
+  EAtIndex v ix -> UEAtIndex () (unType v) (fromIntegral ix)
+  EUpdateIndex p b v -> UEUpdateIndex () (fromIntegral p) (unType b) (unType v)
+  EBundle b -> UEBundle () (unType <$> SV.fromSized b)
 
-getId :: SharedUntypedExpr i f -> Id
-getId = \case
-  SUEVal i _ -> i
-  SUEVar i _ -> i
-  SUEUnOp i _ _ -> i
-  SUEBinOp i _ _ _ -> i
-  SUEIf i _ _ _ -> i
-  SUEEq i _ _ -> i
-  SUESplit i _ _ -> i
-  SUEJoin i _ -> i
-  SUEAtIndex i _ _ -> i
-  SUEUpdateIndex i _ _ _ -> i
-  SUEBundle i _ -> i
+getAnnotation :: UntypedExpr a i f -> a
+getAnnotation = \case
+  UEVal a _ -> a
+  UEVar a _ -> a
+  UEUnOp a _ _ -> a
+  UEBinOp a _ _ _ -> a
+  UEIf a _ _ _ -> a
+  UEEq a _ _ -> a
+  UESplit a _ _ -> a
+  UEJoin a _ -> a
+  UEAtIndex a _ _ -> a
+  UEUpdateIndex a _ _ _ -> a
+  UEBundle a _ -> a
 
-termCache :: (Hashable i, PrimeField f) => Cache (SharedUntypedExpr i f)
-termCache = mkCache
-{-# NOINLINE termCache #-}
+hashCons :: (Hashable i, Hashable f) => UntypedExpr () i f -> UntypedExpr Int i f
+hashCons = \case 
+  UEVal _ f -> UEVal (hash (hash @Text "Val", f)) f
+  UEVar _ v -> UEVar (hash (hash @Text "Var", v)) v
+  UEUnOp _ op e -> 
+    let e' = hashCons e
+    in UEUnOp (hash (op, getAnnotation e')) op e'
+  UEBinOp _ op e1 e2 ->
+    let e1' = hashCons e1
+        e2' = hashCons e2
+    in UEBinOp (hash (op, getAnnotation e1', getAnnotation e2')) op e1' e2'
+  UEIf _ b t e ->
+    let b' = hashCons b
+        t' = hashCons t
+        e' = hashCons e
+    in UEIf (hash (hash @Text "If", getAnnotation b', getAnnotation t', getAnnotation e')) b' t' e'
+  UEEq _ l r ->
+    let l' = hashCons l
+        r' = hashCons r
+    in UEEq (hash (hash @Text "Eq", getAnnotation l', getAnnotation r')) l' r'
+  UESplit _ n e ->
+    let e' = hashCons e
+    in UESplit (hash (hash @Text "Split", n, getAnnotation e')) n e'
+  UEJoin _ e ->
+    let e' = hashCons e
+    in UEJoin (hash (hash @Text "Join", getAnnotation e')) e'
+  UEAtIndex _ v ix ->
+    let v' = hashCons v
+    in UEAtIndex (hash (hash @Text "AtIndex", getAnnotation v', ix)) v' ix
+  UEUpdateIndex _ p b v ->
+    let b' = hashCons b
+        v' = hashCons v
+    in UEUpdateIndex (hash (hash @Text "UpdateIndex", p, getAnnotation b', getAnnotation v')) p b' v'
+  UEBundle _ b ->
+    let b' = V.map hashCons b
+    in UEBundle (hash (hash @Text "Bundle", map getAnnotation $ toList b')) b'
 
-instance (Eq i, Hashable i, PrimeField f) => Hashable (Description (SharedUntypedExpr i f)) where
-  hashWithSalt s (DVal f)   = s `hashWithSalt` (0 :: Int) `hashWithSalt` (fromP f)
-  hashWithSalt s (DVar v)   = s `hashWithSalt` (1 :: Int) `hashWithSalt` v
-  hashWithSalt s (DUnOp op e) = s `hashWithSalt` (2 :: Int) `hashWithSalt` op `hashWithSalt` e
-  hashWithSalt s (DBinOp op e1 e2) = s `hashWithSalt` (3 :: Int) `hashWithSalt` op `hashWithSalt` e1 `hashWithSalt` e2
-  hashWithSalt s (DIf b t e) = s `hashWithSalt` (4 :: Int) `hashWithSalt` b `hashWithSalt` t `hashWithSalt` e
-  hashWithSalt s (DEq l r) = s `hashWithSalt` (5 :: Int) `hashWithSalt` l `hashWithSalt` r
-  hashWithSalt s (DSplit n e) = s `hashWithSalt` (6 :: Int) `hashWithSalt` n `hashWithSalt` e
-  hashWithSalt s (DJoin e) = s `hashWithSalt` (7 :: Int) `hashWithSalt` e
-  hashWithSalt s (DAtIndex ix v e) = s `hashWithSalt` (8 :: Int) `hashWithSalt` ix `hashWithSalt` v `hashWithSalt` e
-  hashWithSalt s (DUpdateIndex p b v e) = s `hashWithSalt` (9 :: Int) `hashWithSalt` p `hashWithSalt` b `hashWithSalt` v `hashWithSalt` e
-  hashWithSalt s (DBundle b) = s `hashWithSalt` (10 :: Int) `hashWithSalt` (toList b)
 
-
-toUntypedExpr :: forall f m ty. (PrimeField f, MonadState (BuilderState f) m) => Expr Wire f ty -> m (SharedUntypedExpr Wire f)
-toUntypedExpr = \case
-  EVal v -> pure $ intern (UEVal $ case v of
-    ValField f -> f
-    ValBool b -> b)
-  EVar v -> case v of
-    VarField i -> pure $ intern $ UEVar (UVar i)
-    VarBool i -> do
-      emit $ Mul (Var i) (Var i) i
-      pure $ intern $ UEVar (UVar i)
-  EUnOp op e -> intern . UEUnOp (untypeUnOp op) <$> toUntypedExpr e
-  EBinOp op e1 e2 -> fmap intern . UEBinOp (untypeBinOp op) <$> toUntypedExpr e1 <*> toUntypedExpr e2
-  EIf b t e -> fmap intern $ UEIf <$> toUntypedExpr b <*> toUntypedExpr t <*> toUntypedExpr e
-  EEq l r -> fmap intern . UEEq <$> toUntypedExpr l <*> (toUntypedExpr r)
-  ESplit i -> intern . UESplit (fromIntegral $ natVal (Proxy @(NBits f))) <$> toUntypedExpr i
-  EJoin i -> intern . UEJoin <$> toUntypedExpr i
-  EAtIndex v i -> fmap intern . UEAtIndex <$> toUntypedExpr v <*> pure (fromIntegral i)
-  EUpdateIndex p b v -> fmap intern . UEUpdateIndex (fromIntegral p) <$> toUntypedExpr b <*> toUntypedExpr v
-  EBundle b -> intern . UEBundle <$> traverse toUntypedExpr (SV.fromSized b)
+-- toUntypedExpr :: 
+--   forall f m ty. (Hashable f, MonadState (BuilderState f) m) => 
+--   Expr Wire f ty -> m (SharedUntypedExpr Wire f)
+-- toUntypedExpr = \case
+--   EVal v -> pure $ intern (UEVal $ case v of
+--     ValField f -> f
+--     ValBool b -> b)
+--   EVar v -> intern <$> case v of
+--     VarField i -> pure $ UEVar (UVar i)
+--     VarBool i -> do
+--       emit $ Mul (Var i) (Var i) i
+--       pure $ UEVar (UVar i)
+--   EUnOp op e -> fmap intern (UEUnOp (untypeUnOp op) <$> toUntypedExpr e)
+--   EBinOp op e1 e2 -> fmap intern . UEBinOp (untypeBinOp op) <$> toUntypedExpr e1 <*> toUntypedExpr e2
+--   EIf b t e -> intern <$> (UEIf <$> toUntypedExpr b <*> toUntypedExpr t <*> toUntypedExpr e)
+--   EEq l r -> intern  <$> (UEEq <$> toUntypedExpr l <*> (toUntypedExpr r))
+--   ESplit i -> intern . UESplit (fromIntegral $ natVal (Proxy @(NBits f))) <$> toUntypedExpr i
+--   EJoin i -> intern . UEJoin <$> toUntypedExpr i
+--   EAtIndex v i -> fmap intern . UEAtIndex <$> toUntypedExpr v <*> pure (fromIntegral i)
+--   EUpdateIndex p b v -> fmap intern . UEUpdateIndex (fromIntegral p) <$> toUntypedExpr b <*> toUntypedExpr v
+--   EBundle b -> intern . UEBundle <$> traverse toUntypedExpr (SV.fromSized b)
 
 -- | Expression data type of (arithmetic) expressions over a field @f@
 -- with variable names/indices coming from @i@.
@@ -474,7 +472,8 @@ evalExpr' expr = case expr of
 data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
-    bsVars :: CircuitVars Text
+    bsVars :: CircuitVars Text,
+    bsSharedMap :: Map Id (UntypedExpr Int Wire f, V.Vector (SignalSource f))
   }
 
 defaultBuilderState :: BuilderState f
@@ -482,7 +481,8 @@ defaultBuilderState =
   BuilderState
     { bsCircuit = ArithCircuit [],
       bsNextVar = 1,
-      bsVars = mempty
+      bsVars = mempty,
+      bsSharedMap = mempty
     }
 
 -- non recoverable errors that can arise during circuit building
@@ -624,19 +624,19 @@ addWire x = case x of
     pure mulOut
 
 compileWithWire ::
-  (PrimeField f) =>
+  (Hashable f, GaloisField f) =>
   (MonadIO m) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
   m (Var Wire f ty) ->
   Expr Wire f ty ->
   m Wire
-compileWithWire freshWire e =
+compileWithWire freshWire e = do
   V.head
     <$> compileWithWires (V.singleton $ fmap coerceGroundType freshWire) e
 
 compileWithWires ::
-  (PrimeField f) =>
+  (Hashable f, GaloisField f) =>
   (MonadIO m) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
@@ -644,9 +644,8 @@ compileWithWires ::
   Expr Wire f ty ->
   m (V.Vector Wire)
 compileWithWires ws expr = do
-  compileOut <- do 
-    ut <- toUntypedExpr expr
-    compile ut
+  let e = hashCons $ unType expr
+  compileOut <- memoizedCompile $ e 
   for (V.zip compileOut ws) $ \(o, freshWire) -> do
     case o of
       WireSource wire -> do
@@ -676,32 +675,37 @@ assertSameSourceSize l r =
     throwError $
       MismatchedWireTypes l r
 
-compile ::
+_compile ::
   forall f m.
-  (PrimeField f) =>
+  (Hashable f, GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  SharedUntypedExpr Wire f ->
+  UntypedExpr Int Wire f ->
   m (V.Vector (SignalSource f))
-compile expr = case expr of
-  SUEVal _ v -> do
-    V.singleton <$> case v of
-      f -> pure . AffineSource $ ConstGate f
-  SUEVar _ (UVar var) -> do
-    pure $
-      V.singleton $
-        WireSource var
-  SUEUnOp _ op e1 -> do
-    e1Outs <- compile e1
-    for e1Outs $ \e1Out ->
-      case op of
-        UUNeg -> pure . AffineSource $ ScalarMul (-1) (addVar e1Out)
-        UUNot -> pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
-  SUEBinOp _ op e1 e2 -> do
-    e1Outs <- compile e1
-    e2Outs <- compile e2
+_compile expr = case expr of
+  UEVal i v ->
+    case v of
+      f -> do 
+        let res = V.singleton $ AffineSource $ ConstGate f
+        modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
+        pure res
+  UEVar i (UVar var) -> do
+    let res = V.singleton $ WireSource var
+    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
+    pure res
+  UEUnOp i op e1 -> do
+    e1Outs <- memoizedCompile e1
+    res <- for e1Outs $ \e1Out ->
+          case op of
+            UUNeg -> pure . AffineSource $ ScalarMul (-1) (addVar e1Out)
+            UUNot -> pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
+    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
+    pure res
+  UEBinOp i op e1 e2 -> do
+    e1Outs <- memoizedCompile e1
+    e2Outs <- memoizedCompile e2
     assertSameSourceSize e1Outs e2Outs
-    for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
+    res <- for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
       case op of
         UAdd -> pure . AffineSource $ Add e1Out e2Out
         UMul -> do
@@ -729,12 +733,14 @@ compile expr = case expr of
           tmp1 <- imm
           emit $ Mul e1Out e2Out tmp1
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
+    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
+    pure res
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
-  SUEIf _ cond true false ->
-    V.singleton <$> do
-      condOut <- addVar <$> (compile cond >>= assertSingleSource)
-      trueOuts <- compile true
-      falseOuts <- compile false
+  UEIf i cond true false -> do
+    res <- V.singleton <$> do
+      condOut <- addVar <$> (memoizedCompile cond >>= assertSingleSource)
+      trueOuts <- memoizedCompile true
+      falseOuts <- memoizedCompile false
       assertSameSourceSize trueOuts falseOuts
       tmp1 <- imm
       for_ (addVar <$> trueOuts) $ \trueOut ->
@@ -743,54 +749,100 @@ compile expr = case expr of
       for_ (addVar <$> falseOuts) $ \falseOut ->
         emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
       pure . AffineSource $ Add (Var tmp1) (Var tmp2)
+    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
+    pure res
   -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
-  SUEEq _ lhs rhs ->
-    pure <$> do
+  UEEq i lhs rhs -> do
+    res <- V.singleton <$> do
       -- assertSingle is justified as the lhs and rhs must be of type f
-      eqInWire <- compile (intern $ UEBinOp USub lhs rhs) >>= assertSingleSource >>= addWire
+      let e = UEBinOp (hash (USub, getAnnotation lhs, getAnnotation rhs)) USub lhs rhs
+      r <- memoizedCompile e >>= assertSingleSource
+      modify $ \s -> s {bsSharedMap = Map.insert (getAnnotation e) (e, V.singleton r) (bsSharedMap s)}
+      eqInWire <- addWire r
       eqFreeWire <- imm
       eqOutWire <- imm
       emit $ Equal eqInWire eqFreeWire eqOutWire
       -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
       -- neqOutWire instead.
       pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
-  SUESplit _ n input -> do
-    -- assertSingle is justified as the input must be of type f
-    i <- compile input >>= assertSingleSource >>= addWire
-    outputs <- V.generateM n (const $ mkBoolVar =<< imm)
-    emit $ Split i (V.toList outputs)
-    fold <$> traverse (compile . intern . UEVar . UVar) outputs
-    where
-      mkBoolVar w = do
-        emit $ Mul (Var w) (Var w) w
-        pure w
-  SUEBundle _ as -> do
-    as' <- traverse compile as
-    pure $ fold as'
-  SUEJoin _ bits ->
-    V.singleton <$> do
-      bs <- toList <$> compile bits
+    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
+    pure res
+  UESplit _i n input -> do
+    res <- do
+      -- assertSingle is justified as the input must be of type f
+      i <- memoizedCompile input >>= assertSingleSource >>= addWire
+      outputs <- V.generateM n (const $ mkBoolVar =<< imm)
+      emit $ Split i (V.toList outputs)
+      fold <$> (for outputs $ \o -> 
+        let v = UVar o
+            e = UEVar (hash v) v
+        in memoizedCompile e)
+    modify $ \s -> s {bsSharedMap = Map.insert _i (expr, res) (bsSharedMap s)}
+    pure res
+      where
+        mkBoolVar w = do
+          emit $ Mul (Var w) (Var w) w
+          pure w
+  UEBundle i as -> do
+    res <- do
+      as' <- traverse memoizedCompile as
+      pure $ fold as'
+    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
+    pure res
+  UEJoin i bits -> do
+    res <- V.singleton <$> do
+      bs <- toList <$> memoizedCompile bits
       ws <- traverse addWire bs
       pure . AffineSource $ unsplit ws
-  SUEAtIndex _ v _ix ->
-    V.singleton <$> do
-      v' <- compile v
+    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
+    pure res
+  UEAtIndex i v _ix -> do
+    res <- V.singleton <$> do
+      v' <- memoizedCompile v
       pure $ v' V.! (fromIntegral _ix)
-  SUEUpdateIndex _ p b v -> do
-    v' <- compile v
-    b' <- compile b >>= assertSingleSource
-    let p' = fromIntegral p
-    pure $ V.imap (\_ix w -> if _ix == p' then b' else w) v'
+    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
+    pure res
+  UEUpdateIndex i p b v -> do
+    res <- do
+      v' <- memoizedCompile v
+      b' <- memoizedCompile b >>= assertSingleSource
+      let p' = fromIntegral p
+      pure $ V.imap (\_ix w -> if _ix == p' then b' else w) v'
+    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
+    pure res
+    
+
+memoizedCompile ::
+  forall f m.
+  (Hashable f, GaloisField f) =>
+  (MonadState (BuilderState f) m) =>
+  (MonadError (CircuitBuilderError f) m) =>
+  UntypedExpr Int Wire f ->
+  m (V.Vector (SignalSource f))
+memoizedCompile expr = do 
+  m <- gets bsSharedMap
+  case Map.lookup (getAnnotation expr) m of
+    Just (e, ws) -> pure ws
+      --if (expr /= e) 
+      --  then do 
+      --    traceM $ "COLLISION"
+      --    traceM $ show expr
+      --    traceM "with"
+      --    traceM $ show e
+      --    panic "Cache is fucked"
+      --  else pure ws
+    Nothing -> _compile expr
 
 exprToArithCircuit ::
-  (PrimeField f) =>
+  (Hashable  f, GaloisField f) =>
   -- \| expression to compile
   Expr Wire f ty ->
   -- | Wire to assign the output of the expression to
   Wire ->
   ExprM f ()
 exprToArithCircuit expr output = do
-  compileOut <- toUntypedExpr expr >>= compile >>= assertSingleSource
+  let e  = hashCons $ unType expr
+  compileOut <- memoizedCompile e >>= assertSingleSource
   emit $ Mul (ConstGate 1) (addVar compileOut) output
 
 instance (GaloisField f) => Semiring (Expr Wire f f) where
@@ -810,3 +862,20 @@ instance (GaloisField f) => Num (Expr Wire f f) where
   abs = identity
   signum = const 1
   fromInteger = EVal . ValField . fromInteger
+
+
+{-
+
+  SUEVar 630 (UVar (InputWire "cell_(0,1)" Public 2))
+
+
+  SUEEq 630 
+    (SUEVal 452 (P (1 `modulo` 21888242871839275222246405745257275088548364400416034343698204186575808495617))) 
+    (SUEIf 514 
+      (SUEEq 656 
+        (SUEVar 629 (UVar (InputWire "cell_(0,0)" Public 1))) 
+        (SUEVal 453 (P (0 `modulo` 21888242871839275222246405745257275088548364400416034343698204186575808495617)))
+      ) 
+      (SUEVar 550 (UVar (InputWire "private_cell_(0,0)" Private 82))) 
+      (SUEVar 629 (UVar (InputWire "cell_(0,0)" Public 1))))
+-}
