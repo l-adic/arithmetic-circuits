@@ -3,6 +3,7 @@
 module Test.Circuit.Sudoku where
 
 import Circuit
+import Data.Set qualified as Set
 import Data.Array.IO (IOArray, getElems, newArray, readArray, writeArray)
 import Data.Distributive (Distributive (distribute))
 import Data.Field.Galois (GaloisField, Prime, PrimeField)
@@ -42,8 +43,8 @@ isPermutation ::
 isPermutation as bs =
   let f (a, i) =
         let isPresent = elem_ a bs
-          --  isUnique = not_ $ elem_ a (take i as)
-         in isPresent -- `and_` isUnique
+            isUnique = not_ $ elem_ a (take i as)
+         in isPresent  `and_` isUnique
    in all_ f (zip as [0 ..])
 
 validateBoxes ::
@@ -79,8 +80,8 @@ validate = do
   b <- mkBoard >>= initializeBoard
   let rowsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> b)
       colsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> distribute b)
-    --  boxesValid = validateBoxes sudokuSet (mkBoxes b)
-  retBool "out" $ rowsValid `and_` colsValid -- `and_` boxesValid
+      boxesValid = validateBoxes sudokuSet (mkBoxes b)
+  retBool "out" $ rowsValid `and_` colsValid `and_` boxesValid
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
@@ -98,6 +99,7 @@ spec_sudokuSolver = do
               map (first (\a -> "private_cell_" <> show a)) $
                 filter (\(_, v) -> v /= 0) sol
         BuilderState {bsVars, bsCircuit} <- snd <$> runCircuitBuilder (validate @Fr)
+        print (Set.size $ cvVars bsVars)
         let pubInputs =
               Map.fromList $
                 [ (var, fromIntegral value)

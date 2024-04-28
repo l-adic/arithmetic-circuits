@@ -247,10 +247,10 @@ getAnnotation = \case
   UEBundle a _ -> a
 
 hashCons :: (Hashable i, Hashable f) => UntypedExpr () i f -> UntypedExpr Int i f
-hashCons = \case 
+hashCons = \case
   UEVal _ f -> UEVal (hash (hash @Text "Val", f)) f
   UEVar _ v -> UEVar (hash (hash @Text "Var", v)) v
-  UEUnOp _ op e -> 
+  UEUnOp _ op e ->
     let e' = hashCons e
     in UEUnOp (hash (op, getAnnotation e')) op e'
   UEBinOp _ op e1 e2 ->
@@ -473,7 +473,7 @@ data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
     bsVars :: CircuitVars Text,
-    bsSharedMap :: Map Id (UntypedExpr Int Wire f, V.Vector (SignalSource f))
+    bsSharedMap :: Map Id (V.Vector (SignalSource f))
   }
 
 defaultBuilderState :: BuilderState f
@@ -645,7 +645,7 @@ compileWithWires ::
   m (V.Vector Wire)
 compileWithWires ws expr = do
   let e = hashCons $ unType expr
-  compileOut <- memoizedCompile $ e 
+  compileOut <- memoizedCompile $ e
   for (V.zip compileOut ws) $ \(o, freshWire) -> do
     case o of
       WireSource wire -> do
@@ -675,6 +675,16 @@ assertSameSourceSize l r =
     throwError $
       MismatchedWireTypes l r
 
+withCompilerCache ::
+  (MonadState (BuilderState f) m) =>
+  Id ->
+  m (V.Vector (SignalSource f)) ->
+  m (V.Vector (SignalSource f))
+withCompilerCache i m = do
+  res <- m
+  modify $ \s -> s {bsSharedMap = Map.insert i res (bsSharedMap s)}
+  pure res
+
 _compile ::
   forall f m.
   (Hashable f, GaloisField f) =>
@@ -682,30 +692,20 @@ _compile ::
   (MonadError (CircuitBuilderError f) m) =>
   UntypedExpr Int Wire f ->
   m (V.Vector (SignalSource f))
-_compile expr = case expr of
-  UEVal i v ->
-    case v of
-      f -> do 
-        let res = V.singleton $ AffineSource $ ConstGate f
-        modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
-        pure res
-  UEVar i (UVar var) -> do
-    let res = V.singleton $ WireSource var
-    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
-    pure res
-  UEUnOp i op e1 -> do
+_compile expr = withCompilerCache (getAnnotation expr) $ case expr of
+  UEVal _ f -> pure $ V.singleton $ AffineSource $ ConstGate f
+  UEVar _ (UVar var) -> pure . V.singleton $ WireSource var
+  UEUnOp _ op e1 -> do
     e1Outs <- memoizedCompile e1
-    res <- for e1Outs $ \e1Out ->
+    for e1Outs $ \e1Out ->
           case op of
             UUNeg -> pure . AffineSource $ ScalarMul (-1) (addVar e1Out)
             UUNot -> pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
-    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
-    pure res
-  UEBinOp i op e1 e2 -> do
+  UEBinOp _ op e1 e2 -> do
     e1Outs <- memoizedCompile e1
     e2Outs <- memoizedCompile e2
     assertSameSourceSize e1Outs e2Outs
-    res <- for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
+    for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
       case op of
         UAdd -> pure . AffineSource $ Add e1Out e2Out
         UMul -> do
@@ -733,11 +733,8 @@ _compile expr = case expr of
           tmp1 <- imm
           emit $ Mul e1Out e2Out tmp1
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
-    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
-    pure res
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
-  UEIf i cond true false -> do
-    res <- V.singleton <$> do
+  UEIf _ cond true false -> do
       condOut <- addVar <$> (memoizedCompile cond >>= assertSingleSource)
       trueOuts <- memoizedCompile true
       falseOuts <- memoizedCompile false
@@ -748,69 +745,49 @@ _compile expr = case expr of
       tmp2 <- imm
       for_ (addVar <$> falseOuts) $ \falseOut ->
         emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
-      pure . AffineSource $ Add (Var tmp1) (Var tmp2)
-    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
-    pure res
+      pure . V.singleton . AffineSource $ Add (Var tmp1) (Var tmp2)
   -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
-  UEEq i lhs rhs -> do
-    res <- V.singleton <$> do
+  UEEq _ lhs rhs -> do
       -- assertSingle is justified as the lhs and rhs must be of type f
       let e = UEBinOp (hash (USub, getAnnotation lhs, getAnnotation rhs)) USub lhs rhs
-      r <- memoizedCompile e >>= assertSingleSource
-      modify $ \s -> s {bsSharedMap = Map.insert (getAnnotation e) (e, V.singleton r) (bsSharedMap s)}
-      eqInWire <- addWire r
+      eqInWire <- do 
+        eOut <- withCompilerCache (getAnnotation e) (memoizedCompile e)
+        assertSingleSource eOut >>= addWire
       eqFreeWire <- imm
       eqOutWire <- imm
       emit $ Equal eqInWire eqFreeWire eqOutWire
       -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
       -- neqOutWire instead.
-      pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
-    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
-    pure res
-  UESplit _i n input -> do
-    res <- do
+      pure . V.singleton . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
+  UESplit _ n input -> do
       -- assertSingle is justified as the input must be of type f
       i <- memoizedCompile input >>= assertSingleSource >>= addWire
       outputs <- V.generateM n (const $ mkBoolVar =<< imm)
       emit $ Split i (V.toList outputs)
-      fold <$> (for outputs $ \o -> 
+      fold <$> for outputs (\o ->
         let v = UVar o
             e = UEVar (hash v) v
         in memoizedCompile e)
-    modify $ \s -> s {bsSharedMap = Map.insert _i (expr, res) (bsSharedMap s)}
-    pure res
       where
         mkBoolVar w = do
           emit $ Mul (Var w) (Var w) w
           pure w
-  UEBundle i as -> do
-    res <- do
+  UEBundle _ as -> do
       as' <- traverse memoizedCompile as
       pure $ fold as'
-    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
-    pure res
-  UEJoin i bits -> do
-    res <- V.singleton <$> do
+  UEJoin _ bits -> do
       bs <- toList <$> memoizedCompile bits
       ws <- traverse addWire bs
-      pure . AffineSource $ unsplit ws
-    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
-    pure res
-  UEAtIndex i v _ix -> do
-    res <- V.singleton <$> do
+      pure . V.singleton . AffineSource $ unsplit ws
+  UEAtIndex _ v _ix -> do
       v' <- memoizedCompile v
-      pure $ v' V.! (fromIntegral _ix)
-    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
-    pure res
-  UEUpdateIndex i p b v -> do
-    res <- do
+      pure . V.singleton $ v' V.! (fromIntegral _ix)
+  UEUpdateIndex _ p b v -> do
       v' <- memoizedCompile v
       b' <- memoizedCompile b >>= assertSingleSource
       let p' = fromIntegral p
       pure $ V.imap (\_ix w -> if _ix == p' then b' else w) v'
-    modify $ \s -> s {bsSharedMap = Map.insert i (expr, res) (bsSharedMap s)}
-    pure res
-    
+
 
 memoizedCompile ::
   forall f m.
@@ -819,18 +796,10 @@ memoizedCompile ::
   (MonadError (CircuitBuilderError f) m) =>
   UntypedExpr Int Wire f ->
   m (V.Vector (SignalSource f))
-memoizedCompile expr = do 
+memoizedCompile expr = do
   m <- gets bsSharedMap
   case Map.lookup (getAnnotation expr) m of
-    Just (e, ws) -> pure ws
-      --if (expr /= e) 
-      --  then do 
-      --    traceM $ "COLLISION"
-      --    traceM $ show expr
-      --    traceM "with"
-      --    traceM $ show e
-      --    panic "Cache is fucked"
-      --  else pure ws
+    Just ws -> pure ws
     Nothing -> _compile expr
 
 exprToArithCircuit ::
