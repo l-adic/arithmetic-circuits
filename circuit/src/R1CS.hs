@@ -94,6 +94,7 @@ mkR1C = \case
   Mul l r o -> R1C (mkLinearPoly l, mkLinearPoly r, monomial (1, wireName o))
   Equal i m o -> R1C (monomial (1, wireName i), monomial (1, wireName m), monomial (1, wireName o))
   Split i outs -> R1C (constant 1, mkLinearPoly $ unsplit outs, monomial (1, wireName i))
+  Boolean i -> R1C (monomial (1, wireName i), monomial (1, wireName i), monomial (1, wireName i))
 
 data R1CS f = R1CS
   { r1csConstraints :: [R1C f],

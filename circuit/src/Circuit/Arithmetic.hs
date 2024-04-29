@@ -16,6 +16,7 @@ module Circuit.Arithmetic
     CircuitVars (..),
     relabel,
     collectCircuitVars,
+    booleanWires
   )
 where
 
@@ -88,6 +89,7 @@ data Gate f i
       { splitInput :: i,
         splitOutputs :: [i]
       }
+  | Boolean i
   deriving (Show, Eq, Ord, Generic, NFData, FromJSON, ToJSON)
 
 deriving instance Functor (Gate f)
@@ -101,6 +103,7 @@ instance Bifunctor Gate where
     Mul l r o -> Mul (bimap f g l) (bimap f g r) (g o)
     Equal i m o -> Equal (g i) (g m) (g o)
     Split i os -> Split (g i) (map g os)
+    Boolean o -> Boolean (g o)
 
 -- | List output wires of a gate
 outputWires :: Gate f i -> [i]
@@ -108,8 +111,9 @@ outputWires = \case
   Mul _ _ out -> [out]
   Equal _ _ out -> [out]
   Split _ outs -> outs
+  Boolean _ -> []
 
-instance (Pretty i, Show f) => Pretty (Gate f i) where
+instance (Pretty i, Pretty f) => Pretty (Gate f i) where
   pretty (Mul l r o) =
     hsep
       [ pretty o,
@@ -132,6 +136,7 @@ instance (Pretty i, Show f) => Pretty (Gate f i) where
         text "split",
         pretty inp
       ]
+  pretty (Boolean o) = pretty o <> text ":= bool"
 
 -- | Evaluate a single gate
 evalGate ::
@@ -174,6 +179,14 @@ evalGate lookupVar updateVar vars gate =
                   updateVar currentOut (bool2val $ testBit (fromP inp) ix) oldEnv
                 )
            in snd . foldl setWire (0, vars) $ os
+    Boolean i ->
+      case lookupVar i vars of
+        Nothing ->
+          panic "evalGate: the impossible happened"
+        Just inp ->
+          if not (inp == 0 || inp == 1)
+            then panic $ "evalGate: boolean input is not 0 or 1: " <> show inp
+            else vars
 
 -- | A circuit is a list of multiplication gates along with their
 -- output wire labels (which can be intermediate or actual outputs).
@@ -188,7 +201,7 @@ instance (ToJSON f) => ToJSON (ArithCircuit f)
 instance Functor ArithCircuit where
   fmap f (ArithCircuit gates) = ArithCircuit $ map (first f) gates
 
-instance (Show f) => Pretty (ArithCircuit f) where
+instance (Pretty f) => Pretty (ArithCircuit f) where
   pretty (ArithCircuit gs) = vcat . map pretty $ gs
 
 -- | Check whether an arithmetic circuit does not refer to
@@ -222,6 +235,7 @@ validArithCircuit (ArithCircuit gates) =
     -- variable "m", as it is filled
     -- in when evaluating the circuit
     fetchVarsGate (Split i _) = [i]
+    fetchVarsGate (Boolean i) = [i]
 
 -- | Evaluate an arithmetic circuit on a given environment containing
 -- the inputs. Outputs the entire environment (outputs, intermediate
@@ -323,3 +337,9 @@ collectCircuitVars (ArithCircuit gates) =
           cvOutputs = os,
           cvInputsLabels = Map.fromList ls
         }
+
+booleanWires :: ArithCircuit f -> Set Wire
+booleanWires (ArithCircuit gates) = foldMap f gates
+  where
+    f (Boolean i) = Set.singleton i
+    f _ = mempty

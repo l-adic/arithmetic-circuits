@@ -80,6 +80,7 @@ gateToPropagator env (Split i outs) = do
   where
     bool2val True = 1
     bool2val False = 0
+gateToPropagator _ (Boolean _) = pure ()
 
 solve ::
   forall k l.

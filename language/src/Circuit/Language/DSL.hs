@@ -26,11 +26,11 @@ module Circuit.Language.DSL
     atIndex,
     updateIndex_,
     bundle,
-    unBundle,
 
     -- * Monoids
     Any_ (..),
     And_ (..),
+    Add_ (..),
     elem_,
     any_,
     all_,
@@ -42,10 +42,7 @@ import Circuit.Language.Compile
 import Circuit.Language.TExpr
 import Data.Field.Galois (GaloisField, PrimeField)
 import Data.Finite (Finite)
-import Data.Maybe (fromJust)
-import Data.Vector qualified as V
 import Data.Vector.Sized (Vector)
-import Data.Vector.Sized qualified as SV
 import Protolude
 
 --------------------------------------------------------------------------------
@@ -123,16 +120,6 @@ updateIndex_ p = EUpdateIndex p
 bundle :: Vector n (Signal f ty) -> Bundle f n ty
 bundle = EBundle
 
-unBundle ::
-  forall n f ty.
-  (KnownNat n, GaloisField f, Hashable f) =>
-  Bundle f n ty ->
-  ExprM f (Vector n (Expr Wire f f))
-unBundle b = do
-  let freshWires = V.replicate (fromIntegral $ natVal $ Proxy @n) (VarField <$> imm)
-  bis <- compileWithWires freshWires b
-  pure $ fromJust $ SV.toSized (EVar <$> bis)
-
 --------------------------------------------------------------------------------
 
 newtype And_ f = And_ {unAnd_ :: Signal f Bool}
@@ -150,6 +137,14 @@ instance Semigroup (Any_ f) where
 
 instance (Num f) => Monoid (Any_ f) where
   mempty = Any_ $ cBool False
+
+newtype Add_ f = Add_ {unAdd_ :: Signal f f}
+
+instance GaloisField f => Semigroup (Add_ f) where
+  Add_ a <> Add_ b = Add_ $ add a b 
+
+instance GaloisField f => Monoid (Add_ f) where
+  mempty = Add_ $ cField 0
 
 --------------------------------------------------------------------------------
 

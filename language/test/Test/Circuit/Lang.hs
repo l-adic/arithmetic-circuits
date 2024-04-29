@@ -10,7 +10,9 @@ import Data.Finite (Finite)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
 import Protolude hiding (Show, show)
-import Test.QuickCheck (Property, (==>))
+import Test.QuickCheck (Property, (==>), withMaxSuccess)
+import Test.QuickCheck.Monadic (run, monadicIO)
+import Circuit.Dot (dotWriteSVG, arithCircuitToDot)
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
@@ -99,18 +101,22 @@ bundleUnbundle :: ExprM Fr (Var Wire Fr Fr)
 bundleUnbundle = do
   x <- deref <$> fieldInput Public "x"
   b <- unBundle $ splitBits x
-  let res = sum b
+  bits <- traverse fieldToBool b
+  let negated = map not_ bits
+  let res = unAdd_ $ foldMap (Add_ . coerceGroundType) negated
   retField "out" res
 
-prop_bundleUnbundle :: Fr -> Bool
-prop_bundleUnbundle x =
+prop_bundleUnbundle :: Fr -> Property
+prop_bundleUnbundle x = withMaxSuccess 1 $ monadicIO $ run $ do
   let _x = fromP x
       BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder bundleUnbundle
       input = assignInputs bsVars $ Map.singleton "x" x
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
-      expected = foldl (\acc i -> acc + if testBit _x i then 1 else 0) 0 [0 .. nBits - 1]
-   in res == Just (fromInteger expected)
+      expected = foldl (\acc i -> acc + if testBit _x i then 0 else 1) 0 [0 .. nBits - 1]
+   in do 
+    writeFile "bundleUnbundle.dot" $ arithCircuitToDot bsCircuit
+    pure $ res == Just (fromInteger expected)
 
 sharingProg :: ExprM Fr (Var Wire Fr Fr)
 sharingProg = do
@@ -132,8 +138,8 @@ prop_sharingProg x y =
 
 --------------------------------------------------------------------------------
 
-fieldToBool :: Fr -> Bool
-fieldToBool x = x /= 0
+_fieldToBool :: Fr -> Bool
+_fieldToBool x = x /= 0
 
 lookupVar :: CircuitVars Text -> Text -> Map Int f -> Maybe f
 lookupVar vs label sol = do
