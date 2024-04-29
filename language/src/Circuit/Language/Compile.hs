@@ -23,7 +23,7 @@ import Circuit.Language.Expr
     UnOp (..),
     getAnnotation,
     hashCons,
-    unType,
+    unType, Hash (Hash),
   )
 import Circuit.Language.TExpr qualified as TExpr
 import Data.Field.Galois (GaloisField)
@@ -41,7 +41,7 @@ data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
     bsVars :: CircuitVars Text,
-    bsSharedMap :: Map Int (V.Vector (SignalSource f))
+    bsSharedMap :: Map Hash (V.Vector (SignalSource f))
   }
 
 defaultBuilderState :: BuilderState f
@@ -206,7 +206,7 @@ compileWithWires ::
   m (V.Vector Wire)
 compileWithWires ws expr = do
   let e = hashCons $ unType expr
-  compileOut <- memoizedCompile $ e
+  compileOut <- memoizedCompile e
   for (V.zip compileOut ws) $ \(o, freshWire) -> do
     case o of
       WireSource wire -> do
@@ -238,7 +238,7 @@ assertSameSourceSize l r =
 
 withCompilerCache ::
   (MonadState (BuilderState f) m) =>
-  Int ->
+  Hash ->
   m (V.Vector (SignalSource f)) ->
   m (V.Vector (SignalSource f))
 withCompilerCache i m = do
@@ -251,7 +251,7 @@ _compile ::
   (Hashable f, GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  Expr Int Wire f ->
+  Expr Hash Wire f ->
   m (V.Vector (SignalSource f))
 _compile expr = withCompilerCache (getAnnotation expr) $ case expr of
   EVal _ f -> pure $ V.singleton $ AffineSource $ ConstGate f
@@ -310,7 +310,7 @@ _compile expr = withCompilerCache (getAnnotation expr) $ case expr of
   -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
   EEq _ lhs rhs -> do
     -- assertSingle is justified as the lhs and rhs must be of type f
-    let e = EBinOp (hash (BSub, getAnnotation lhs, getAnnotation rhs)) BSub lhs rhs
+    let e = EBinOp (Hash $ hash (BSub, getAnnotation lhs, getAnnotation rhs)) BSub lhs rhs
     eqInWire <- do
       eOut <- withCompilerCache (getAnnotation e) (memoizedCompile e)
       assertSingleSource eOut >>= addWire
@@ -330,7 +330,7 @@ _compile expr = withCompilerCache (getAnnotation expr) $ case expr of
         outputs
         ( \o ->
             let v = UVar o
-                e = EVar (hash v) v
+                e = EVar (Hash $ hash v) v
              in memoizedCompile e
         )
     where
@@ -358,7 +358,7 @@ memoizedCompile ::
   (Hashable f, GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  Expr Int Wire f ->
+  Expr Hash Wire f ->
   m (V.Vector (SignalSource f))
 memoizedCompile expr = do
   m <- gets bsSharedMap

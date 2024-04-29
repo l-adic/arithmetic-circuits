@@ -1,4 +1,13 @@
-module Circuit.Language.Expr where
+module Circuit.Language.Expr  
+  (  Expr(..),
+  UVar(..),
+  BinOp(..),
+  UnOp(..),
+  unType,
+  Hash(..),
+  hashCons,
+  getAnnotation,
+  ) where
 
 import Circuit.Language.TExpr qualified as TExpr
 import Data.Vector qualified as V
@@ -77,52 +86,56 @@ getAnnotation = \case
   EUpdateIndex a _ _ _ -> a
   EBundle a _ -> a
 
-hashCons :: (Hashable i, Hashable f) => Expr () i f -> Expr Int i f
+newtype Hash = Hash Int
+  deriving (Show, Eq, Ord)
+  deriving (Hashable) via Int
+
+hashCons :: (Hashable i, Hashable f) => Expr () i f -> Expr Hash i f
 hashCons = \case
   EVal _ f ->
-    let i = hash (hash @Text "EVal", f)
+    let i = Hash $ hash (hash @Text "EVal", f)
      in EVal i f
   EVar _ v ->
-    let i = hash (hash @Text "EVar", v)
+    let i = Hash $ hash (hash @Text "EVar", v)
      in EVar i v
   EUnOp _ op e ->
     let e' = hashCons e
-        i = hash (hash @Text "EUnOp", op, getAnnotation e')
+        i = Hash $ hash (hash @Text "EUnOp", op, getAnnotation e')
      in EUnOp i op e'
   EBinOp _ op e1 e2 ->
     let e1' = hashCons e1
         e2' = hashCons e2
-        i = hash (hash @Text "EBinOp", op, getAnnotation e1', getAnnotation e2')
+        i = Hash $ hash (hash @Text "EBinOp", op, getAnnotation e1', getAnnotation e2')
      in EBinOp i op e1' e2'
   EIf _ b t e ->
     let b' = hashCons b
         t' = hashCons t
         e' = hashCons e
-        i = hash (hash @Text "EIf", getAnnotation b', getAnnotation t', getAnnotation e')
+        i = Hash $ hash (hash @Text "EIf", getAnnotation b', getAnnotation t', getAnnotation e')
      in EIf i b' t' e'
   EEq _ l r ->
     let l' = hashCons l
         r' = hashCons r
-        i = hash (hash @Text "EEq", getAnnotation l', getAnnotation r')
+        i = Hash $ hash (hash @Text "EEq", getAnnotation l', getAnnotation r')
      in EEq i l' r'
   ESplit _ n e ->
     let e' = hashCons e
-        i = hash (hash @Text "ESplit", n, getAnnotation e')
+        i = Hash $ hash (hash @Text "ESplit", n, getAnnotation e')
      in ESplit i n e'
   EJoin _ e ->
     let e' = hashCons e
-        i = hash (hash @Text "EJoin", getAnnotation e')
+        i = Hash $ hash (hash @Text "EJoin", getAnnotation e')
      in EJoin i e'
   EAtIndex _ v ix ->
     let v' = hashCons v
-        i = hash (hash @Text "AtIndex", getAnnotation v', ix)
+        i = Hash $ hash (hash @Text "AtIndex", getAnnotation v', ix)
      in EAtIndex i v' ix
   EUpdateIndex _ p b v ->
     let b' = hashCons b
         v' = hashCons v
-        i = hash (hash @Text "UpdateIndex", p, getAnnotation b', getAnnotation v')
+        i = Hash $ hash (hash @Text "UpdateIndex", p, getAnnotation b', getAnnotation v')
      in EUpdateIndex i p b' v'
   EBundle _ b ->
     let b' = V.map hashCons b
-        i = hash (hash @Text "Bundle", toList $ fmap getAnnotation b')
+        i = Hash $ hash (hash @Text "Bundle", toList $ fmap getAnnotation b')
      in EBundle i b'
