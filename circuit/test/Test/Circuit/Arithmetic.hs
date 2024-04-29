@@ -6,10 +6,9 @@ module Test.Circuit.Arithmetic where
 import Circuit.Affine
 import Circuit.Arithmetic
 import Circuit.Solver
-import Data.Field.Galois (Prime, char, fromP)
+import Data.Field.Galois (Prime, fromP)
 import Data.List ((\\))
 import Data.Map qualified as Map
-import Math.NumberTheory.Logarithms (naturalLog2)
 import Protolude
 import Test.Tasty.QuickCheck
 
@@ -181,7 +180,7 @@ prop_division (a, b) =
    in Map.lookup 3 solution == Just (a / b)
 
 nBits :: Int
-nBits = 1 + naturalLog2 (char (1 :: Fr))
+nBits = 254
 
 prop_bitSummingForward :: Fr -> Bool
 prop_bitSummingForward a =

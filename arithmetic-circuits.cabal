@@ -47,13 +47,11 @@ common deps
     , filepath        >=1.4.2
     , finite-typelits >=0.1.0
     , galois-field    >=2.0.0
-    , microlens
     , process
     , propagators
     , protolude       >=0.2
     , semirings       >=0.7
     , text            >=1.2.3
-    , vector-sized
     , wl-pprint-text  >=1.2.0
 
 library
@@ -65,17 +63,38 @@ library
     Circuit.Dataflow
     Circuit.Solver
     Circuit.Dot
-    Circuit.Expr
-    Circuit.Lang
     R1CS
     Fresh
 
   other-modules:      Paths_arithmetic_circuits
-  hs-source-dirs:     src
+  hs-source-dirs:     circuit/src
 
   ghc-options:        -freverse-errors -O2 -Wall
 
   default-language:   GHC2021
+
+library language
+  import: deps, extensions, warnings
+  visibility: public
+  exposed-modules:
+    Circuit.Language.Compile
+    Circuit.Language.Expr
+    Circuit.Language.TExpr
+    Circuit.Language.DSL
+    Circuit.Language
+
+  hs-source-dirs:     language/src
+  build-depends:
+      arithmetic-circuits
+    , hashable
+    , microlens
+    , vector
+    , vector-sized
+
+  ghc-options:        -freverse-errors -O2 -Wall
+
+  default-language:   GHC2021
+
 
 library circom-compat
   import: deps, extensions, warnings
@@ -97,12 +116,47 @@ library circom-compat
 
   default-language:   GHC2021
 
+test-suite language-tests
+  import: deps, extensions
+  type:               exitcode-stdio-1.0
+  main-is:            Main.hs
+
+  other-modules:
+    Test.Circuit.Expr
+    Test.Circuit.Sudoku
+    Test.Circuit.Lang
+
+  hs-source-dirs:     language/test
+
+  ghc-options:        -freverse-errors -O2 -Wall -main-is Main
+  build-depends:
+      arithmetic-circuits
+    , arithmetic-circuits:language
+    , array
+    , distributive 
+    , fin
+    , quickcheck-instances  >=0.3
+    , QuickCheck
+    , random
+    , hspec
+    , tasty                 >=1.2
+    , tasty-hunit           >=0.10
+    , tasty-hspec
+    , tasty-quickcheck      >=0.10
+    , vec
+
+  build-tool-depends: tasty-discover:tasty-discover >=4.2
+
+  default-language:   GHC2021
+
+
 executable factors
   import:           warnings, extensions, deps
   main-is:          Main.hs
   build-depends:
       binary
     , arithmetic-circuits
+    , arithmetic-circuits:language
     , arithmetic-circuits:circom-compat
 
   hs-source-dirs:   circom-compat/app
@@ -117,20 +171,14 @@ test-suite circuit-tests
     Paths_arithmetic_circuits
     Test.Circuit.Affine
     Test.Circuit.Arithmetic
-    Test.Circuit.Expr
     Test.Circuit.R1CS
-    Test.Circuit.Sudoku
-    Test.Circuit.Lang
 
-  hs-source-dirs:     test
+  hs-source-dirs:     circuit/test
 
   ghc-options:        -freverse-errors -O2 -Wall -main-is Main
   build-depends:
       arithmetic-circuits
     , array
-    , distributive 
-    , fin
-    , integer-logarithms
     , quickcheck-instances  >=0.3
     , QuickCheck
     , random
@@ -139,7 +187,6 @@ test-suite circuit-tests
     , tasty-hunit           >=0.10
     , tasty-hspec
     , tasty-quickcheck      >=0.10
-    , vec
 
   build-tool-depends: tasty-discover:tasty-discover >=4.2
 

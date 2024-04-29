@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Surface language
-module Circuit.Lang
+module Circuit.Language.DSL
   ( Signal,
     Bundle,
     cField,
@@ -26,6 +26,7 @@ module Circuit.Lang
     atIndex,
     updateIndex_,
     bundle,
+    boolToField,
     unBundle,
 
     -- * Monoids
@@ -38,15 +39,19 @@ module Circuit.Lang
 where
 
 import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
-import Circuit.Expr
-import Data.Field.Galois (GaloisField)
+import Circuit.Language.Compile
+import Circuit.Language.TExpr
+import Data.Field.Galois (GaloisField, PrimeField)
 import Data.Finite (Finite)
+import Data.Maybe (fromJust)
+import Data.Vector qualified as V
 import Data.Vector.Sized (Vector)
-import Data.Vector.Sized qualified as V
+import Data.Vector.Sized qualified as SV
 import Protolude
+import Unsafe.Coerce (unsafeCoerce)
 
 --------------------------------------------------------------------------------
-type Signal f a = Expr Wire f a
+type Signal f = Expr Wire f
 
 type Bundle f n a = Expr Wire f (Vector n a)
 
@@ -105,23 +110,33 @@ joinBits = EJoin
 deref :: Var Wire f ty -> Signal f ty
 deref = EVar
 
-retBool :: (Num f) => Text -> Signal f Bool -> ExprM f Wire
+retBool :: (GaloisField f, Hashable f) => Text -> Signal f Bool -> ExprM f Wire
 retBool label sig = compileWithWire (boolInput Public label) sig
 
-retField :: (Num f) => Text -> Signal f f -> ExprM f Wire
+retField :: (PrimeField f, Hashable f) => Text -> Signal f f -> ExprM f Wire
 retField label sig = compileWithWire (fieldInput Public label) sig
 
-atIndex :: (KnownNat n, Ground f ty) => Bundle f n ty -> Finite n -> Signal f ty
+atIndex :: (KnownNat n) => Bundle f n ty -> Finite n -> Signal f ty
 atIndex = EAtIndex
 
-updateIndex_ :: (KnownNat n, Ground f ty) => Finite n -> Signal f ty -> Bundle f n ty -> Bundle f n ty
+updateIndex_ :: (KnownNat n) => Finite n -> Signal f ty -> Bundle f n ty -> Bundle f n ty
 updateIndex_ p = EUpdateIndex p
 
-bundle :: (Ground f ty) => Vector n (Signal f ty) -> Bundle f n ty
+bundle :: Vector n (Signal f ty) -> Bundle f n ty
 bundle = EBundle
 
-unBundle :: (KnownNat n, Ground f ty) => Bundle f n ty -> Vector n (Signal f ty)
-unBundle b = V.generate $ atIndex b
+boolToField :: Signal f Bool -> Signal f f
+boolToField = unsafeCoerce
+
+unBundle ::
+  forall n f ty.
+  (KnownNat n, GaloisField f, Hashable f) =>
+  Expr Wire f (Vector n ty) ->
+  ExprM f (Vector n (Expr Wire f f))
+unBundle b = do
+  let freshWires = V.replicate (fromIntegral $ natVal $ Proxy @n) (VarField <$> imm)
+  bis <- compileWithWires freshWires b
+  pure $ fromJust $ SV.toSized (EVar . VarField <$> bis)
 
 --------------------------------------------------------------------------------
 

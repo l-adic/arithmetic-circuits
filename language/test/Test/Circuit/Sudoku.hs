@@ -3,9 +3,10 @@
 module Test.Circuit.Sudoku where
 
 import Circuit
+import Circuit.Language
 import Data.Array.IO (IOArray, getElems, newArray, readArray, writeArray)
 import Data.Distributive (Distributive (distribute))
-import Data.Field.Galois (GaloisField, Prime)
+import Data.Field.Galois (Prime, PrimeField)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (union, (!!), (\\))
 import Data.Map qualified as Map
@@ -35,7 +36,7 @@ sudokuSet = Vec.tabulate (cField . (+ 1) . fromIntegral)
 
 isPermutation ::
   forall f.
-  (GaloisField f) =>
+  (PrimeField f) =>
   [Signal f f] ->
   [Signal f f] ->
   Signal f Bool
@@ -47,7 +48,7 @@ isPermutation as bs =
    in all_ f (zip as [0 ..])
 
 validateBoxes ::
-  (GaloisField f) =>
+  (PrimeField f) =>
   SudokuSet (Signal f f) ->
   BoxGrid (Signal f f) ->
   Signal f Bool
@@ -59,22 +60,22 @@ mkBoard :: ExprM f (Board (Signal f f))
 mkBoard =
   for (universe @Nat9) $ \i ->
     for (universe @Nat9) $ \j -> do
-      let varName = "cell_" <> show (i, j)
+      let varName = "cell_" <> show i <> show j
       EVar <$> fieldInput Public varName
 
 initializeBoard ::
-  (GaloisField f) =>
+  (PrimeField f) =>
   Board (Signal f f) ->
   ExprM f (Board (Signal f f))
 initializeBoard board = do
   for (universe @Nat9) $ \i ->
     for (universe @Nat9) $ \j -> do
       let cell = board Vec.! i Vec.! j
-          varName = "private_cell_" <> show (i, j)
+          varName = "private_cell_" <> show i <> show j
       v <- EVar <$> fieldInput Private varName
       pure $ cond (cell `eq` cField 0) v cell
 
-validate :: (GaloisField f) => ExprM f Wire
+validate :: (PrimeField f, Hashable f) => ExprM f Wire
 validate = do
   b <- mkBoard >>= initializeBoard
   let rowsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> b)
@@ -85,21 +86,20 @@ validate = do
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 --------------------------------------------------------------------------------
-
 spec_sudokuSolver :: Spec
 spec_sudokuSolver = do
   describe "Can solve example sudoku problems" $
     it "Matches the pure implementation" $ do
-      for_ examplePuzzles $ \b -> do
+      for_ (zip [(0 :: Int) ..] examplePuzzles) $ \(i, b) -> do
         sol <- Map.toAscList <$> solvePuzzle (concat b)
         let pubAssignments =
-              map (first (\a -> "cell_" <> show a)) $
-                [((i, j), v) | i <- [0 .. 8], j <- [0 .. 8], let v = b !! i !! j]
+              map (first (\a -> "cell_" <> show (fst a) <> show (snd a))) $
+                [((_i, j), v) | _i <- [0 .. 8], j <- [0 .. 8], let v = b !! _i !! j]
             privAssignments =
-              map (first (\a -> "private_cell_" <> show a)) $
+              map (first (\a -> "private_cell_" <> show (fst a) <> show (snd a))) $
                 filter (\(_, v) -> v /= 0) sol
-        let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
-            pubInputs =
+            BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
+        let pubInputs =
               Map.fromList $
                 [ (var, fromIntegral value)
                   | (label, var) <- Map.toList $ cvInputsLabels bsVars,
@@ -116,7 +116,7 @@ spec_sudokuSolver = do
             outVar = fromJust $ Map.lookup "out" $ cvInputsLabels bsVars
             sol2 = solve bsVars bsCircuit (pubInputs `Map.union` privInputs)
         verifier (map snd sol) `shouldBe` True
-        Map.lookup outVar sol2 `shouldBe` Just 1
+        (i, Map.lookup outVar sol2) `shouldBe` (i, Just 1)
 
 verifier :: [Int] -> Bool
 verifier _input =

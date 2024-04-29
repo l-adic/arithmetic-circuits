@@ -55,12 +55,15 @@ instance FromJSON Wire
 
 instance ToJSON Wire
 
+instance Hashable Wire where
+  hashWithSalt s w = s `hashWithSalt` (0 :: Int) `hashWithSalt` (wireName w)
+
 instance Pretty Wire where
   pretty (InputWire label t v) =
     let a = case t of
           Public -> "pub"
           Private -> "priv"
-     in text (a <> "_input_") <> pretty v <> "_{\"" <> pretty label <> "\"}"
+     in text (a <> "_input_") <> pretty v <> "_" <> pretty label
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
 
