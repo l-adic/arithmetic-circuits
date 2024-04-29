@@ -16,7 +16,7 @@ module Circuit.Arithmetic
     CircuitVars (..),
     relabel,
     collectCircuitVars,
-    booleanWires
+    booleanWires,
   )
 where
 

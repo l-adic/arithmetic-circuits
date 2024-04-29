@@ -17,11 +17,9 @@ where
 
 import Circuit.Arithmetic
 import Data.Field.Galois (GaloisField, PrimeField (fromP))
-import Data.Finite (Finite)
 import Data.Map qualified as Map
 import Data.Semiring (Ring (..), Semiring (..))
 import Data.Vector.Sized qualified as SV
-import Lens.Micro ((.~))
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
@@ -124,8 +122,6 @@ data Expr i f ty where
   EEq :: Expr i f f -> Expr i f f -> Expr i f Bool
   ESplit :: (KnownNat (NBits f)) => Expr i f f -> Expr i f (SV.Vector (NBits f) Bool)
   EJoin :: (KnownNat n) => Expr i f (SV.Vector n Bool) -> Expr i f f
-  EAtIndex :: (KnownNat n) => Expr i f (SV.Vector n ty) -> Finite n -> Expr i f ty
-  EUpdateIndex :: (KnownNat n) => Finite n -> (Expr i f ty) -> Expr i f (SV.Vector n ty) -> Expr i f (SV.Vector n ty)
   EBundle :: SV.Vector n (Expr i f ty) -> Expr i f (SV.Vector n ty)
 
 instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
@@ -153,8 +149,6 @@ instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
           ESplit i -> text "split" <+> parens (pretty i)
           EBundle b -> text "bundle" <+> parens (pretty (SV.toList b))
           EJoin i -> text "join" <+> parens (pretty i)
-          EAtIndex v _ix -> pretty v <+> brackets (pretty $ toInteger _ix)
-          EUpdateIndex _p b v -> text ("setIndex " <> Protolude.show (natVal _p)) <+> pretty b <+> pretty v
 
 parensPrec :: Int -> Int -> Doc -> Doc
 parensPrec opPrec p = if p > opPrec then parens else identity
@@ -223,13 +217,6 @@ evalExpr' expr = case expr of
     bits <- evalExpr' i
     pure $
       SV.ifoldl (\acc _ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer _ix) else 0) 0 bits
-  EAtIndex v i -> do
-    _v <- evalExpr' v
-    pure $ _v `SV.index` i
-  EUpdateIndex p b v -> do
-    _v <- evalExpr' v
-    _b <- evalExpr' b
-    pure $ _v & SV.ix p .~ _b
 
 instance (GaloisField f) => Semiring (Expr Wire f f) where
   plus = EBinOp BAdd

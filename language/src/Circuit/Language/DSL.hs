@@ -1,9 +1,10 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 
 -- | Surface language
 module Circuit.Language.DSL
   ( Signal,
-    Bundle,
+    Bundled (..),
+    type Unbundled,
     cField,
     cBool,
     add,
@@ -25,7 +26,6 @@ module Circuit.Language.DSL
     joinBits,
     atIndex,
     updateIndex_,
-    bundle,
 
     -- * Monoids
     Any_ (..),
@@ -42,13 +42,13 @@ import Circuit.Language.Compile
 import Circuit.Language.TExpr
 import Data.Field.Galois (GaloisField, PrimeField)
 import Data.Finite (Finite)
-import Data.Vector.Sized (Vector)
+import Data.Vector.Sized (Vector, ix)
+import Lens.Micro ((.~), (^.))
 import Protolude
+import Unsafe.Coerce (unsafeCoerce)
 
 --------------------------------------------------------------------------------
 type Signal f = Expr Wire f
-
-type Bundle f n a = Expr Wire f (Vector n a)
 
 -- | Convert constant to expression
 cField :: f -> Signal f f
@@ -96,10 +96,10 @@ cond = EIf
 splitBits ::
   (KnownNat (NBits f)) =>
   Signal f f ->
-  Bundle f (NBits f) Bool
+  Signal f (Vector (NBits f) Bool)
 splitBits = ESplit
 
-joinBits :: (KnownNat n) => Bundle f n Bool -> Signal f f
+joinBits :: (KnownNat n) => Signal f (Vector n Bool) -> Signal f f
 joinBits = EJoin
 
 deref :: Var Wire f ty -> Signal f ty
@@ -111,14 +111,25 @@ retBool label sig = compileWithWire (boolInput Public label) sig
 retField :: (PrimeField f, Hashable f) => Text -> Signal f f -> ExprM f (Var Wire f f)
 retField label sig = compileWithWire (fieldInput Public label) sig
 
-atIndex :: (KnownNat n) => Bundle f n ty -> Finite n -> Signal f ty
-atIndex = EAtIndex
+atIndex ::
+  (Bundled f (Vector n ty)) =>
+  Finite n ->
+  Signal f (Vector n ty) ->
+  ExprM f (Signal f ty)
+atIndex i b = do
+  bs <- unbundle b
+  return $ bs ^. ix i
 
-updateIndex_ :: (KnownNat n) => Finite n -> Signal f ty -> Bundle f n ty -> Bundle f n ty
-updateIndex_ p = EUpdateIndex p
-
-bundle :: Vector n (Signal f ty) -> Bundle f n ty
-bundle = EBundle
+updateIndex_ ::
+  (Bundled f (Vector n ty)) =>
+  Finite n ->
+  Signal f ty ->
+  Signal f (Vector n ty) ->
+  ExprM f (Signal f (Vector n ty))
+updateIndex_ p s v = do
+  bs <- unbundle v
+  let bs' = bs & ix p .~ s
+  return $ bundle bs'
 
 --------------------------------------------------------------------------------
 
@@ -140,10 +151,10 @@ instance (Num f) => Monoid (Any_ f) where
 
 newtype Add_ f = Add_ {unAdd_ :: Signal f f}
 
-instance GaloisField f => Semigroup (Add_ f) where
-  Add_ a <> Add_ b = Add_ $ add a b 
+instance (GaloisField f) => Semigroup (Add_ f) where
+  Add_ a <> Add_ b = Add_ $ add a b
 
-instance GaloisField f => Monoid (Add_ f) where
+instance (GaloisField f) => Monoid (Add_ f) where
   mempty = Add_ $ cField 0
 
 --------------------------------------------------------------------------------
@@ -170,3 +181,20 @@ any_ ::
   t a ->
   Signal f Bool
 any_ f = unAny_ . foldMap (Any_ . f)
+
+--------------------------------------------------------------------------------
+
+type family Unbundled f a = res | res -> a where
+  Unbundled f (Vector n ty) = Vector n (Signal f ty)
+
+class Bundled f a where
+  bundle :: Unbundled f a -> Signal f a
+  unbundle :: Signal f a -> ExprM f (Unbundled f a)
+
+instance (Hashable f, GaloisField f, KnownNat n) => Bundled f (Vector n f) where
+  bundle = EBundle
+  unbundle = _unBundle
+
+instance (Hashable f, GaloisField f, KnownNat n) => Bundled f (Vector n Bool) where
+  bundle = EBundle
+  unbundle = fmap unsafeCoerce . _unBundle

@@ -47,11 +47,9 @@ instance Bifunctor AffineCircuit where
     ScalarMul s x -> ScalarMul (f s) (bimap f g x)
     ConstGate c -> ConstGate (f c)
     Var i -> Var (g i)
-
     Nil -> Nil
 
 instance (Pretty i, Pretty f) => Pretty (AffineCircuit f i) where
-  pretty :: AffineCircuit f i -> Doc
   pretty = prettyPrec 0
     where
       prettyPrec :: Int -> AffineCircuit f i -> Doc
@@ -61,8 +59,7 @@ instance (Pretty i, Pretty f) => Pretty (AffineCircuit f i) where
             text "nil"
           Var v ->
             pretty v
-          ConstGate f ->
-            pretty f
+          ConstGate f -> pretty f
           ScalarMul f e1 ->
             pretty f <+> text "*" <+> parensPrec 7 p (prettyPrec p e1)
           Add e1 e2 ->

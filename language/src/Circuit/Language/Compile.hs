@@ -12,7 +12,7 @@ module Circuit.Language.Compile
     compileWithWire,
     compileWithWires,
     exprToArithCircuit,
-    unBundle
+    _unBundle,
   )
 where
 
@@ -21,21 +21,21 @@ import Circuit.Arithmetic
 import Circuit.Language.Expr
   ( BinOp (..),
     Expr (..),
+    Hash (Hash),
     UVar (..),
     UnOp (..),
     getAnnotation,
     hashCons,
-    Hash (Hash),
   )
 import Circuit.Language.TExpr qualified as TExpr
 import Data.Field.Galois (GaloisField)
 import Data.Map qualified as Map
+import Data.Maybe (fromJust)
 import Data.Set qualified as Set
 import Data.Vector qualified as V
+import Data.Vector.Sized qualified as SV
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
-import Data.Maybe (fromJust)
-import Data.Vector.Sized qualified as SV
 import Unsafe.Coerce (unsafeCoerce)
 
 -------------------------------------------------------------------------------
@@ -204,13 +204,13 @@ compileWithWire freshWire e = do
     <$> compileWithWires (V.singleton $ fmap TExpr.coerceGroundType freshWire) e
 
 compileWithWires ::
-  (Hashable f) => 
+  (Hashable f) =>
   (GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
   V.Vector (m (TExpr.Var Wire f f)) ->
   TExpr.Expr Wire f ty ->
-  m (V.Vector (TExpr.Var Wire f f) )
+  m (V.Vector (TExpr.Var Wire f f))
 compileWithWires ws expr = do
   e <- hashCons <$> unType expr
   compileOut <- memoizedCompile e
@@ -331,7 +331,7 @@ _compile expr = withCompilerCache (getAnnotation expr) $ case expr of
   ESplit _ n input -> do
     -- assertSingle is justified as the input must be of type f
     i <- memoizedCompile input >>= assertSingleSource >>= addWire
-    outputs <- V.generateM n $ \_ -> do 
+    outputs <- V.generateM n $ \_ -> do
       w <- imm
       emit $ Boolean w
       pure w
@@ -351,14 +351,6 @@ _compile expr = withCompilerCache (getAnnotation expr) $ case expr of
     bs <- toList <$> memoizedCompile bits
     ws <- traverse addWire bs
     pure . V.singleton . AffineSource $ unsplit ws
-  EAtIndex _ v _ix -> do
-    v' <- memoizedCompile v
-    pure . V.singleton $ v' V.! (fromIntegral _ix)
-  EUpdateIndex _ p b v -> do
-    v' <- memoizedCompile v
-    b' <- memoizedCompile b >>= assertSingleSource
-    let p' = fromIntegral p
-    pure $ V.imap (\_ix w -> if _ix == p' then b' else w) v'
 
 memoizedCompile ::
   forall f m.
@@ -385,32 +377,22 @@ exprToArithCircuit expr output = do
   compileOut <- memoizedCompile e >>= assertSingleSource
   emit $ Mul (ConstGate 1) (addVar compileOut) output
 
-fieldToBool 
-  :: (Hashable f, GaloisField f) =>  
-    TExpr.Expr Wire f f -> 
-    ExprM f (TExpr.Expr Wire f Bool)
+fieldToBool ::
+  (Hashable f, GaloisField f) =>
+  TExpr.Expr Wire f f ->
+  ExprM f (TExpr.Expr Wire f Bool)
 fieldToBool e = do
   eOut <- hashCons <$> unType e
   a <- memoizedCompile eOut >>= assertSingleSource >>= addWire
   emit $ Boolean a
   pure $ unsafeCoerce e
 
-unBundle ::
-  forall n f ty.
-  (KnownNat n, GaloisField f, Hashable f) =>
-  TExpr.Expr Wire f (SV.Vector n ty) ->
-  ExprM f (SV.Vector n (TExpr.Expr Wire f f))
-unBundle b = do
-  bis <- memoizedCompile . hashCons =<< unType b
-  ws <- traverse addWire bis
-  pure $ fromJust $ SV.toSized (TExpr.EVar . TExpr.VarField <$> ws)
-
-unType :: forall f ty m. MonadState (BuilderState f) m => TExpr.Expr Wire f ty -> m (Expr () Wire f)
+unType :: forall f ty m. (MonadState (BuilderState f) m) => TExpr.Expr Wire f ty -> m (Expr () Wire f)
 unType = \case
   TExpr.EVal v -> pure $ case v of
     TExpr.ValBool b -> EVal () b
     TExpr.ValField f -> EVal () f
-  TExpr.EVar v -> case v of 
+  TExpr.EVar v -> case v of
     TExpr.VarField w -> pure $ EVar () (UVar w)
     TExpr.VarBool b -> do
       emit $ Boolean b
@@ -421,8 +403,6 @@ unType = \case
   TExpr.EEq l r -> EEq () <$> unType l <*> unType r
   TExpr.ESplit i -> ESplit () (fromIntegral $ natVal (Proxy @(TExpr.NBits f))) <$> unType i
   TExpr.EJoin i -> EJoin () <$> unType i
-  TExpr.EAtIndex v ix -> EAtIndex () <$> unType v <*> pure (fromIntegral ix)
-  TExpr.EUpdateIndex p b v -> EUpdateIndex () (fromIntegral p) <$> unType b <*> unType v
   TExpr.EBundle b -> EBundle () <$> traverse unType (SV.fromSized b)
   where
     untypeBinOp :: TExpr.BinOp f a -> BinOp
@@ -440,3 +420,14 @@ unType = \case
       TExpr.UNeg -> UNeg
       TExpr.UNot -> UNot
 
+_unBundle ::
+  forall n f ty.
+  (KnownNat n) =>
+  (GaloisField f) =>
+  (Hashable f) =>
+  TExpr.Expr Wire f (SV.Vector n ty) ->
+  ExprM f (SV.Vector n (TExpr.Expr Wire f f))
+_unBundle b = do
+  bis <- memoizedCompile . hashCons =<< unType b
+  ws <- traverse addWire bis
+  pure $ fromJust $ SV.toSized (TExpr.EVar . TExpr.VarField <$> ws)

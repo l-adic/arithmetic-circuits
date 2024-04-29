@@ -1,12 +1,13 @@
-module Circuit.Language.Expr  
-  (  Expr(..),
-  UVar(..),
-  BinOp(..),
-  UnOp(..),
-  Hash(..),
-  hashCons,
-  getAnnotation,
-  ) where
+module Circuit.Language.Expr
+  ( Expr (..),
+    UVar (..),
+    BinOp (..),
+    UnOp (..),
+    Hash (..),
+    hashCons,
+    getAnnotation,
+  )
+where
 
 import Data.Vector qualified as V
 import Protolude hiding (Semiring)
@@ -33,8 +34,6 @@ data Expr a i f
   | EEq a (Expr a i f) (Expr a i f)
   | ESplit a Int (Expr a i f)
   | EJoin a (Expr a i f)
-  | EAtIndex a (Expr a i f) Int
-  | EUpdateIndex a Int (Expr a i f) (Expr a i f)
   | EBundle a (V.Vector (Expr a i f))
   deriving (Eq, Show)
 
@@ -48,8 +47,6 @@ getAnnotation = \case
   EEq a _ _ -> a
   ESplit a _ _ -> a
   EJoin a _ -> a
-  EAtIndex a _ _ -> a
-  EUpdateIndex a _ _ _ -> a
   EBundle a _ -> a
 
 newtype Hash = Hash Int
@@ -92,15 +89,6 @@ hashCons = \case
     let e' = hashCons e
         i = Hash $ hash (hash @Text "EJoin", getAnnotation e')
      in EJoin i e'
-  EAtIndex _ v ix ->
-    let v' = hashCons v
-        i = Hash $ hash (hash @Text "EAtIndex", getAnnotation v', ix)
-     in EAtIndex i v' ix
-  EUpdateIndex _ p b v ->
-    let b' = hashCons b
-        v' = hashCons v
-        i = Hash $ hash (hash @Text "EUpdateIndex", p, getAnnotation b', getAnnotation v')
-     in EUpdateIndex i p b' v'
   EBundle _ b ->
     let b' = V.map hashCons b
         i = Hash $ hash (hash @Text "EBundle", toList $ fmap getAnnotation b')

@@ -7,9 +7,9 @@ where
 
 import Circuit.Affine ()
 import Circuit.Arithmetic (ArithCircuit (..), Gate (..), Wire (..), booleanWires)
+import Data.Field.Galois (PrimeField)
 import Data.Text qualified as Text
 import Protolude
-import Data.Field.Galois (PrimeField)
 import System.FilePath (replaceExtension)
 import System.Process (readProcessWithExitCode)
 import Text.PrettyPrint.Leijen.Text (Pretty (..))
@@ -30,7 +30,7 @@ arithCircuitToDot c@(ArithCircuit gates) =
     dotArrow s t = s <> " -> " <> t
 
     dotArrowLabel :: Text -> Text -> Text -> Text -> Text
-    dotArrowLabel s t lbl _c = 
+    dotArrowLabel s t lbl _c =
       dotArrow s t <> " [label=\"" <> lbl <> "\", color=\"" <> _c <> "\"]"
 
     labelNode lblId lbl = lblId <> " [label=\"" <> lbl <> "\"]"
@@ -53,8 +53,10 @@ arithCircuitToDot c@(ArithCircuit gates) =
         gateLabel = dotWire output
         inputs circuit tgt =
           map
-            ( \a -> (\src -> dotArrowLabel src tgt (show $ pretty src) (color a))
-                . dotWire $ a
+            ( \a ->
+                (\src -> dotArrowLabel src tgt (show $ pretty src) (color a))
+                  . dotWire
+                  $ a
             )
             $ toList circuit
     graphGate (Equal i m output) =
@@ -73,8 +75,8 @@ arithCircuitToDot c@(ArithCircuit gates) =
       where
         gateLabel = Text.concat . fmap dotWire $ outputs
     graphGate (Boolean _) = []
-    
-    -- gateLabel = dotWire i
+
+-- gateLabel = dotWire i
 
 callDot :: Text -> IO Text
 callDot g = do
