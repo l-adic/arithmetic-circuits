@@ -36,7 +36,7 @@ common extensions
     RecordWildCards
 
 common warnings
-  ghc-options: -Wall -Wredundant-constraints
+  ghc-options: -Wall -Wredundant-constraints -Werror
 
 
 common deps
@@ -67,7 +67,7 @@ library
     Fresh
 
   other-modules:      Paths_arithmetic_circuits
-  hs-source-dirs:     src
+  hs-source-dirs:     circuit/src
 
   ghc-options:        -freverse-errors -O2 -Wall
 
@@ -173,7 +173,7 @@ test-suite circuit-tests
     Test.Circuit.Arithmetic
     Test.Circuit.R1CS
 
-  hs-source-dirs:     test
+  hs-source-dirs:     circuit/test
 
   ghc-options:        -freverse-errors -O2 -Wall -main-is Main
   build-depends:
