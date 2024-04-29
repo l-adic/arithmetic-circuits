@@ -82,10 +82,12 @@ library language
     Circuit.Language.TExpr
     Circuit.Language.DSL
     Circuit.Language
+    Circuit.Language.SHA3
 
   hs-source-dirs:     language/src
   build-depends:
       arithmetic-circuits
+    , distributive
     , hashable
     , microlens
     , vector

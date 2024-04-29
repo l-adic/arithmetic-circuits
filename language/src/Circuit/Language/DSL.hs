@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 
 -- | Surface language
@@ -26,11 +27,15 @@ module Circuit.Language.DSL
     joinBits,
     atIndex,
     updateIndex_,
+    truncate_,
+    rotateRight,
+    rotateLeft,
 
     -- * Monoids
     Any_ (..),
     And_ (..),
     Add_ (..),
+    XOr_ (..),
     elem_,
     any_,
     all_,
@@ -40,9 +45,12 @@ where
 import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
 import Circuit.Language.Compile
 import Circuit.Language.TExpr
-import Data.Field.Galois (GaloisField, PrimeField)
+import Data.Field.Galois (GaloisField, Prime, PrimeField)
 import Data.Finite (Finite)
+import Data.Maybe (fromJust)
 import Data.Vector.Sized (Vector, ix)
+import Data.Vector.Sized qualified as SV
+import GHC.TypeNats (type (+))
 import Lens.Micro ((.~), (^.))
 import Protolude
 import Unsafe.Coerce (unsafeCoerce)
@@ -131,6 +139,18 @@ updateIndex_ p s v = do
   let bs' = bs & ix p .~ s
   return $ bundle bs'
 
+truncate_ ::
+  forall f ty n m.
+  (Bundled f (Vector (m + n) ty)) =>
+  (Bundled f (Vector m ty)) =>
+  (KnownNat m) =>
+  Signal f (Vector (m + n) ty) ->
+  ExprM f (Signal f (Vector m ty))
+truncate_ v = do
+  as <- unbundle v
+  let bs = SV.take as
+  return $ bundle bs
+
 --------------------------------------------------------------------------------
 
 newtype And_ f = And_ {unAnd_ :: Signal f Bool}
@@ -156,6 +176,14 @@ instance (GaloisField f) => Semigroup (Add_ f) where
 
 instance (GaloisField f) => Monoid (Add_ f) where
   mempty = Add_ $ cField 0
+
+newtype XOr_ f = XOr_ {unXOr_ :: Signal f Bool}
+
+instance Semigroup (XOr_ f) where
+  XOr_ a <> XOr_ b = XOr_ $ xor_ a b
+
+instance (Num f) => Monoid (XOr_ f) where
+  mempty = XOr_ $ cBool False
 
 --------------------------------------------------------------------------------
 
@@ -191,10 +219,37 @@ class Bundled f a where
   bundle :: Unbundled f a -> Signal f a
   unbundle :: Signal f a -> ExprM f (Unbundled f a)
 
-instance (Hashable f, GaloisField f, KnownNat n) => Bundled f (Vector n f) where
+instance (KnownNat p, KnownNat n) => Bundled (Prime p) (Vector n (Prime p)) where
   bundle = EBundle
   unbundle = _unBundle
 
 instance (Hashable f, GaloisField f, KnownNat n) => Bundled f (Vector n Bool) where
   bundle = EBundle
   unbundle = fmap unsafeCoerce . _unBundle
+
+--------------------------------------------------------------------------------
+
+rotateRight ::
+  forall n d a.
+  (KnownNat d) =>
+  (KnownNat n) =>
+  Vector n a ->
+  Finite d ->
+  Vector n a
+rotateRight xs d =
+  fromJust $ SV.fromList $ rotateList (fromIntegral d) $ SV.toList xs
+
+rotateLeft ::
+  forall n d a.
+  (KnownNat d) =>
+  (KnownNat n) =>
+  Vector n a ->
+  Finite d ->
+  Vector n a
+rotateLeft xs d = 
+  fromJust $ SV.fromList $ rotateList (negate $ fromIntegral d) $ SV.toList xs
+
+rotateList :: Int -> [a] -> [a]
+rotateList steps x = 
+  let n = length x
+  in take n $ drop (steps `mod` n) $ cycle x

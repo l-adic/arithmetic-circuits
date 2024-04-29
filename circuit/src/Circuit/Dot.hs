@@ -7,7 +7,6 @@ where
 
 import Circuit.Affine ()
 import Circuit.Arithmetic (ArithCircuit (..), Gate (..), Wire (..), booleanWires)
-import Data.Field.Galois (PrimeField)
 import Data.Text qualified as Text
 import Protolude
 import System.FilePath (replaceExtension)
@@ -15,7 +14,7 @@ import System.Process (readProcessWithExitCode)
 import Text.PrettyPrint.Leijen.Text (Pretty (..))
 
 arithCircuitToDot ::
-  (PrimeField f) => ArithCircuit f -> Text
+  (Pretty f) => ArithCircuit f -> Text
 arithCircuitToDot c@(ArithCircuit gates) =
   Text.unlines . wrapInDigraph . concatMap graphGate $ gates
   where
@@ -37,7 +36,7 @@ arithCircuitToDot c@(ArithCircuit gates) =
 
     pointNode lblId = lblId <> " [shape=point]"
 
-    graphGate :: (PrimeField f) => Gate f Wire -> [Text]
+    graphGate :: (Pretty f) => Gate f Wire -> [Text]
     graphGate (Mul lhs rhs output) =
       [ labelNode gateLabel "*",
         labelNode lhsLabel (show $ pretty lhs),
@@ -75,8 +74,6 @@ arithCircuitToDot c@(ArithCircuit gates) =
       where
         gateLabel = Text.concat . fmap dotWire $ outputs
     graphGate (Boolean _) = []
-
--- gateLabel = dotWire i
 
 callDot :: Text -> IO Text
 callDot g = do
