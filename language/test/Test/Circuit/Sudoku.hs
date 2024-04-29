@@ -3,10 +3,10 @@
 module Test.Circuit.Sudoku where
 
 import Circuit
-import Data.Set qualified as Set
+import Circuit.Language
 import Data.Array.IO (IOArray, getElems, newArray, readArray, writeArray)
 import Data.Distributive (Distributive (distribute))
-import Data.Field.Galois (GaloisField, Prime, PrimeField)
+import Data.Field.Galois (Prime, PrimeField)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (union, (!!), (\\))
 import Data.Map qualified as Map
@@ -44,7 +44,7 @@ isPermutation as bs =
   let f (a, i) =
         let isPresent = elem_ a bs
             isUnique = not_ $ elem_ a (take i as)
-         in isPresent  `and_` isUnique
+         in isPresent `and_` isUnique
    in all_ f (zip as [0 ..])
 
 validateBoxes ::
@@ -60,7 +60,7 @@ mkBoard :: ExprM f (Board (Signal f f))
 mkBoard =
   for (universe @Nat9) $ \i ->
     for (universe @Nat9) $ \j -> do
-      let varName = "cell_" <> show (i, j)
+      let varName = "cell_" <> show i <> show j
       EVar <$> fieldInput Public varName
 
 initializeBoard ::
@@ -71,7 +71,7 @@ initializeBoard board = do
   for (universe @Nat9) $ \i ->
     for (universe @Nat9) $ \j -> do
       let cell = board Vec.! i Vec.! j
-          varName = "private_cell_" <> show (i, j)
+          varName = "private_cell_" <> show i <> show j
       v <- EVar <$> fieldInput Private varName
       pure $ cond (cell `eq` cField 0) v cell
 
@@ -90,15 +90,15 @@ spec_sudokuSolver :: Spec
 spec_sudokuSolver = do
   describe "Can solve example sudoku problems" $
     it "Matches the pure implementation" $ do
-      for_ (zip [0 ..] examplePuzzles) $ \(i, b) -> do
+      for_ (zip [(0 :: Int) ..] examplePuzzles) $ \(i, b) -> do
         sol <- Map.toAscList <$> solvePuzzle (concat b)
         let pubAssignments =
-              map (first (\a -> "cell_" <> show a)) $
+              map (first (\a -> "cell_" <> show (fst a) <> show (snd a))) $
                 [((_i, j), v) | _i <- [0 .. 8], j <- [0 .. 8], let v = b !! _i !! j]
             privAssignments =
-              map (first (\a -> "private_cell_" <> show a)) $
+              map (first (\a -> "private_cell_" <> show (fst a) <> show (snd a))) $
                 filter (\(_, v) -> v /= 0) sol
-        BuilderState {bsVars, bsCircuit} <- snd <$> runCircuitBuilder (validate @Fr)
+            BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
         let pubInputs =
               Map.fromList $
                 [ (var, fromIntegral value)

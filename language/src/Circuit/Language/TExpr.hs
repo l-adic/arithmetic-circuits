@@ -2,7 +2,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
-module Circuit.TExpr
+module Circuit.Language.TExpr
   ( Val (..),
     Var (..),
     UnOp (..),

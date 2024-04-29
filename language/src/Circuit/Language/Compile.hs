@@ -1,4 +1,4 @@
-module Circuit.Compile
+module Circuit.Language.Compile
   ( ExprM,
     BuilderState (..),
     execCircuitBuilder,
@@ -16,7 +16,7 @@ where
 
 import Circuit.Affine
 import Circuit.Arithmetic
-import Circuit.Expr
+import Circuit.Language.Expr
   ( BinOp (..),
     Expr (..),
     UVar (..),
@@ -25,9 +25,8 @@ import Circuit.Expr
     hashCons,
     unType,
   )
-import Circuit.TExpr qualified as TExpr
+import Circuit.Language.TExpr qualified as TExpr
 import Data.Field.Galois (GaloisField)
-import Data.Interned
 import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Data.Vector qualified as V
@@ -42,7 +41,7 @@ data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
     bsVars :: CircuitVars Text,
-    bsSharedMap :: Map Id (V.Vector (SignalSource f))
+    bsSharedMap :: Map Int (V.Vector (SignalSource f))
   }
 
 defaultBuilderState :: BuilderState f
@@ -64,32 +63,31 @@ instance (GaloisField f) => Pretty (CircuitBuilderError f) where
     ExpectedSingleWire wires -> "Expected a single wire, but got:" <+> pretty (toList wires)
     MismatchedWireTypes l r -> "Mismatched wire types:" <+> pretty (toList l) <+> pretty (toList r)
 
-type ExprM f a = ExceptT (CircuitBuilderError f) (StateT (BuilderState f) IO) a
+type ExprM f a = ExceptT (CircuitBuilderError f) (State (BuilderState f)) a
 
-runExprM :: (GaloisField f) => ExprM f a -> BuilderState f -> IO (a, BuilderState f)
+runExprM :: (GaloisField f) => ExprM f a -> BuilderState f -> (a, BuilderState f)
 runExprM m s = do
-  res <- runStateT (runExceptT m) s
+  let res = runState (runExceptT m) s
   case res of
     (Left e, _) -> panic $ Protolude.show $ pretty e
-    (Right a, s') -> pure $ (a, s')
+    (Right a, s') -> (a, s')
 
-execCircuitBuilder :: (GaloisField f) => ExprM f a -> IO (ArithCircuit f)
-execCircuitBuilder m = reverseCircuit . bsCircuit . snd <$> runExprM m defaultBuilderState
+execCircuitBuilder :: (GaloisField f) => ExprM f a -> (ArithCircuit f)
+execCircuitBuilder m = reverseCircuit . bsCircuit . snd $ runExprM m defaultBuilderState
   where
     reverseCircuit = \(ArithCircuit cs) -> ArithCircuit $ reverse cs
 
-evalCircuitBuilder :: (GaloisField f) => ExprM f a -> IO a
-evalCircuitBuilder e = fst <$> runCircuitBuilder e
+evalCircuitBuilder :: (GaloisField f) => ExprM f a -> a
+evalCircuitBuilder e = fst $ runCircuitBuilder e
 
-runCircuitBuilder :: (GaloisField f) => ExprM f a -> IO (a, BuilderState f)
+runCircuitBuilder :: (GaloisField f) => ExprM f a -> (a, BuilderState f)
 runCircuitBuilder m = do
-  (a, s) <- runExprM m defaultBuilderState
-  pure
-    ( a,
-      s
-        { bsCircuit = reverseCircuit $ bsCircuit s
-        }
-    )
+  let (a, s) = runExprM m defaultBuilderState
+   in ( a,
+        s
+          { bsCircuit = reverseCircuit $ bsCircuit s
+          }
+      )
   where
     reverseCircuit = \(ArithCircuit cs) -> ArithCircuit $ reverse cs
 
@@ -190,7 +188,6 @@ addWire x = case x of
 
 compileWithWire ::
   (Hashable f, GaloisField f) =>
-  (MonadIO m) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
   m (TExpr.Var Wire f ty) ->
@@ -202,7 +199,6 @@ compileWithWire freshWire e = do
 
 compileWithWires ::
   (Hashable f, GaloisField f) =>
-  (MonadIO m) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
   V.Vector (m (TExpr.Var Wire f f)) ->
@@ -242,7 +238,7 @@ assertSameSourceSize l r =
 
 withCompilerCache ::
   (MonadState (BuilderState f) m) =>
-  Id ->
+  Int ->
   m (V.Vector (SignalSource f)) ->
   m (V.Vector (SignalSource f))
 withCompilerCache i m = do

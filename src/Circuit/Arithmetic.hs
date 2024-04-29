@@ -63,7 +63,7 @@ instance Pretty Wire where
     let a = case t of
           Public -> "pub"
           Private -> "priv"
-     in text (a <> "_input_") <> pretty v <> "_{\"" <> pretty label <> "\"}"
+     in text (a <> "_input_") <> pretty v <> "_" <> pretty label
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
 

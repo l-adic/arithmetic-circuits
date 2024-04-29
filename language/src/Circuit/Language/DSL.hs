@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Surface language
-module Circuit.Lang
+module Circuit.Language.DSL
   ( Signal,
     Bundle,
     cField,
@@ -39,16 +39,16 @@ module Circuit.Lang
 where
 
 import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
-import Circuit.TExpr
+import Circuit.Language.Compile
+import Circuit.Language.TExpr
 import Data.Field.Galois (GaloisField, PrimeField)
 import Data.Finite (Finite)
 import Data.Maybe (fromJust)
+import Data.Vector qualified as V
 import Data.Vector.Sized (Vector)
 import Data.Vector.Sized qualified as SV
-import Data.Vector qualified as V
 import Protolude
 import Unsafe.Coerce (unsafeCoerce)
-import Circuit.Compile
 
 --------------------------------------------------------------------------------
 type Signal f = Expr Wire f
@@ -128,14 +128,14 @@ bundle = EBundle
 boolToField :: Signal f Bool -> Signal f f
 boolToField = unsafeCoerce
 
-
-unBundle :: forall n f ty. 
-  (KnownNat n, GaloisField f, Hashable f) => 
-  Expr Wire f (Vector n ty) -> 
+unBundle ::
+  forall n f ty.
+  (KnownNat n, GaloisField f, Hashable f) =>
+  Expr Wire f (Vector n ty) ->
   ExprM f (Vector n (Expr Wire f f))
 unBundle b = do
   let freshWires = V.replicate (fromIntegral $ natVal $ Proxy @n) (VarField <$> imm)
-  bis <- compileWithWires freshWires b 
+  bis <- compileWithWires freshWires b
   pure $ fromJust $ SV.toSized (EVar . VarField <$> bis)
 
 --------------------------------------------------------------------------------

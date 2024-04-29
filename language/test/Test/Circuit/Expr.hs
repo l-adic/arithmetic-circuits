@@ -6,11 +6,10 @@
 module Test.Circuit.Expr where
 
 import Circuit
+import Circuit.Language
 import Data.Field.Galois (GaloisField, Prime)
 import Data.Map qualified as Map
 import Protolude hiding (Show, show)
-import Test.Circuit.Affine
-import Test.QuickCheck.Monadic (monadicIO, run)
 import Test.Tasty.QuickCheck
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Prelude (Show (..))
@@ -84,17 +83,17 @@ instance (Pretty f) => Show (ExprWithInputs f) where
 -------------------------------------------------------------------------------
 
 -- | Check whether exprToArithCircuit produces valid circuits
-prop_compiledCircuitValid :: ExprWithInputs Fr -> Property
-prop_compiledCircuitValid (ExprWithInputs expr _) = monadicIO $ run $ do
-  validArithCircuit <$> execCircuitBuilder (exprToArithCircuit expr (OutputWire 0))
+prop_compiledCircuitValid :: ExprWithInputs Fr -> Bool
+prop_compiledCircuitValid (ExprWithInputs expr _) =
+  validArithCircuit $ execCircuitBuilder (exprToArithCircuit expr (OutputWire 0))
 
 -- | Check whether evaluating an expression and
 -- evaluating the arithmetic circuit translation produces the same
 -- result
-prop_evalEqArithEval :: ExprWithInputs Fr -> Property
-prop_evalEqArithEval (ExprWithInputs expr inputs) = monadicIO $ run $ do
-  circuit <- (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 1))
-  pure $ all (testInput circuit) inputs
+prop_evalEqArithEval :: ExprWithInputs Fr -> Bool
+prop_evalEqArithEval (ExprWithInputs expr inputs) =
+  let circuit = (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 1))
+   in all (testInput circuit) inputs
   where
     testInput circuit input =
       let a = evalExpr (Map.mapKeys (InputWire "" Public) input) expr
@@ -106,3 +105,6 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) = monadicIO $ run $ do
         (Map.insert)
         circuit
         (Map.mapKeys (InputWire "" Public) input)
+
+arbInputVector :: (Arbitrary f) => Int -> Gen (Map Int f)
+arbInputVector numVars = Map.fromList . zip [0 ..] <$> vector numVars
