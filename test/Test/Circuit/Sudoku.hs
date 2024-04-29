@@ -94,12 +94,11 @@ spec_sudokuSolver = do
         sol <- Map.toAscList <$> solvePuzzle (concat b)
         let pubAssignments =
               map (first (\a -> "cell_" <> show a)) $
-                [((i, j), v) | i <- [0 .. 8], j <- [0 .. 8], let v = b !! i !! j]
+                [((_i, j), v) | _i <- [0 .. 8], j <- [0 .. 8], let v = b !! _i !! j]
             privAssignments =
               map (first (\a -> "private_cell_" <> show a)) $
                 filter (\(_, v) -> v /= 0) sol
         BuilderState {bsVars, bsCircuit} <- snd <$> runCircuitBuilder (validate @Fr)
-        print (Set.size $ cvVars bsVars)
         let pubInputs =
               Map.fromList $
                 [ (var, fromIntegral value)

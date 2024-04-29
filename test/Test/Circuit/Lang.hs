@@ -8,12 +8,9 @@ import Data.Field.Galois (Prime, PrimeField (fromP))
 import Data.Finite (Finite)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
-import Data.Set qualified as Set
 import Protolude hiding (Show, show)
-import Protolude qualified
-import Test.QuickCheck (Property, withMaxSuccess, (==>))
+import Test.QuickCheck (Property, (==>))
 import Test.QuickCheck.Monadic (monadicIO, run)
-import Text.PrettyPrint.Leijen.Text (Pretty (pretty))
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 

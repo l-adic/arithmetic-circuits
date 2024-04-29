@@ -38,9 +38,8 @@ module Circuit.Lang
   )
 where
 
-import Circuit.Affine (AffineCircuit (ConstGate, Var))
-import Circuit.Arithmetic (Gate (Mul), InputType (Private, Public), Wire (..))
-import Circuit.Expr
+import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
+import Circuit.TExpr
 import Data.Field.Galois (GaloisField, PrimeField)
 import Data.Finite (Finite)
 import Data.Maybe (fromJust)
@@ -48,8 +47,8 @@ import Data.Vector.Sized (Vector)
 import Data.Vector.Sized qualified as SV
 import Data.Vector qualified as V
 import Protolude
-import Text.PrettyPrint.Leijen.Text (Pretty)
 import Unsafe.Coerce (unsafeCoerce)
+import Circuit.Compile
 
 --------------------------------------------------------------------------------
 type Signal f = Expr Wire f
@@ -136,10 +135,7 @@ unBundle :: forall n f ty.
   ExprM f (Vector n (Expr Wire f f))
 unBundle b = do
   let freshWires = V.replicate (fromIntegral $ natVal $ Proxy @n) (VarField <$> imm)
-  m <- gets bsSharedMap
-  modify $ \s -> s {bsSharedMap = mempty}
   bis <- compileWithWires freshWires b 
-  modify $ \s -> s {bsSharedMap = m}
   pure $ fromJust $ SV.toSized (EVar . VarField <$> bis)
 
 --------------------------------------------------------------------------------

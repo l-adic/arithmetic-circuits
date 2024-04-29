@@ -66,11 +66,13 @@ library
     Circuit
     Circuit.Affine
     Circuit.Arithmetic
+    Circuit.Compile
     Circuit.Dataflow
     Circuit.Solver
     Circuit.Dot
     Circuit.Expr
     Circuit.Lang
+    Circuit.TExpr
     R1CS
     Fresh
 
