@@ -96,6 +96,8 @@ type family NBits a :: Nat
 -- | This constring prevents us from building up nested vectors inside the expression type
 class Ground (t :: Type -> Type) (ty :: Type) (f :: Type) where
   coerceGroundType :: t ty -> t f
+  unsafeCoerceGroundType :: t f -> t ty
+  unsafeCoerceGroundType = unsafeCoerce
 
 instance Ground (Expr i f) f f where
   coerceGroundType = identity

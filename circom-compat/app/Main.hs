@@ -26,7 +26,7 @@ main = do
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-program :: ExprM Fr Wire
+program :: ExprM Fr (Var Wire Fr Bool)
 program = do
   n <- deref <$> fieldInput Public "n"
   a <- deref <$> fieldInput Private "a"

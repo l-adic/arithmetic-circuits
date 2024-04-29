@@ -128,14 +128,14 @@ hashCons = \case
      in EJoin i e'
   EAtIndex _ v ix ->
     let v' = hashCons v
-        i = Hash $ hash (hash @Text "AtIndex", getAnnotation v', ix)
+        i = Hash $ hash (hash @Text "EAtIndex", getAnnotation v', ix)
      in EAtIndex i v' ix
   EUpdateIndex _ p b v ->
     let b' = hashCons b
         v' = hashCons v
-        i = Hash $ hash (hash @Text "UpdateIndex", p, getAnnotation b', getAnnotation v')
+        i = Hash $ hash (hash @Text "EUpdateIndex", p, getAnnotation b', getAnnotation v')
      in EUpdateIndex i p b' v'
   EBundle _ b ->
     let b' = V.map hashCons b
-        i = Hash $ hash (hash @Text "Bundle", toList $ fmap getAnnotation b')
+        i = Hash $ hash (hash @Text "EBundle", toList $ fmap getAnnotation b')
      in EBundle i b'

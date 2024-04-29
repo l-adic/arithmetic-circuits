@@ -8,6 +8,7 @@ module Circuit.Language.Compile
     freshPrivateInput,
     freshOutput,
     imm,
+    fieldToBool,
     compileWithWire,
     compileWithWires,
     exprToArithCircuit,
@@ -187,23 +188,25 @@ addWire x = case x of
     pure mulOut
 
 compileWithWire ::
-  (Hashable f, GaloisField f) =>
+  (Hashable f) =>
+  (GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
   m (TExpr.Var Wire f ty) ->
   TExpr.Expr Wire f ty ->
-  m Wire
+  m (TExpr.Var Wire f ty)
 compileWithWire freshWire e = do
-  V.head
+  TExpr.unsafeCoerceGroundType . V.head
     <$> compileWithWires (V.singleton $ fmap TExpr.coerceGroundType freshWire) e
 
 compileWithWires ::
-  (Hashable f, GaloisField f) =>
+  (Hashable f) => 
+  (GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
   V.Vector (m (TExpr.Var Wire f f)) ->
   TExpr.Expr Wire f ty ->
-  m (V.Vector Wire)
+  m (V.Vector (TExpr.Var Wire f f) )
 compileWithWires ws expr = do
   let e = hashCons $ unType expr
   compileOut <- memoizedCompile e
@@ -212,11 +215,11 @@ compileWithWires ws expr = do
       WireSource wire -> do
         wire' <- TExpr.rawWire <$> freshWire
         emit $ Mul (ConstGate 1) (Var wire') wire
-        pure wire
+        pure $ TExpr.VarField wire
       AffineSource circ -> do
         wire <- TExpr.rawWire <$> freshWire
         emit $ Mul (ConstGate 1) circ wire
-        pure wire
+        pure $ TExpr.VarField wire
 
 assertSingleSource ::
   (MonadError (CircuitBuilderError f) m) =>
@@ -377,3 +380,13 @@ exprToArithCircuit expr output = do
   let e = hashCons $ unType expr
   compileOut <- memoizedCompile e >>= assertSingleSource
   emit $ Mul (ConstGate 1) (addVar compileOut) output
+
+fieldToBool 
+  :: GaloisField f =>  
+    TExpr.Var Wire f f -> 
+    ExprM f (TExpr.Var Wire f Bool)
+fieldToBool (TExpr.VarField v) = do 
+  b <- TExpr.VarBool <$> imm
+  emit $ Mul (Var v) (ConstGate 1) (TExpr.rawWire b)
+  pure b
+fieldToBool v@(TExpr.VarBool _) = pure v

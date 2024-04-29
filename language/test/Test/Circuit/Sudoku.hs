@@ -75,7 +75,7 @@ initializeBoard board = do
       v <- EVar <$> fieldInput Private varName
       pure $ cond (cell `eq` cField 0) v cell
 
-validate :: (PrimeField f, Hashable f) => ExprM f Wire
+validate :: (PrimeField f, Hashable f) => ExprM f (Var Wire f Bool)
 validate = do
   b <- mkBoard >>= initializeBoard
   let rowsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> b)

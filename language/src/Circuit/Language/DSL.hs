@@ -26,7 +26,6 @@ module Circuit.Language.DSL
     atIndex,
     updateIndex_,
     bundle,
-    boolToField,
     unBundle,
 
     -- * Monoids
@@ -48,7 +47,6 @@ import Data.Vector qualified as V
 import Data.Vector.Sized (Vector)
 import Data.Vector.Sized qualified as SV
 import Protolude
-import Unsafe.Coerce (unsafeCoerce)
 
 --------------------------------------------------------------------------------
 type Signal f = Expr Wire f
@@ -110,10 +108,10 @@ joinBits = EJoin
 deref :: Var Wire f ty -> Signal f ty
 deref = EVar
 
-retBool :: (GaloisField f, Hashable f) => Text -> Signal f Bool -> ExprM f Wire
+retBool :: (GaloisField f, Hashable f) => Text -> Signal f Bool -> ExprM f (Var Wire f Bool)
 retBool label sig = compileWithWire (boolInput Public label) sig
 
-retField :: (PrimeField f, Hashable f) => Text -> Signal f f -> ExprM f Wire
+retField :: (PrimeField f, Hashable f) => Text -> Signal f f -> ExprM f (Var Wire f f)
 retField label sig = compileWithWire (fieldInput Public label) sig
 
 atIndex :: (KnownNat n) => Bundle f n ty -> Finite n -> Signal f ty
@@ -125,18 +123,15 @@ updateIndex_ p = EUpdateIndex p
 bundle :: Vector n (Signal f ty) -> Bundle f n ty
 bundle = EBundle
 
-boolToField :: Signal f Bool -> Signal f f
-boolToField = unsafeCoerce
-
 unBundle ::
   forall n f ty.
   (KnownNat n, GaloisField f, Hashable f) =>
-  Expr Wire f (Vector n ty) ->
+  Bundle f n ty ->
   ExprM f (Vector n (Expr Wire f f))
 unBundle b = do
   let freshWires = V.replicate (fromIntegral $ natVal $ Proxy @n) (VarField <$> imm)
   bis <- compileWithWires freshWires b
-  pure $ fromJust $ SV.toSized (EVar . VarField <$> bis)
+  pure $ fromJust $ SV.toSized (EVar <$> bis)
 
 --------------------------------------------------------------------------------
 

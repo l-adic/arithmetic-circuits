@@ -19,7 +19,7 @@ type instance NBits (Prime p) = 254
 nBits :: Int
 nBits = 254
 
-bitSplitJoin :: ExprM Fr Wire
+bitSplitJoin :: ExprM Fr (Var Wire Fr Fr)
 bitSplitJoin = do
   _x <- deref <$> fieldInput Public "x"
   retField "out" $ joinBits $ splitBits _x
@@ -39,7 +39,7 @@ prop_bitsSplitJoinContra x y =
         w = solve bsVars bsCircuit input
      in fromJust (lookupVar bsVars "out" w) /= y
 
-factors :: ExprM Fr Wire
+factors :: ExprM Fr (Var Wire Fr Bool)
 factors = do
   n <- deref <$> fieldInput Public "n"
   a <- deref <$> fieldInput Public "a"
@@ -62,7 +62,7 @@ prop_factorizationContra x y z =
         w = solve bsVars bsCircuit inputs
      in lookupVar bsVars "out" w == Just 0
 
-bitIndex :: Finite (NBits Fr) -> ExprM Fr Wire
+bitIndex :: Finite (NBits Fr) -> ExprM Fr (Var Wire Fr Bool)
 bitIndex i = do
   x <- deref <$> fieldInput Public "x"
   let bits = splitBits x
@@ -75,9 +75,9 @@ prop_bitIndex i x =
       BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (bitIndex $ fromIntegral _i)
       input = assignInputs bsVars $ Map.singleton "x" x
       w = solve bsVars bsCircuit input
-   in (fieldToBool <$> lookupVar bsVars "out" w) == Just (testBit _x _i)
+   in (lookupVar bsVars "out" w) == Just (if testBit _x _i then 1 else 0)
 
-setAtIndex :: Finite (NBits Fr) -> Bool -> ExprM Fr Wire
+setAtIndex :: Finite (NBits Fr) -> Bool -> ExprM Fr (Var Wire Fr Fr)
 setAtIndex i b = do
   x <- deref <$> fieldInput Public "x"
   let bits = splitBits x
@@ -95,7 +95,7 @@ prop_setAtIndex i x b =
    in res == Just (fromInteger $ if b then setBit _x _i else clearBit _x _i)
 
 -- TODO: investigate why this one is SCARY SLOW
-bundleUnbundle :: ExprM Fr Wire
+bundleUnbundle :: ExprM Fr (Var Wire Fr Fr)
 bundleUnbundle = do
   x <- deref <$> fieldInput Public "x"
   b <- unBundle $ splitBits x
@@ -112,7 +112,7 @@ prop_bundleUnbundle x =
       expected = foldl (\acc i -> acc + if testBit _x i then 1 else 0) 0 [0 .. nBits - 1]
    in res == Just (fromInteger expected)
 
-sharingProg :: ExprM Fr Wire
+sharingProg :: ExprM Fr (Var Wire Fr Fr)
 sharingProg = do
   x <- deref <$> fieldInput Public "x"
   y <- deref <$> fieldInput Public "y"
