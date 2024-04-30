@@ -22,6 +22,7 @@ import qualified Prelude
 import Protolude
 import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (===), (==>))
 import Test.QuickCheck.Monadic (monadicIO, run)
+import Circuit.Dot (dotWriteSVG, arithCircuitToDot)
 
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
@@ -182,7 +183,7 @@ unpack bools = foldl setBit zeroBits (map fst . filter snd $ indexedBools)
 chunkList :: Int -> [a] -> [[a]]
 chunkList _ [] = []
 chunkList n xs
-  | n > 0 = trace @Text ("chunkList " <> show (n, length xs)) $ take n xs : (chunkList n (drop n xs))
+  | n > 0 = take n xs : (chunkList n (drop n xs))
   | otherwise = panic "Chunk size must be greater than zero."
 
 boolToField :: Bool -> Fr
@@ -213,29 +214,30 @@ prop hashFunc mdlen vec = monadicIO $ run $ do
       outIndices = [minBound .. maxBound]
       res :: [Bool]
       res = map (\i -> _fieldToBool $ fromJust $ lookupVar shaVars ("out_" <> show (fromIntegral @_ @Int i)) w) outIndices
-  print res
   let str = reverse $ map unpack $ chunkList 8 $ toList inputVec
   let resStr = take mdlen $ mkOutput res
-  print $ toList inputVec
   let testIn = mkOutput $ toList inputVec
- -- print testIn
-  let expect = CH.hash (BS.pack testIn) :: Digest SHA3_256
+  let expect = hashFunc testIn
   print $ Prelude.show expect
-  pure $ resStr == resStr
+  dotWriteSVG "hash" $ arithCircuitToDot shaCircuit
+
+  pure $ resStr === expect
 
 mkOutput :: [Bool] -> [Word8]
 mkOutput = map unpack . chunkList 8
 
 --
-prop_sha256 :: ArbVec 16 (Vector 64 Bool) -> Property
+prop_sha256 :: ArbVec -> Property
 prop_sha256 (ArbVec v) =
   withMaxSuccess 1 $
     prop (\x -> BA.unpack (CH.hash (BS.pack x) :: Digest SHA3_256)) 32 v
 
-newtype ArbVec n a = ArbVec (Vector n a)
-  deriving (Show, Eq)
+newtype ArbVec = ArbVec (Vector 16 (Vector 64 Bool)) deriving (Eq)
 
-instance Arbitrary (ArbVec 16 (Vector 64 Bool)) where
+instance Show ArbVec where
+  show (ArbVec v) = show $ mkOutput $ toList $  concatVec v
+
+instance Arbitrary (ArbVec) where
   arbitrary = ArbVec <$> SV.replicateM (SV.replicateM arbitrary)
 
 altSolve :: ArithCircuit Fr -> Map Int Fr -> Map Int Fr

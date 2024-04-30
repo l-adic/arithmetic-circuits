@@ -150,8 +150,8 @@ round_ i =
   trace @Text "round_" $
     iota i . chi . pi_ . rho . theta
 
-rounds :: Vector 3 (Finite 24)
-rounds = fromJust $ SV.fromList [0..2]
+rounds :: Vector 1 (Finite 24)
+rounds = fromJust $ SV.fromList [0]
 
 
 keccakF :: forall f. GaloisField f => SHA3State f -> SHA3State f

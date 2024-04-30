@@ -30,9 +30,9 @@ arithCircuitToDot c@(ArithCircuit gates) =
 
     dotArrowLabel :: Text -> Text -> Text -> Text -> Text
     dotArrowLabel s t lbl _c =
-      dotArrow s t <> " [label=\"" <> lbl <> "\", color=\"" <> _c <> "\"]"
+      dotArrow s t <> " [label=\"" <> (Text.take 10_000 lbl) <> "\", color=\"" <> _c <> "\"]"
 
-    labelNode lblId lbl = lblId <> " [label=\"" <> lbl <> "\"]"
+    labelNode lblId lbl = lblId <> " [label=\"" <> Text.take 1000 lbl <> "\"]"
 
     pointNode lblId = lblId <> " [shape=point]"
 
