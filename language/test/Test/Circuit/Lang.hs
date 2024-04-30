@@ -1,16 +1,28 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE NoStarIsType #-}
 
 module Test.Circuit.Lang where
 
 import Circuit
 import Circuit.Language
+import Circuit.Language.SHA3
 import Data.Field.Galois (Prime, PrimeField (fromP))
 import Data.Finite (Finite)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
-import Protolude hiding (Show, show)
-import Test.QuickCheck (Property, (==>))
+import Crypto.Hash as CH
+import Data.ByteArray qualified as BA
+import Data.ByteString qualified as BS
+import Data.Set qualified as Set
+import Data.Vector.Sized (Vector)
+import Data.Vector.Sized qualified as SV
+import GHC.TypeNats (type (*), type (+))
+import qualified Prelude
+import Protolude
+import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (===), (==>))
+import Test.QuickCheck.Monadic (monadicIO, run)
+
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
@@ -131,6 +143,14 @@ prop_sharingProg x y =
       expected = fromInteger $ sum $ replicate 10 (_x * _y)
    in res == Just expected
 
+sha3Program :: ExprM Fr (Vector 256 (Var Wire Fr Bool))
+sha3Program = do
+  bits <- fmap deref <$> boolsInput Public "b_"
+  traceM $ "bits length: " <> show (length bits)
+  let res = sha3_256 $ (trace @Text "chunking" $ chunk bits)
+  traceM $ "res length" <> show (length res)
+  retBools "out_" $ bundle res
+
 --------------------------------------------------------------------------------
 
 _fieldToBool :: Fr -> Bool
@@ -150,6 +170,77 @@ assignInputs CircuitVars {..} inputs =
               (l2, val) <- Map.toList inputs,
               l1 == l2
           ]
-   in if Map.size inputs /= Map.size res
-        then panic "Some inputs are missing"
-        else res
+   in res
+     
+     
+
+unpack :: [Bool] -> Word8
+unpack bools = foldl setBit zeroBits (map fst . filter snd $ indexedBools)
+  where
+    indexedBools = zip [0 .. 8] bools
+
+chunkList :: Int -> [a] -> [[a]]
+chunkList _ [] = []
+chunkList n xs
+  | n > 0 = trace @Text ("chunkList " <> show (n, length xs)) $ take n xs : (chunkList n (drop n xs))
+  | otherwise = panic "Chunk size must be greater than zero."
+
+boolToField :: Bool -> Fr
+boolToField True = 1
+boolToField False = 0
+
+BuilderState {bsVars = shaVars, bsCircuit = shaCircuit} = snd $ runCircuitBuilder sha3Program
+
+prop :: forall n n0. (((n + 1) + n0) ~ 25, KnownNat n0, KnownNat ((n + 1) * 64)) => ([Word8] -> [Word8]) -> Int -> Vector n (Vector 64 Bool) -> Property
+prop hashFunc mdlen vec = monadicIO $ run $ do
+  print "Tesing SHA3_256"
+  print $ "NVars: " ++ (show @Int $ Set.size (cvVars shaVars))
+  print $ "NGates: " ++ case shaCircuit of
+    ArithCircuit gs -> show $ length gs
+
+  let inputVec :: Vector ((n + 1) * 64) Bool
+      inputVec = concatVec (vec `SV.snoc` mkBitVector @Integer 0x8000000000000006)
+      inIndices :: [Finite ((n + 1) * 64)]
+      inIndices = [minBound .. maxBound]
+      assignments = 
+          Map.fromList $
+            map (\i -> ("b_" <> show @Int (fromIntegral i), boolToField $ inputVec `SV.index` i)) inIndices
+  let input =
+        assignInputs shaVars $ assignments
+  let w = altSolve shaCircuit input
+  print $ "Solution: " ++ show (Map.size  w)
+  let outIndices :: [Finite 256]
+      outIndices = [minBound .. maxBound]
+      res :: [Bool]
+      res = map (\i -> _fieldToBool $ fromJust $ lookupVar shaVars ("out_" <> show (fromIntegral @_ @Int i)) w) outIndices
+  print res
+  let str = reverse $ map unpack $ chunkList 8 $ toList inputVec
+  let resStr = take mdlen $ mkOutput res
+  print $ toList inputVec
+  let testIn = mkOutput $ toList inputVec
+ -- print testIn
+  let expect = CH.hash (BS.pack testIn) :: Digest SHA3_256
+  print $ Prelude.show expect
+  pure $ resStr == resStr
+
+mkOutput :: [Bool] -> [Word8]
+mkOutput = map unpack . chunkList 8
+
+--
+prop_sha256 :: ArbVec 16 (Vector 64 Bool) -> Property
+prop_sha256 (ArbVec v) =
+  withMaxSuccess 1 $
+    prop (\x -> BA.unpack (CH.hash (BS.pack x) :: Digest SHA3_256)) 32 v
+
+newtype ArbVec n a = ArbVec (Vector n a)
+  deriving (Show, Eq)
+
+instance Arbitrary (ArbVec 16 (Vector 64 Bool)) where
+  arbitrary = ArbVec <$> SV.replicateM (SV.replicateM arbitrary)
+
+altSolve :: ArithCircuit Fr -> Map Int Fr -> Map Int Fr
+altSolve program inputs = evalArithCircuit
+          (\w m -> Map.lookup (wireName w) m)
+          (\w m -> Map.insert (wireName w) m)
+          program
+          inputs

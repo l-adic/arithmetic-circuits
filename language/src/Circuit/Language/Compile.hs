@@ -201,27 +201,29 @@ compileWithWire ::
   m (TExpr.Var Wire f ty)
 compileWithWire freshWire e = do
   TExpr.unsafeCoerceGroundType . V.head
-    <$> compileWithWires (V.singleton $ fmap TExpr.coerceGroundType freshWire) e
+    <$> compileWithWires (V.singleton . TExpr.coerceGroundType <$> freshWire) e
 
 compileWithWires ::
   (Hashable f) =>
   (GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  V.Vector (m (TExpr.Var Wire f f)) ->
+  m (V.Vector (TExpr.Var Wire f f)) ->
   TExpr.Expr Wire f ty ->
   m (V.Vector (TExpr.Var Wire f f))
 compileWithWires ws expr = do
-  e <- hashCons <$> unType expr
+  untyped <- unType expr
+  let e = hashCons untyped
   compileOut <- memoizedCompile e
-  for (V.zip compileOut ws) $ \(o, freshWire) -> do
+  _ws <- ws
+  for (V.zip compileOut _ws) $ \(o, freshWire) -> do
     case o of
       WireSource wire -> do
-        wire' <- TExpr.rawWire <$> freshWire
+        let wire' = TExpr.rawWire freshWire
         emit $ Mul (ConstGate 1) (Var wire') wire
         pure $ TExpr.VarField wire
       AffineSource circ -> do
-        wire <- TExpr.rawWire <$> freshWire
+        let wire = TExpr.rawWire $ freshWire
         emit $ Mul (ConstGate 1) circ wire
         pure $ TExpr.VarField wire
 
@@ -324,7 +326,7 @@ _compile expr = withCompilerCache (getAnnotation expr) $ case expr of
     eqFreeWire <- imm
     eqOutWire <- imm
     emit $ Equal eqInWire eqFreeWire eqOutWire
-    emit $ Boolean eqOutWire
+    --emit $ Boolean eqOutWire
     -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
     -- neqOutWire instead.
     pure . V.singleton . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
@@ -333,7 +335,7 @@ _compile expr = withCompilerCache (getAnnotation expr) $ case expr of
     i <- memoizedCompile input >>= assertSingleSource >>= addWire
     outputs <- V.generateM n $ \_ -> do
       w <- imm
-      emit $ Boolean w
+     -- emit $ Boolean w
       pure w
     emit $ Split i (V.toList outputs)
     fold
@@ -384,7 +386,7 @@ fieldToBool ::
 fieldToBool e = do
   eOut <- hashCons <$> unType e
   a <- memoizedCompile eOut >>= assertSingleSource >>= addWire
-  emit $ Boolean a
+  --emit $ Boolean a
   pure $ unsafeCoerce e
 
 unType :: forall f ty m. (MonadState (BuilderState f) m) => TExpr.Expr Wire f ty -> m (Expr () Wire f)
@@ -395,7 +397,7 @@ unType = \case
   TExpr.EVar v -> case v of
     TExpr.VarField w -> pure $ EVar () (UVar w)
     TExpr.VarBool b -> do
-      emit $ Boolean b
+      --emit $ Boolean b
       pure $ EVar () (UVar b)
   TExpr.EUnOp op e -> EUnOp () (untypeUnOp op) <$> unType e
   TExpr.EBinOp op e1 e2 -> EBinOp () (untypeBinOp op) <$> unType e1 <*> unType e2

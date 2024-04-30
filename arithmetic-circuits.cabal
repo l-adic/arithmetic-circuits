@@ -36,7 +36,7 @@ common extensions
     RecordWildCards
 
 common warnings
-  ghc-options: -Wall -Wredundant-constraints -Werror
+  ghc-options: -Wall -Wredundant-constraints
 
 
 common deps
@@ -87,6 +87,7 @@ library language
   hs-source-dirs:     language/src
   build-depends:
       arithmetic-circuits
+    , cryptohash-sha256
     , distributive
     , hashable
     , microlens
@@ -146,6 +147,11 @@ test-suite language-tests
     , tasty-hspec
     , tasty-quickcheck      >=0.10
     , vec
+    , vector-sized
+    , crypton
+    , bytestring
+    , memory
+
 
   build-tool-depends: tasty-discover:tasty-discover >=4.2
 

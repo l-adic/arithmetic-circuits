@@ -21,6 +21,9 @@ module Circuit.Language.DSL
     retField,
     fieldInput,
     boolInput,
+    boolsInput,
+    fieldsInput,
+    retBools,
     cond,
     compileWithWire,
     splitBits,
@@ -74,14 +77,34 @@ mul = (*)
 -- | Binary logic operations on expressions
 -- Have to use underscore or similar to avoid shadowing @and@ and @or@
 -- from Prelude/Protolude.
-and_, or_, xor_ :: Signal f Bool -> Signal f Bool -> Signal f Bool
-and_ = EBinOp BAnd
-or_ = EBinOp BOr
-xor_ = EBinOp BXor
+and_, or_, xor_ :: (Eq f, Num f) => Signal f Bool -> Signal f Bool -> Signal f Bool
+and_ a b = case (a,b) of 
+  (EVal (ValBool 0), _) -> cBool False
+  (_, EVal (ValBool 0)) -> cBool False
+  (EVal (ValBool 1), EVal (ValBool 1)) -> cBool True
+  _ -> EBinOp BAnd a b
+
+or_ a b = case (a,b) of 
+  (EVal (ValBool 1), _) -> cBool True
+  (_, EVal (ValBool 1)) -> cBool True
+  (EVal (ValBool 0), EVal (ValBool 0)) -> cBool False
+  _ -> EBinOp BOr a b
+
+
+xor_ a b = case (a,b) of 
+  (EVal (ValBool 0), x) -> x
+  (x, EVal (ValBool 0)) -> x
+  (EVal (ValBool _a), EVal (ValBool _b)) -> 
+    if _a == 1 
+      then cBool $ _b /= 1
+      else cBool (_b == 1)
+  _ -> EBinOp BXor a b
 
 -- | Negate expression
-not_ :: Signal f Bool -> Signal f Bool
-not_ = EUnOp UNot
+not_ :: Num f => Signal f Bool -> Signal f Bool
+not_ a = case a of
+  EVal (ValBool b) -> EVal $ ValBool $ 1 - b
+  _ -> EUnOp UNot a
 
 -- | Compare two expressions
 eq :: Signal f f -> Signal f f -> Signal f Bool
@@ -96,6 +119,12 @@ boolInput :: InputType -> Text -> ExprM f (Var Wire f Bool)
 boolInput it label = case it of
   Public -> VarBool <$> freshPublicInput label
   Private -> VarBool <$> freshPrivateInput label
+
+boolsInput :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f Bool))
+boolsInput it label = SV.generateM $ \i -> boolInput it $ label <> show (fromIntegral @_ @Int i)
+
+fieldsInput :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f f))
+fieldsInput it label = SV.generateM $ \i -> fieldInput it $ label <> show (fromIntegral @_ @Int i)
 
 -- | Conditional statement on expressions
 cond :: Signal f Bool -> Signal f ty -> Signal f ty -> Signal f ty
@@ -118,6 +147,14 @@ retBool label sig = compileWithWire (boolInput Public label) sig
 
 retField :: (PrimeField f, Hashable f) => Text -> Signal f f -> ExprM f (Var Wire f f)
 retField label sig = compileWithWire (fieldInput Public label) sig
+
+retBools :: forall n f. 
+  (KnownNat n, GaloisField f, Hashable f) => 
+  Text -> 
+  Signal f (Vector n Bool) -> 
+  ExprM f (Vector n (Var Wire f Bool))
+retBools label sig = fromJust . SV.toSized . unsafeCoerce <$> do
+  compileWithWires (SV.fromSized <$> fieldsInput @n Public label) sig
 
 atIndex ::
   (Bundled f (Vector n ty)) =>
@@ -163,10 +200,10 @@ instance (Num f) => Monoid (And_ f) where
 
 newtype Any_ f = Any_ {unAny_ :: Signal f Bool}
 
-instance Semigroup (Any_ f) where
+instance (Eq f, Num f) => Semigroup (Any_ f) where
   Any_ a <> Any_ b = Any_ $ or_ a b
 
-instance (Num f) => Monoid (Any_ f) where
+instance (Eq f, Num f) => Monoid (Any_ f) where
   mempty = Any_ $ cBool False
 
 newtype Add_ f = Add_ {unAdd_ :: Signal f f}
@@ -179,16 +216,16 @@ instance (GaloisField f) => Monoid (Add_ f) where
 
 newtype XOr_ f = XOr_ {unXOr_ :: Signal f Bool}
 
-instance Semigroup (XOr_ f) where
+instance (Eq f, Num f) => Semigroup (XOr_ f) where
   XOr_ a <> XOr_ b = XOr_ $ xor_ a b
 
-instance (Num f) => Monoid (XOr_ f) where
+instance (Eq f, Num f) => Monoid (XOr_ f) where
   mempty = XOr_ $ cBool False
 
 --------------------------------------------------------------------------------
 
 elem_ ::
-  (Num f, Foldable t) =>
+  (Eq f, Num f, Foldable t) =>
   Signal f f ->
   t (Signal f f) ->
   Signal f Bool
@@ -204,7 +241,7 @@ all_ ::
 all_ f = unAnd_ . foldMap (And_ . f)
 
 any_ ::
-  (Num f, Foldable t) =>
+  (Eq f, Num f, Foldable t) =>
   (a -> Signal f Bool) ->
   t a ->
   Signal f Bool
