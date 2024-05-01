@@ -140,27 +140,36 @@ instance (Hashable i, Hashable f) => Hashable (Description (Expr i f)) where
 
 val :: (Hashable i, Hashable f) => f -> Expr i f
 val = intern . CEVal
+{-# NOINLINE val #-}
 
 var :: (Hashable i, Hashable f) => UVar i -> Expr i f
 var = intern . CEVar
+{-# NOINLINE var #-}
 
 unOp :: (Hashable i, Hashable f) => UnOp -> Expr i f -> Expr i f
 unOp op e = intern $ CEUnOp op e
+{-# NOINLINE unOp #-}
 
 binOp :: (Hashable i, Hashable f) => BinOp -> Expr i f -> Expr i f -> Expr i f
 binOp op e1 e2 = intern $ CEBinOp op e1 e2
+{-# NOINLINE binOp #-}
 
 if_ :: (Hashable i, Hashable f) => Expr i f -> Expr i f -> Expr i f -> Expr i f
 if_ b t f = intern $ CEIf b t f
+{-# NOINLINE if_ #-}
 
 eq :: (Hashable i, Hashable f) => Expr i f -> Expr i f -> Expr i f
 eq l r = intern $ CEEq l r
+{-# NOINLINE eq #-}
 
 split :: (Hashable i, Hashable f) => Int -> Expr i f -> Expr i f
 split n i = intern $ CESplit n i
+{-# NOINLINE split #-}
 
 join_ :: (Hashable i, Hashable f) => Expr i f -> Expr i f
 join_ i = intern $ CEJoin i
+{-# NOINLINE join_ #-}
 
 bundle :: (Hashable i, Hashable f) => V.Vector (Expr i f) -> Expr i f
 bundle i = intern $ CEBundle i
+{-# NOINLINE bundle #-}

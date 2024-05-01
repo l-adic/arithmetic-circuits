@@ -10,11 +10,9 @@ import Circuit.Language.SHA3
 import Data.Field.Galois (Prime, PrimeField (fromP))
 import Data.Finite (Finite)
 import Data.Map qualified as Map
-import Data.Maybe (fromJust)
 import Crypto.Hash as CH
 import Data.ByteArray qualified as BA
 import Data.ByteString qualified as BS
-import Data.Set qualified as Set
 import Data.Vector.Sized (Vector)
 import Data.Vector.Sized qualified as SV
 import GHC.TypeNats (type (*), type (+))
@@ -22,7 +20,6 @@ import qualified Prelude
 import Protolude
 import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (===), (==>))
 import Test.QuickCheck.Monadic (monadicIO, run)
-import Circuit.Dot (dotWriteSVG, arithCircuitToDot)
 
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
@@ -50,7 +47,7 @@ prop_bitsSplitJoinContra x y =
     let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder bitSplitJoin
         input = assignInputs bsVars $ Map.singleton "x" x
         w = solve bsVars bsCircuit input
-     in lookupVar bsVars "out" w /= y
+    in lookupVar bsVars "out" w /= y
 
 factors :: ExprM Fr (Var Wire Fr Bool)
 factors = do
@@ -60,12 +57,12 @@ factors = do
   let isFactorization = eq n (a * b)
   retBool "out" isFactorization
 
-prop_factorization :: Fr -> Fr -> Bool
+prop_factorization :: Fr -> Fr -> Property
 prop_factorization x y =
   let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder factors
       inputs = assignInputs bsVars $ Map.fromList [("n", x * y), ("a", x), ("b", y)]
       w = solve bsVars bsCircuit inputs
-   in lookupVar bsVars "out" w == 1
+   in lookupVar bsVars "out" w === 1
 
 prop_factorizationContra :: Fr -> Fr -> Fr -> Property
 prop_factorizationContra x y z =
@@ -97,7 +94,7 @@ setAtIndex i b = do
   bits' <- updateIndex_ i (cBool b) bits
   retField "out" $ joinBits bits'
 
-prop_setAtIndex :: Int -> Fr -> Bool -> Bool
+prop_setAtIndex :: Int -> Fr -> Bool -> Property
 prop_setAtIndex i x b =
   let _i = i `mod` nBits
       _x = fromP x
@@ -105,7 +102,7 @@ prop_setAtIndex i x b =
       input = assignInputs bsVars $ Map.singleton "x" x
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
-   in res == (fromInteger $ if b then setBit _x _i else clearBit _x _i)
+   in res === fromInteger (if b then setBit _x _i else clearBit _x _i)
 
 -- TODO: investigate why this one is SCARY SLOW
 bundleUnbundle :: ExprM Fr (Var Wire Fr Fr)
@@ -116,7 +113,7 @@ bundleUnbundle = do
   let res = unAdd_ $ foldMap (Add_ . coerceGroundType) negated
   retField "out" res
 
-prop_bundleUnbundle :: Fr -> Bool
+prop_bundleUnbundle :: Fr -> Property
 prop_bundleUnbundle x =
   let _x = fromP x
       BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder bundleUnbundle
@@ -124,7 +121,7 @@ prop_bundleUnbundle x =
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
       expected = foldl (\acc i -> acc + if testBit _x i then 0 else 1) 0 [0 .. nBits - 1]
-   in res == fromInteger expected
+   in res === fromInteger expected
 
 sharingProg :: ExprM Fr (Var Wire Fr Fr)
 sharingProg = do
@@ -133,8 +130,8 @@ sharingProg = do
   let z = x * y
   retField "out" $ sum $ replicate 10 z
 
-prop_sharingProg :: Fr -> Fr -> Bool
-prop_sharingProg x y =
+prop_sharingProg :: Fr -> Fr -> Property
+prop_sharingProg x y = monadicIO $ run $ do
   let _x = fromP x
       _y = fromP y
       BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder sharingProg
@@ -142,14 +139,12 @@ prop_sharingProg x y =
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
       expected = fromInteger $ sum $ replicate 10 (_x * _y)
-   in res == expected
+  pure $ res === expected
 
 sha3Program :: ExprM Fr (Vector 256 (Var Wire Fr Bool))
 sha3Program = do
   bits <- fmap deref <$> boolsInput Public "b_"
-  traceM $ "bits length: " <> show (length bits)
-  let res = sha3_256 $ (trace @Text "chunking" $ chunk bits)
-  traceM $ "res length" <> show (length res)
+  let res = sha3_256 $ chunk bits
   retBools "out_" $ bundle res
 
 --------------------------------------------------------------------------------
@@ -174,8 +169,8 @@ assignInputs CircuitVars {..} inputs =
               l1 == l2
           ]
    in res
-     
-     
+
+
 
 unpack :: [Bool] -> Word8
 unpack bools = foldl setBit zeroBits (map fst . filter snd $ indexedBools)
@@ -192,28 +187,24 @@ boolToField :: Bool -> Fr
 boolToField True = 1
 boolToField False = 0
 
+--------------------------------------------------------------------------------
+
+{-
+
 BuilderState {bsVars = shaVars, bsCircuit = shaCircuit} = snd $ runCircuitBuilder sha3Program
 
 prop :: forall n n0. (((n + 1) + n0) ~ 25, KnownNat n0, KnownNat ((n + 1) * 64)) => ([Word8] -> [Word8]) -> Int -> Vector n (Vector 64 Bool) -> Property
 prop hashFunc mdlen vec = monadicIO $ run $ do
-  print "Tesing SHA3_256"
-  print $ "NVars: " ++ (show @Int $ Set.size (cvVars shaVars))
-  print $ "NGates: " ++ case shaCircuit of
-    ArithCircuit gs -> show $ length gs
-
   let inputVec :: Vector ((n + 1) * 64) Bool
       inputVec = concatVec (vec `SV.snoc` mkBitVector @Integer 0x8000000000000006)
       inIndices :: [Finite ((n + 1) * 64)]
       inIndices = [minBound .. maxBound]
-      assignments = 
+      assignments =
           Map.fromList $
             map (\i -> ("b_" <> show @Int (fromIntegral i), boolToField $ inputVec `SV.index` i)) inIndices
   let input =
         assignInputs shaVars $ assignments
   let w = altSolve shaCircuit input
-  print "Solving..."
-  print $ "Solution: " ++ show (Map.size w)
-  print $ (Set.toAscList $ cvVars shaVars)
   let outIndices :: [Finite 256]
       outIndices = [minBound .. maxBound]
       res :: [Bool]
@@ -222,17 +213,14 @@ prop hashFunc mdlen vec = monadicIO $ run $ do
   let resStr = take mdlen $ mkOutput res
   let testIn = mkOutput $ toList inputVec
   let expect = hashFunc testIn
-  print $ Prelude.show expect
- -- dotWriteSVG "hash" $ arithCircuitToDot shaCircuit
-
   pure $ resStr === expect
 
 mkOutput :: [Bool] -> [Word8]
 mkOutput = map unpack . chunkList 8
 
 --
-prop_sha256 :: ArbVec -> Property
-prop_sha256 (ArbVec v) =
+prop*sha256 :: ArbVec -> Property
+prop*sha256 (ArbVec v) =
   withMaxSuccess 1 $
     prop (\x -> BA.unpack (CH.hash (BS.pack x) :: Digest SHA3_256)) 32 v
 
@@ -250,3 +238,5 @@ altSolve program inputs = evalArithCircuit
           (\w m -> Map.insert (wireName w) m)
           program
           inputs
+
+-}

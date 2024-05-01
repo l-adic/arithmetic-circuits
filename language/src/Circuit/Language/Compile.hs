@@ -8,7 +8,6 @@ module Circuit.Language.Compile
     freshPrivateInput,
     freshOutput,
     imm,
-    enforceBoolean,
     fieldToBool,
     compileWithWire,
     compileWithWires,
@@ -36,24 +35,17 @@ import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
 import Circuit.Language.Expr qualified as Expr
-import Data.Interned.Internal (Uninternable(unintern), Interned (describe, cacheWidth), getCache)
-import Data.List ((!!))
-import Data.IORef (readIORef)
-import GHC.IO (unsafePerformIO)
+import Control.Monad.Cont (ContT (runContT))
 
 -------------------------------------------------------------------------------
 -- Circuit Builder
 -------------------------------------------------------------------------------
 
-enforceBoolean :: TExpr.Var Wire f Bool -> ExprM f ()
-enforceBoolean (TExpr.VarBool w) = emit $ Boolean w
-enforceBoolean _ = pure ()
-
 data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
     bsVars :: CircuitVars Text,
-    bsMemoMap :: Map Int (Expr Wire f, V.Vector (SignalSource f))
+    bsMemoMap :: Map Int (V.Vector (SignalSource f))
   }
 
 defaultBuilderState :: BuilderState f
@@ -219,10 +211,7 @@ compileWithWires ::
   TExpr.Expr Wire f ty ->
   m (V.Vector (TExpr.Var Wire f f))
 compileWithWires ws expr = do
-  traceM $ "converting to untyped expression"
   let e = unType expr
-  traceM $ show $ Expr.getId e
-  traceM $ "Compiling ..."
   compileOut <- memoizedCompile e
   _ws <- ws
   for (V.zip compileOut _ws) $ \(o, freshWire) -> do
@@ -257,12 +246,11 @@ assertSameSourceSize l r =
 withCompilerCache ::
   (MonadState (BuilderState f) m) =>
   Int ->
-  Expr Wire f ->
   m (V.Vector (SignalSource f)) ->
   m (V.Vector (SignalSource f))
-withCompilerCache i e  m = do
+withCompilerCache i m = do
   res <- m
-  modify $ \s -> s {bsMemoMap = Map.insert i (e,res) (bsMemoMap s)}
+  modify $ \s -> s {bsMemoMap = Map.insert i res (bsMemoMap s)}
   pure res
 
 _compile ::
@@ -272,7 +260,7 @@ _compile ::
   (MonadError (CircuitBuilderError f) m) =>
   Expr Wire f ->
   m (V.Vector (SignalSource f))
-_compile expr = withCompilerCache (Expr.getId expr) expr $ case expr of
+_compile expr = withCompilerCache (Expr.getId expr) $ case expr of
   EVal _ f -> pure $ V.singleton $ AffineSource $ ConstGate f
   EVar _ (UVar var) -> pure . V.singleton $ WireSource var
   EUnOp _ op e1 -> do
@@ -331,12 +319,12 @@ _compile expr = withCompilerCache (Expr.getId expr) expr $ case expr of
     -- assertSingle is justified as the lhs and rhs must be of type f
     let e = Expr.binOp BSub lhs rhs
     eqInWire <- do
-      eOut <- withCompilerCache (Expr.getId e) e (memoizedCompile e)
+      eOut <- withCompilerCache (Expr.getId e) (memoizedCompile e)
       assertSingleSource eOut >>= addWire
     eqFreeWire <- imm
     eqOutWire <- imm
     emit $ Equal eqInWire eqFreeWire eqOutWire
-    --emit $ Boolean eqOutWire
+    emit $ Boolean eqOutWire
     -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
     -- neqOutWire instead.
     pure . V.singleton . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
@@ -345,7 +333,7 @@ _compile expr = withCompilerCache (Expr.getId expr) expr $ case expr of
     i <- memoizedCompile input >>= assertSingleSource >>= addWire
     outputs <- V.generateM n $ \_ -> do
       w <- imm
-     -- emit $ Boolean w
+      emit $ Boolean w
       pure w
     emit $ Split i (V.toList outputs)
     fold
@@ -373,22 +361,7 @@ memoizedCompile ::
 memoizedCompile expr = do
   m <- gets bsMemoMap
   case Map.lookup (Expr.getId expr) m of
-    Just (e, ws) -> do
-      traceM $ "Cache hit: " <> show (Expr.getId expr)
-      if e /= expr
-        then do 
-          let w = cacheWidth (Proxy @(Expr Wire f))
-              d1 = describe @(Expr Wire f) $ unintern expr
-              h1 = hash d1
-              r1 = h1 `mod` w
-              d2 = describe @(Expr Wire f) $ unintern e
-              h2 = hash d2
-              r2 = h2 `mod` w
-              diff_ = (h1 - h2) `mod` w
-          traceM $ show (expr, d1, h1, r1, diff_)
-          traceM $ show (e, d2, h2, r2, diff_)
-          panic $ "Cache hit with different expression!"
-        else pure ws
+    Just ws -> pure ws
     Nothing -> _compile expr
 
 exprToArithCircuit ::
@@ -410,45 +383,48 @@ fieldToBool ::
 fieldToBool e = do
   let eOut = unType e
   a <- memoizedCompile eOut >>= assertSingleSource >>= addWire
-  --emit $ Boolean a
+  emit $ Boolean a
   pure $ unsafeCoerce e
 
 unType :: forall f ty. Hashable f => TExpr.Expr Wire f ty -> Expr Wire f
-unType = \case
+unType e = evalState (runContT (_unType e) pure) mempty
+
+_unType :: forall m r f ty. Hashable f => MonadState (Map Int (Expr Wire f)) m => TExpr.Expr Wire f ty -> ContT r m (Expr Wire f)
+_unType = \case
   TExpr.EVal v ->
     let f = TExpr.rawVal v
-    in Expr.val f
+    in pure $ Expr.val f
   TExpr.EVar  v -> 
     let v' = TExpr.rawWire v
-     in Expr.var (UVar v')
-  TExpr.EUnOp op e ->
-    let e' = unType e
-        op' = untypeUnOp op
-     in Expr.unOp op' e'
-  TExpr.EBinOp op e1 e2 -> 
-    let e1' = unType e1
-        e2' = unType e2
-        op' = untypeBinOp op
-     in Expr.binOp op' e1' e2'
-  TExpr.EIf b t f -> 
-    let b' = unType b
-        t' = unType t
-        f' = unType f
-     in Expr.if_ b' t' f'
-  TExpr.EEq l r -> 
-    let l' = unType l
-        r' = unType r
-     in Expr.eq l' r'
-  TExpr.ESplit i -> 
-    let i' = unType i
-     in
-        Expr.split (fromIntegral $ natVal (Proxy @(TExpr.NBits f))) i'
-  TExpr.EJoin i -> 
-    let i' = unType i
-     in Expr.join_ i'
-  TExpr.EBundle b -> 
-    let x = V.map unType $ SV.fromSized b
-     in Expr.bundle x
+     in pure $ Expr.var (UVar v')
+  TExpr.EUnOp op e -> do
+    e' <- _unType e
+    let op' = untypeUnOp op
+    pure $ Expr.unOp op' e'
+  TExpr.EBinOp op e1 e2 -> do
+    e1' <- _unType e1
+    e2' <- _unType e2
+    let op' = untypeBinOp op
+    pure $ Expr.binOp op' e1' e2'
+  TExpr.EIf b t f -> do
+    b' <- _unType b
+    t' <- _unType t
+    f' <- _unType f
+    pure $ Expr.if_ b' t' f'
+  TExpr.EEq l r -> do
+    l' <- _unType l
+    r' <- _unType r
+    pure  $ Expr.eq l' r'
+  TExpr.ESplit i -> do
+    i' <- _unType i
+    let n = fromIntegral $ natVal (Proxy @(TExpr.NBits f))
+    pure $ Expr.split n i'
+  TExpr.EJoin i -> do
+    i' <- _unType i
+    pure $ Expr.join_ i'
+  TExpr.EBundle b -> do
+    x <- traverse _unType $ SV.fromSized b
+    pure $ Expr.bundle x
   where
     untypeBinOp :: TExpr.BinOp f a -> BinOp
     untypeBinOp = \case
@@ -466,49 +442,6 @@ unType = \case
       TExpr.UNot -> UNot
 
 
-{-
-
-hashCons :: (Hashable i, Hashable f) => Expr () i f -> Expr Hash i f
-hashCons = \case
-  EVal _ f ->
-    let i = Hash $ hash (hash @Text "EVal", f)
-     in EVal i f
-  EVar _ v ->
-    let i = Hash $ hash (hash @Text "EVar", v)
-     in EVar i v
-  EUnOp _ op e ->
-    let e' = hashCons e
-        i = Hash $ hash (hash @Text "EUnOp", op, getAnnotation e')
-     in EUnOp i op e'
-  EBinOp _ op e1 e2 ->
-    let e1' = hashCons e1
-        e2' = hashCons e2
-        i = Hash $ hash (hash @Text "EBinOp", op, getAnnotation e1', getAnnotation e2')
-     in EBinOp i op e1' e2'
-  EIf _ b t e ->
-    let b' = hashCons b
-        t' = hashCons t
-        e' = hashCons e
-        i = Hash $ hash (hash @Text "EIf", getAnnotation b', getAnnotation t', getAnnotation e')
-     in EIf i b' t' e'
-  EEq _ l r ->
-    let l' = hashCons l
-        r' = hashCons r
-        i = Hash $ hash (hash @Text "EEq", getAnnotation l', getAnnotation r')
-     in EEq i l' r'
-  ESplit _ n e ->
-    let e' = hashCons e
-        i = Hash $ hash (hash @Text "ESplit", n, getAnnotation e')
-     in ESplit i n e'
-  EJoin _ e ->
-    let e' = hashCons e
-        i = Hash $ hash (hash @Text "EJoin", getAnnotation e')
-     in EJoin i e'
-  EBundle _ b ->
-    let b' = V.map hashCons b
-        i = Hash $ hash (hash @Text "EBundle", toList $ fmap getAnnotation b')
-     in EBundle i b'
--}
 _unBundle ::
   forall n f ty.
   (KnownNat n) =>

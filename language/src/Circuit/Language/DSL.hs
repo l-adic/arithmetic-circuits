@@ -57,7 +57,6 @@ import GHC.TypeNats (type (+))
 import Lens.Micro ((.~), (^.))
 import Protolude
 import Unsafe.Coerce (unsafeCoerce)
-import Circuit (AffineCircuit (Var))
 
 --------------------------------------------------------------------------------
 type Signal f = Expr Wire f
@@ -112,13 +111,10 @@ eq :: Signal f f -> Signal f f -> Signal f Bool
 eq = EEq
 
 fieldInput :: InputType -> Text -> ExprM f (Var Wire f f)
-fieldInput it label = do
-  var <- case it of
+fieldInput it label =
+  case it of
     Public -> VarField <$> freshPublicInput label
     Private -> VarField <$> freshPrivateInput label
-  -- let i = rawWire var
-  -- emit $ Boolean (Var i) (Var i) (Var i)
-  pure var
 
 boolInput :: InputType -> Text -> ExprM f (Var Wire f Bool)
 boolInput it label = case it of

@@ -3,6 +3,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE  NoStarIsType #-}
+{-# OPTIONS_GHC -Wno-missing-signatures #-}
 -- | A straightforward, unoptimised <https://en.wikipedia.org/wiki/SHA-3 SHA3> implementation.
 --
 --    TODO: test on more than one block
@@ -46,7 +47,7 @@ complement_ = SV.map not_
 
 -- | Theta block permutation step
 theta :: forall f. GaloisField f => SHA3State f -> SHA3State f
-theta rows = trace @Text "theta" $ distribute $ SV.zipWith (map . xors) toXor $ distribute rows
+theta rows = distribute $ SV.zipWith (map . xors) toXor $ distribute rows
   where
     paritys :: Vector 5 (BitVector f 64)
     paritys = map (SV.foldl1 xors) (distribute rows)
@@ -60,7 +61,7 @@ theta rows = trace @Text "theta" $ distribute $ SV.zipWith (map . xors) toXor $ 
 
 -- | Rho block permutation step
 rho :: SHA3State f -> SHA3State f
-rho = trace @Text "rho" $ chunk . SV.zipWith (flip rotateLeft) rots . concatVec
+rho = chunk . SV.zipWith (flip rotateLeft) rots . concatVec
   where
     rots :: Vector 25 (Finite 64)
     rots =
@@ -75,7 +76,7 @@ rho = trace @Text "rho" $ chunk . SV.zipWith (flip rotateLeft) rots . concatVec
 
 -- | Pi block permutation step
 pi_ :: SHA3State f -> SHA3State f
-pi_ rows = trace @Text "pi" $
+pi_ rows =
   let as = concatVec rows
    in chunk $ map (\i -> as ^. SV.ix i) order
   where
@@ -90,7 +91,7 @@ pi_ rows = trace @Text "pi" $
 
 -- | Chi block permutation step
 chi :: forall f. GaloisField f => SHA3State f -> SHA3State f
-chi rows = trace @Text "chi" $ distribute $ 
+chi rows = distribute $ 
     SV.zipWith3 (SV.zipWith3 func) cols (rotateLeft cols (1 :: Finite 5)) (rotateLeft cols (2 :: Finite 5))
   where
     cols = distribute rows
@@ -108,7 +109,7 @@ iota ::
   Finite 24 ->
   SHA3State f ->
   SHA3State f
-iota i rows = trace @Text"iota" $ do
+iota i rows =
   let row1 = SV.head rows
       x = SV.head row1
       rest0 = SV.tail row1
@@ -146,33 +147,10 @@ iota i rows = trace @Text"iota" $ do
 
 -- | Block permutation round
 round_ :: (GaloisField f) => Finite 24 -> SHA3State f -> SHA3State f
-round_ i = 
-  trace @Text "round_" $
-    iota i . chi . pi_ . rho . theta
+round_ i = iota i . chi . pi_ . rho . theta
 
 rounds :: Vector 2 (Finite 24)
 rounds = fromJust $ SV.fromList [0 .. 1]
-
-
-keccakF :: forall f. GaloisField f => SHA3State f -> SHA3State f
-keccakF st = SV.foldl (flip round_) st rounds
-
-
-{-
-
-absorbBlock :: Int -> V.Vector Word64 -> V.Vector Word64 -> V.Vector Word64
-absorbBlock !rate !state !input
-    | V.null input = state
-    | otherwise    = absorbBlock rate (keccakF state') (V.drop (div rate 64) input)
-    -- TODO this can be optimized with some sort of in-place manipulation
-    where state' = V.imap (\z el -> if div z 5 + 5 * mod z 5 < threshold
-                                    then el `xor` (input ! (div z 5 + 5 * mod z 5))
-                                    else el) state
-          threshold = div rate laneWidth
-
-
--}
-
 
 -- | Xor the data to be hashed into the block
 updateState ::  forall n n0 f.
@@ -182,7 +160,7 @@ updateState ::  forall n n0 f.
   Vector n (BitVector f 64) -> 
   SHA3State f -> 
   SHA3State f
-updateState dat st = trace @Text "updateState" $
+updateState dat st =
   chunk $ SV.zipWith xors (concatVec st) (dat SV.++ SV.replicate zeroBits_)
 
 -- | SHA3
@@ -192,7 +170,7 @@ sha3 :: forall f n n0.
   KnownNat n0 =>
   Vector n (BitVector f 64) ->
   SHA3State f
-sha3 dat = trace @Text "sha3" $
+sha3 dat =
   foldl (\st i -> round_ i (updateState dat st)) emptyState rounds
 
 
@@ -212,7 +190,7 @@ sha3Packed ::
   KnownNat outputSize =>
   Vector inputSize (BitVector f 64) ->
   BitVector f outputSize
-sha3Packed dat = trace @Text "sha3Packed" $
+sha3Packed dat =
   SV.reverse . SV.take . SV.reverse . concatVec . map (swapEndian @8) . concatVec $ sha3 dat
 
 sha3_224 = sha3Packed @18 @224
@@ -227,8 +205,7 @@ swapEndian
     :: forall n f. KnownNat n
     => BitVector f (8 * n)
     -> BitVector f (8 * n)
-swapEndian = trace @Text "swapEndian" $
-  concatVec . SV.reverse . chunk @8
+swapEndian = concatVec . SV.reverse . chunk @8
 
 revBV :: forall n f. BitVector f n -> BitVector f  n
 revBV = SV.reverse

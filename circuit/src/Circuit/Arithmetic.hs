@@ -17,6 +17,7 @@ module Circuit.Arithmetic
     relabel,
     collectCircuitVars,
     booleanWires,
+    nGates
   )
 where
 
@@ -343,3 +344,6 @@ booleanWires (ArithCircuit gates) = foldMap f gates
   where
     f (Boolean i) = Set.singleton i
     f _ = mempty
+
+nGates :: ArithCircuit f -> Int
+nGates (ArithCircuit gates) = length gates

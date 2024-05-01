@@ -92,6 +92,7 @@ library language
     , hashable
     , intern == 0.9.5
     , microlens
+    , mtl
     , vector
     , vector-sized
 
