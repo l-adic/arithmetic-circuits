@@ -10,6 +10,7 @@ module Circuit.Language.TExpr
     Expr (..),
     evalExpr,
     rawWire,
+    rawVal,
     Ground (..),
     type NBits,
   )
@@ -28,16 +29,26 @@ data Val f ty where
   ValField :: f -> Val f f
   ValBool :: f -> Val f Bool
 
+deriving instance (Eq f) => Eq (Val f ty)
 deriving instance (Show f) => Show (Val f ty)
 
 instance (Pretty f) => Pretty (Val f ty) where
   pretty (ValField f) = pretty f
   pretty (ValBool b) = pretty b
 
+rawVal :: Val f ty -> f
+rawVal (ValField f) = f
+rawVal (ValBool f) = f
+
+instance Hashable f => Hashable (Val f ty) where
+  hashWithSalt s (ValField f) = s `hashWithSalt ` ("ValField" :: Text) `hashWithSalt` f
+  hashWithSalt s (ValBool f) = s `hashWithSalt` ("ValBool" :: Text) `hashWithSalt` f
+
 data Var i f ty where
   VarField :: i -> Var i f f
   VarBool :: i -> Var i f Bool
 
+deriving instance (Eq i) => Eq (Var i f ty)
 deriving instance (Show i, Show f) => Show (Var i f ty)
 
 instance (Pretty i) => Pretty (Var i f ty) where
@@ -48,16 +59,25 @@ rawWire :: Var i f ty -> i
 rawWire (VarField i) = i
 rawWire (VarBool i) = i
 
+instance Hashable i => Hashable (Var i f ty) where
+  hashWithSalt s (VarField v) = s `hashWithSalt` ("VarField" :: Text) `hashWithSalt` v
+  hashWithSalt s (VarBool f) = s `hashWithSalt` ("VarBool" :: Text) `hashWithSalt` f
+
 data UnOp f a where
   UNeg :: UnOp f f
   UNot :: UnOp f Bool
 
 deriving instance (Show f) => Show (UnOp f a)
+deriving instance Eq (UnOp f a)
 
 instance Pretty (UnOp f a) where
   pretty op = case op of
     UNeg -> text "neg"
     UNot -> text "!"
+
+instance Hashable (UnOp f a) where
+  hashWithSalt s UNeg = s `hashWithSalt` ("UNeg" :: Text)
+  hashWithSalt s UNot = s `hashWithSalt` ("UNot" :: Text)
 
 data BinOp f a where
   BAdd :: BinOp f f
@@ -69,6 +89,16 @@ data BinOp f a where
   BXor :: BinOp f Bool
 
 deriving instance (Show f) => Show (BinOp f a)
+deriving instance Eq (BinOp f a)
+
+instance Hashable (BinOp f a) where
+  hashWithSalt s BAdd = s `hashWithSalt` ("BAdd" :: Text)
+  hashWithSalt s BSub = s `hashWithSalt` ("BSub" :: Text)
+  hashWithSalt s BMul = s `hashWithSalt` ("BMul" :: Text)
+  hashWithSalt s BDiv = s `hashWithSalt` ("BDiv" :: Text)
+  hashWithSalt s BAnd = s `hashWithSalt` ("BAnd" :: Text)
+  hashWithSalt s BOr = s `hashWithSalt` ("BOr" :: Text)
+  hashWithSalt s BXor = s `hashWithSalt` ("BXor" :: Text)
 
 instance Pretty (BinOp f a) where
   pretty op = case op of
@@ -123,6 +153,8 @@ data Expr i f ty where
   ESplit :: (KnownNat (NBits f)) => Expr i f f -> Expr i f (SV.Vector (NBits f) Bool)
   EJoin :: (KnownNat n) => Expr i f (SV.Vector n Bool) -> Expr i f f
   EBundle :: SV.Vector n (Expr i f ty) -> Expr i f (SV.Vector n ty)
+
+deriving instance (Show i, Show f) => Show (Expr i f ty)
 
 instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
   pretty = prettyPrec 0

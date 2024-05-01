@@ -42,7 +42,7 @@ prop_bitsSplitJoin x =
   let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder bitSplitJoin
       input = assignInputs bsVars $ Map.singleton "x" x
       w = solve bsVars bsCircuit input
-   in lookupVar bsVars "out" w == Just x
+   in lookupVar bsVars "out" w == x
 
 prop_bitsSplitJoinContra :: Fr -> Fr -> Property
 prop_bitsSplitJoinContra x y =
@@ -50,7 +50,7 @@ prop_bitsSplitJoinContra x y =
     let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder bitSplitJoin
         input = assignInputs bsVars $ Map.singleton "x" x
         w = solve bsVars bsCircuit input
-     in fromJust (lookupVar bsVars "out" w) /= y
+     in lookupVar bsVars "out" w /= y
 
 factors :: ExprM Fr (Var Wire Fr Bool)
 factors = do
@@ -65,7 +65,7 @@ prop_factorization x y =
   let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder factors
       inputs = assignInputs bsVars $ Map.fromList [("n", x * y), ("a", x), ("b", y)]
       w = solve bsVars bsCircuit inputs
-   in lookupVar bsVars "out" w == Just 1
+   in lookupVar bsVars "out" w == 1
 
 prop_factorizationContra :: Fr -> Fr -> Fr -> Property
 prop_factorizationContra x y z =
@@ -73,7 +73,7 @@ prop_factorizationContra x y z =
     let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder factors
         inputs = assignInputs bsVars $ Map.fromList [("n", z), ("a", x), ("b", y)]
         w = solve bsVars bsCircuit inputs
-     in lookupVar bsVars "out" w == Just 0
+     in lookupVar bsVars "out" w == 0
 
 bitIndex :: Finite (NBits Fr) -> ExprM Fr (Var Wire Fr Bool)
 bitIndex i = do
@@ -88,7 +88,7 @@ prop_bitIndex i x =
       BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (bitIndex $ fromIntegral _i)
       input = assignInputs bsVars $ Map.singleton "x" x
       w = solve bsVars bsCircuit input
-   in (lookupVar bsVars "out" w) == Just (if testBit _x _i then 1 else 0)
+   in (lookupVar bsVars "out" w) ==  if testBit _x _i then 1 else 0
 
 setAtIndex :: Finite (NBits Fr) -> Bool -> ExprM Fr (Var Wire Fr Fr)
 setAtIndex i b = do
@@ -105,7 +105,7 @@ prop_setAtIndex i x b =
       input = assignInputs bsVars $ Map.singleton "x" x
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
-   in res == Just (fromInteger $ if b then setBit _x _i else clearBit _x _i)
+   in res == (fromInteger $ if b then setBit _x _i else clearBit _x _i)
 
 -- TODO: investigate why this one is SCARY SLOW
 bundleUnbundle :: ExprM Fr (Var Wire Fr Fr)
@@ -124,7 +124,7 @@ prop_bundleUnbundle x =
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
       expected = foldl (\acc i -> acc + if testBit _x i then 0 else 1) 0 [0 .. nBits - 1]
-   in res == Just (fromInteger expected)
+   in res == fromInteger expected
 
 sharingProg :: ExprM Fr (Var Wire Fr Fr)
 sharingProg = do
@@ -142,7 +142,7 @@ prop_sharingProg x y =
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
       expected = fromInteger $ sum $ replicate 10 (_x * _y)
-   in res == Just expected
+   in res == expected
 
 sha3Program :: ExprM Fr (Vector 256 (Var Wire Fr Bool))
 sha3Program = do
@@ -157,10 +157,12 @@ sha3Program = do
 _fieldToBool :: Fr -> Bool
 _fieldToBool x = x /= 0
 
-lookupVar :: CircuitVars Text -> Text -> Map Int f -> Maybe f
+lookupVar :: CircuitVars Text -> Text -> Map Int f -> f
 lookupVar vs label sol = do
-  var <- Map.lookup label (cvInputsLabels vs)
-  Map.lookup var sol
+  let var = fromMaybe (panic $ "Missing label " <> label) $ Map.lookup label (cvInputsLabels vs)
+  case Map.lookup var sol of
+    Just v -> v
+    Nothing -> panic $ "Variable not found: " <> show var
 
 assignInputs :: CircuitVars Text -> Map Text f -> Map Int f
 assignInputs CircuitVars {..} inputs =
@@ -209,17 +211,19 @@ prop hashFunc mdlen vec = monadicIO $ run $ do
   let input =
         assignInputs shaVars $ assignments
   let w = altSolve shaCircuit input
-  print $ "Solution: " ++ show (Map.size  w)
+  print "Solving..."
+  print $ "Solution: " ++ show (Map.size w)
+  print $ (Set.toAscList $ cvVars shaVars)
   let outIndices :: [Finite 256]
       outIndices = [minBound .. maxBound]
       res :: [Bool]
-      res = map (\i -> _fieldToBool $ fromJust $ lookupVar shaVars ("out_" <> show (fromIntegral @_ @Int i)) w) outIndices
+      res = map (\i -> _fieldToBool $ lookupVar shaVars ("out_" <> show (fromIntegral @_ @Int i)) w) outIndices
   let str = reverse $ map unpack $ chunkList 8 $ toList inputVec
   let resStr = take mdlen $ mkOutput res
   let testIn = mkOutput $ toList inputVec
   let expect = hashFunc testIn
   print $ Prelude.show expect
-  dotWriteSVG "hash" $ arithCircuitToDot shaCircuit
+ -- dotWriteSVG "hash" $ arithCircuitToDot shaCircuit
 
   pure $ resStr === expect
 

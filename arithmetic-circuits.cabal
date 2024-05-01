@@ -90,11 +90,12 @@ library language
     , cryptohash-sha256
     , distributive
     , hashable
+    , intern == 0.9.5
     , microlens
     , vector
     , vector-sized
 
-  ghc-options:        -freverse-errors -O2 -Wall
+  ghc-options:        -freverse-errors  -O0 -Wall
 
   default-language:   GHC2021
 
@@ -131,7 +132,7 @@ test-suite language-tests
 
   hs-source-dirs:     language/test
 
-  ghc-options:        -freverse-errors -O2 -Wall -main-is Main
+  ghc-options:        -freverse-errors  -O0 -Wall -main-is Main
   build-depends:
       arithmetic-circuits
     , arithmetic-circuits:language
