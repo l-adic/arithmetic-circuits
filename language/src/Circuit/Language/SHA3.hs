@@ -148,8 +148,8 @@ iota i rows =
 round_ :: (Hashable f, Num f) => Finite 24 -> SHA3State f -> SHA3State f
 round_ i = iota i . chi . pi_ . rho . theta
 
-rounds :: Vector 4 (Finite 24)
-rounds = fromJust $ SV.fromList [0 .. 3]
+rounds :: Vector 6 (Finite 24)
+rounds = fromJust $ SV.fromList [0 .. 5]
 
 -- | Xor the data to be hashed into the block
 updateState ::  forall n n0 f.
