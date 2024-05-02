@@ -99,9 +99,6 @@ spec_sudokuSolver = do
               map (first (\a -> "private_cell_" <> show (fst a) <> show (snd a))) $
                 filter (\(_, v) -> v /= 0) sol
             BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
-        print $ "NVars " ++ show (length $ cvVars bsVars)
-        print $ "NGates " ++ show (nGates bsCircuit)
-
         let pubInputs =
               Map.fromList $
                 [ (_var, fromIntegral value)

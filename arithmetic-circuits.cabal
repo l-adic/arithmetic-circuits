@@ -77,10 +77,8 @@ library language
   import: deps, extensions, warnings
   visibility: public
   exposed-modules:
-    Circuit.Language.CacheCompile
     Circuit.Language.Compile
     Circuit.Language.Expr
-    Circuit.Language.TExpr
     Circuit.Language.DSL
     Circuit.Language
     Circuit.Language.SHA3

@@ -47,7 +47,7 @@ where
 
 import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
 import Circuit.Language.Compile
-import Circuit.Language.TExpr
+import Circuit.Language.Expr
 import Data.Field.Galois (GaloisField, Prime, PrimeField)
 import Data.Finite (Finite)
 import Data.Maybe (fromJust)

@@ -18,7 +18,7 @@ where
 
 import Circuit.Affine
 import Circuit.Arithmetic
-import Circuit.Language.TExpr
+import Circuit.Language.Expr
 import Data.Field.Galois (GaloisField)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
