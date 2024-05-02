@@ -1,4 +1,4 @@
-{-# LANGUAGE  TypeFamilies #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Circuit.Language.Expr
   ( Expr (..),
@@ -15,18 +15,18 @@ module Circuit.Language.Expr
     join_,
     bundle,
     getId,
-    termCache
+    termCache,
   )
 where
 
+import Data.Interned
 import Data.Vector qualified as V
 import Protolude hiding (Semiring)
-import Data.Interned
 
 newtype UVar i = UVar i
   deriving (Show, Eq)
 
-instance Hashable i => Hashable (UVar i) where
+instance (Hashable i) => Hashable (UVar i) where
   hashWithSalt s (UVar i) = s `hashWithSalt` ("UVar" :: Text) `hashWithSalt` i
 
 data BinOp = BAdd | BSub | BMul | BDiv | BAnd | BOr | BXor deriving (Show, Eq, Generic)
@@ -65,7 +65,7 @@ getId = \case
 data CacheExpr i f where
   CEVal :: f -> CacheExpr i f
   CEVar :: UVar i -> CacheExpr i f
-  CEUnOp ::  UnOp -> Expr i f -> CacheExpr i f
+  CEUnOp :: UnOp -> Expr i f -> CacheExpr i f
   CEBinOp :: BinOp -> Expr i f -> Expr i f -> CacheExpr i f
   CEIf :: Expr i f -> Expr i f -> Expr i f -> CacheExpr i f
   CEEq :: Expr i f -> Expr i f -> CacheExpr i f
@@ -73,7 +73,7 @@ data CacheExpr i f where
   CEJoin :: Expr i f -> CacheExpr i f
   CEBundle :: V.Vector (Expr i f) -> CacheExpr i f
 
-deriving instance (Show i, Show f) => Show (CacheExpr i f) 
+deriving instance (Show i, Show f) => Show (CacheExpr i f)
 
 termCache :: (Hashable i, Hashable f) => Cache (Expr i f)
 termCache = mkCache
@@ -81,17 +81,17 @@ termCache = mkCache
 
 instance (Hashable i, Hashable f) => Interned (Expr i f) where
   type Uninterned (Expr i f) = CacheExpr i f
-  data Description (Expr i f) = 
-                   DVal f
-                 | DVar (UVar i)
-                 | DUnOp UnOp Id
-                 | DBinOp BinOp Id Id
-                 | DIf Id Id Id
-                 | DEq Id Id
-                 | DSplit Int Id
-                 | DJoin Id
-                 | DBundle Id
-                   deriving (Show, Eq)
+  data Description (Expr i f)
+    = DVal f
+    | DVar (UVar i)
+    | DUnOp UnOp Id
+    | DBinOp BinOp Id Id
+    | DIf Id Id Id
+    | DEq Id Id
+    | DSplit Int Id
+    | DJoin Id
+    | DBundle Id
+    deriving (Show, Eq)
   describe (CEVal v) = DVal v
   describe (CEVar v) = DVar v
   describe (CEUnOp op e) = DUnOp op (getId e)
@@ -102,17 +102,17 @@ instance (Hashable i, Hashable f) => Interned (Expr i f) where
   describe (CEJoin i) = DJoin (getId i)
   describe (CEBundle i) = DBundle (hash $ map getId $ toList i)
 
-
-  identify _id = go where
-    go (CEVal v) = EVal _id v
-    go (CEVar v) = EVar _id v
-    go (CEUnOp op e) = EUnOp _id op e
-    go (CEBinOp op e1 e2) = EBinOp _id op e1 e2
-    go (CEIf b t f) = EIf _id b t f
-    go (CEEq l r) = EEq _id l r
-    go (CESplit n i) = ESplit _id n i
-    go (CEJoin i) = EJoin _id i
-    go (CEBundle i) = EBundle _id i
+  identify _id = go
+    where
+      go (CEVal v) = EVal _id v
+      go (CEVar v) = EVar _id v
+      go (CEUnOp op e) = EUnOp _id op e
+      go (CEBinOp op e1 e2) = EBinOp _id op e1 e2
+      go (CEIf b t f) = EIf _id b t f
+      go (CEEq l r) = EEq _id l r
+      go (CESplit n i) = ESplit _id n i
+      go (CEJoin i) = EJoin _id i
+      go (CEBundle i) = EBundle _id i
 
   cache = termCache
 

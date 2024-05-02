@@ -28,7 +28,6 @@ import Data.Vector.Sized qualified as SV
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
-import Control.Monad.Cont (ContT (runContT))
 
 -------------------------------------------------------------------------------
 -- Circuit Builder
@@ -38,7 +37,7 @@ data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
     bsVars :: CircuitVars Text,
-    bsMemoMap :: Map Int (V.Vector (SignalSource f))
+    bsMemoMap :: Map Hash (V.Vector (SignalSource f))
   }
 
 defaultBuilderState :: BuilderState f
@@ -245,35 +244,49 @@ compile :: (Hashable f, GaloisField f)
   => (MonadError (CircuitBuilderError f) m)
   => Expr Wire f ty -> 
      m (V.Vector (SignalSource f))
-compile e = runContT (_compile e) pure
+compile e = do
+  let g = reifyGraph e
+  go g
+  where
+    go [] = panic "empty graph"
+    go [x] = _compile x
+    go (x : xs) = _compile x >> go xs
 
 _compile ::
-  forall f r m ty.
+  forall f m.
   (Hashable f, GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  Expr Wire f ty ->
-  ContT r m (V.Vector (SignalSource f))
-_compile expr = withCompilerCache (getId expr) $ case expr of
-  EVal _ f -> pure $ V.singleton $ AffineSource $ ConstGate (rawVal f)
-  EVar _ v -> pure . V.singleton $ WireSource (rawWire v)
-  EUnOp _ op e1 -> do
-    e1Outs <- memoizedCompile e1
-    for e1Outs $ \e1Out ->
+  (Hash, Node Wire f) ->
+  m (V.Vector (SignalSource f))
+_compile (h, expr) = case expr of
+  NVal f -> do
+    let source = V.singleton $ AffineSource $ ConstGate f
+    cachResult h source
+    pure source
+  NVar v -> do
+    let source = V.singleton $ WireSource v
+    cachResult h source
+    pure source 
+  NUnOp op e -> do
+    eOuts <- assertFromCache e
+    let f eOut = case op of
+          UUNeg -> AffineSource $ ScalarMul (-1) (addVar eOut)
+          UUNot -> AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar eOut))
+        source = map f eOuts
+    cachResult h source
+    pure source
+  NBinOp op e1 e2 -> do
+    e1Outs <- assertFromCache e1
+    e2Outs <- assertFromCache e2
+    assertSameSourceSize e1Outs e2Outs
+    source <- for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
       case op of
-        UNeg -> pure . AffineSource $ ScalarMul (-1) (addVar e1Out)
-        UNot -> pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
-  EBinOp _ op e1 e2 -> do
-    e1Outs <- memoizedCompile e1
-    e2Outs <- memoizedCompile e2
-    lift $ assertSameSourceSize e1Outs e2Outs
-    for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
-      case op of
-        BAdd -> pure . AffineSource $ Add e1Out e2Out
-        BMul -> do
+        UBAdd -> pure . AffineSource $ Add e1Out e2Out
+        UBMul -> do
           tmp1 <- mulToImm (AffineSource e1Out) (AffineSource e2Out)
           pure . WireSource $ tmp1
-        BDiv -> do
+        UBDiv -> do
           _recip <- imm
           _one <- addWire $ AffineSource $ ConstGate 1
           emit $ Mul e2Out (Var _recip) _one
@@ -281,84 +294,89 @@ _compile expr = withCompilerCache (getId expr) $ case expr of
           emit $ Mul e1Out (Var _recip) out
           pure $ WireSource out
         -- SUB(x, y) = x + (-y)
-        BSub -> pure . AffineSource $ Add e1Out (ScalarMul (-1) e2Out)
-        BAnd -> do
+        UBSub -> pure . AffineSource $ Add e1Out (ScalarMul (-1) e2Out)
+        UBAnd -> do
           tmp1 <- mulToImm (AffineSource e1Out) (AffineSource e2Out)
           pure . WireSource $ tmp1
-        BOr -> do
+        UBOr -> do
           -- OR(input1, input2) = (input1 + input2) - (input1 * input2)
           tmp1 <- imm
           emit $ Mul e1Out e2Out tmp1
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-1) (Var tmp1))
-        BXor -> do
+        UBXor -> do
           -- XOR(input1, input2) = (input1 + input2) - 2 * (input1 * input2)
           tmp1 <- imm
           emit $ Mul e1Out e2Out tmp1
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
-  -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
-  EIf _ cond true false -> do
-    condOut <- addVar <$> (memoizedCompile cond >>= lift . assertSingleSource)
-    trueOuts <- memoizedCompile true
-    falseOuts <- memoizedCompile false
-    lift $ assertSameSourceSize trueOuts falseOuts
+    cachResult h source
+    pure source
+
+  NIf cond true false -> do
+    condOut <- addVar <$> (assertFromCache cond >>= assertSingleSource)
+    trueOuts <- assertFromCache true
+    falseOuts <- assertFromCache false
+    assertSameSourceSize trueOuts falseOuts
     tmp1 <- imm
     for_ (addVar <$> trueOuts) $ \trueOut ->
       emit $ Mul condOut trueOut tmp1
     tmp2 <- imm
     for_ (addVar <$> falseOuts) $ \falseOut ->
       emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
-    pure . V.singleton . AffineSource $ Add (Var tmp1) (Var tmp2)
-  -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
-  EEq _ lhs rhs -> do
-    -- assertSingle is justified as the lhs and rhs must be of type f
-    let h = hash (BSub, getId lhs, getId rhs)
-        e = EBinOp h BSub lhs rhs
+    let source = V.singleton . AffineSource $ Add (Var tmp1) (Var tmp2)
+    cachResult h source
+    pure source
+
+  NEq lhs rhs -> do
+    let e = NBinOp UBSub lhs rhs
     eqInWire <- do
-      eOut <- withCompilerCache h (memoizedCompile e)
-      lift (assertSingleSource eOut) >>= addWire
+      eOut <- _compile (Hash $ hash e, e)
+      assertSingleSource eOut >>= addWire
     eqFreeWire <- imm
     eqOutWire <- imm
     emit $ Equal eqInWire eqFreeWire eqOutWire
     emit $ Boolean eqOutWire
     -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
     -- neqOutWire instead.
-    pure . V.singleton . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
-  ESplit _ input -> do
-    let n = fromIntegral $ natVal (Proxy @(NBits f))
-    -- assertSingle is justified as the input must be of type f
-    i <- memoizedCompile input >>= lift . assertSingleSource >>= addWire
+    let source = V.singleton . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
+    cachResult h source
+    pure source
+
+  NSplit input n -> do
+    i <- assertFromCache input >>= assertSingleSource >>= addWire
     outputs <- V.generateM n $ \_ -> do
       w <- imm
       emit $ Boolean w
       pure w
     emit $ Split i (V.toList outputs)
-    fold
+    source <- fold
       <$> for
         outputs
-        ( \o ->
-            let v = VarBool o
-                h = hash v
-                e = EVar h v
-             in memoizedCompile e
+        ( \o -> do
+            -- TODO this is kind of a hack
+            let e = NVar o
+            res <- _compile (Hash $ hash e, e)
+            pure res
         )
-  EBundle _ as -> do
-    as' <- traverse memoizedCompile as
-    pure $ fold as'
-  EJoin _ bits -> do
-    bs <- toList <$> memoizedCompile bits
+    cachResult h source
+    pure source
+  NBundle as -> do
+    source <- fold <$> traverse assertFromCache as
+    cachResult h source
+    pure source
+
+  NJoin bits -> do
+    bs <- toList <$> assertFromCache bits
     ws <- traverse addWire bs
     pure . V.singleton . AffineSource $ unsplit ws
   where
-    withCompilerCache i m = do
-      res <- m
-      modify $ \s -> s {bsMemoMap = Map.insert i res (bsMemoMap s)}
-      pure res
-
-    memoizedCompile e = do
+    cachResult :: Hash -> V.Vector (SignalSource f) -> m ()
+    cachResult i ws = modify $ \s -> s {bsMemoMap = Map.insert i ws (bsMemoMap s)}
+    assertFromCache :: Hash -> m (V.Vector (SignalSource f))
+    assertFromCache i = do
       m <- gets bsMemoMap
-      case Map.lookup (getId e) m of
+      case Map.lookup i m of
         Just ws -> pure ws
-        Nothing -> _compile e
+        Nothing -> panic $ "assertFromCache failed on key " <> show i
 
 exprToArithCircuit ::
   (Hashable f, GaloisField f) =>
@@ -393,4 +411,4 @@ _unBundle ::
 _unBundle b = do
   bis <- compile  b
   ws <- traverse addWire bis
-  pure $ fromJust $ SV.toSized (var . VarField <$> ws)
+  pure $ fromJust $ SV.toSized (var_ . VarField <$> ws)

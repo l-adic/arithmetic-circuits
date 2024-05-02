@@ -17,7 +17,7 @@ module Circuit.Arithmetic
     relabel,
     collectCircuitVars,
     booleanWires,
-    nGates
+    nGates,
   )
 where
 
@@ -29,6 +29,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Field.Galois (PrimeField, fromP)
 import Data.Map qualified as Map
 import Data.Set qualified as Set
+import Data.Text qualified as Text
 import Protolude
 import Text.PrettyPrint.Leijen.Text as PP
   ( Pretty (..),
@@ -65,7 +66,8 @@ instance Pretty Wire where
     let a = case t of
           Public -> "pub"
           Private -> "priv"
-     in text (a <> "_input_") <> pretty v <> "_" <> pretty label
+        lbl' = if Text.null label then show v else label
+     in text (a <> "_input_") <> pretty v <> "_" <> pretty lbl'
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
 

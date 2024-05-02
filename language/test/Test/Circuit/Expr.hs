@@ -24,24 +24,24 @@ arbExprBool :: (GaloisField f, Hashable f) => Int -> Int -> Gen (Signal f Bool)
 arbExprBool numVars size
   | size <= 0 =
       oneof $
-        [val . ValBool <$> oneof [pure 0, pure 1]]
+        [val_ . ValBool <$> oneof [pure 0, pure 1]]
           ++ if numVars > 0
             then []
             else []
   | otherwise =
       oneof
-        [ binOp BAnd
+        [ binOp_ BAnd
             <$> arbExprBool numVars (size - 1)
             <*> arbExprBool
               numVars
               (size - 1),
-          binOp BOr
+          binOp_ BOr
             <$> arbExprBool numVars (size - 1)
             <*> arbExprBool
               numVars
               (size - 1),
-          unOp UNot <$> arbExprBool numVars (size - 1),
-          eq
+          unOp_ UNot <$> arbExprBool numVars (size - 1),
+          eq_
             <$> arbExpr numVars (size - 1)
             <*> arbExpr numVars (size - 1)
         ]
@@ -50,16 +50,16 @@ arbExpr :: (GaloisField f, Hashable f) => Int -> Int -> Gen (Signal f f)
 arbExpr numVars size
   | size <= 0 =
       oneof $
-        [val . ValField <$> arbitrary]
+        [val_ . ValField <$> arbitrary]
           ++ if numVars > 0
-            then [var . VarField . InputWire "" Public <$> choose (0, numVars - 1)]
+            then [var_ . VarField . InputWire "" Public <$> choose (0, numVars - 1)]
             else []
   | otherwise =
       oneof
-        [ binOp BAdd <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
-          binOp BSub <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
-          binOp BMul <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
-          unOp UNeg <$> arbExpr numVars (size - 1),
+        [ binOp_ BAdd <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
+          binOp_ BSub <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
+          binOp_ BMul <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
+          unOp_ UNeg <$> arbExpr numVars (size - 1),
           if_
             <$> arbExprBool numVars (size - 1)
             <*> arbExpr numVars (size - 1)

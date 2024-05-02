@@ -15,7 +15,7 @@ module Circuit.Language.DSL
     or_,
     xor_,
     not_,
-    eq,
+    eq_,
     deref,
     retBool,
     retField,
@@ -26,8 +26,8 @@ module Circuit.Language.DSL
     retBools,
     cond,
     compileWithWire,
-    splitBits,
-    joinBits,
+    split_,
+    join_,
     atIndex,
     updateIndex_,
     truncate_,
@@ -62,11 +62,11 @@ import Unsafe.Coerce (unsafeCoerce)
 type Signal f = Expr Wire f
 
 -- | Convert constant to expression
-cField :: Hashable f =>f -> Signal f f
-cField = val . ValField
+cField :: (Hashable f) => f -> Signal f f
+cField = val_ . ValField
 
 cBool :: (Hashable f, Num f) => Bool -> Signal f Bool
-cBool b = val . ValBool $ if b then 1 else 0
+cBool b = val_ . ValBool $ if b then 1 else 0
 
 -- | Binary arithmetic operations on expressions
 add, sub, mul :: (Hashable f, Num f) => Signal f f -> Signal f f -> Signal f f
@@ -77,18 +77,14 @@ mul = (*)
 -- | Binary logic operations on expressions
 -- Have to use underscore or similar to avoid shadowing @and@ and @or@
 -- from Prelude/Protolude.
-and_, or_, xor_ :: Signal f Bool -> Signal f Bool -> Signal f Bool
-and_ = binOp BAnd
-
-or_ = binOp BOr
-
-
-xor_ = binOp BXor
+and_, or_, xor_ :: (Hashable f) => Signal f Bool -> Signal f Bool -> Signal f Bool
+and_ = binOp_ BAnd
+or_ = binOp_ BOr
+xor_ = binOp_ BXor
 
 -- | Negate expression
-not_ :: Signal f Bool -> Signal f Bool
-not_ = unOp UNot
-
+not_ :: (Hashable f) => Signal f Bool -> Signal f Bool
+not_ = unOp_ UNot
 
 fieldInput :: InputType -> Text -> ExprM f (Var Wire f f)
 fieldInput it label =
@@ -108,20 +104,11 @@ fieldsInput :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire 
 fieldsInput it label = SV.generateM $ \i -> fieldInput it $ label <> show (fromIntegral @_ @Int i)
 
 -- | Conditional statement on expressions
-cond :: Signal f Bool -> Signal f ty -> Signal f ty -> Signal f ty
+cond :: (Hashable f) => Signal f Bool -> Signal f ty -> Signal f ty -> Signal f ty
 cond = if_
 
-splitBits ::
-  (KnownNat (NBits f)) =>
-  Signal f f ->
-  Signal f (Vector (NBits f) Bool)
-splitBits = split
-
-joinBits :: (KnownNat n) => Signal f (Vector n Bool) -> Signal f f
-joinBits = join_
-
-deref :: Var Wire f ty -> Signal f ty
-deref = var
+deref :: (Hashable f) => Var Wire f ty -> Signal f ty
+deref = var_
 
 retBool :: (GaloisField f, Hashable f) => Text -> Signal f Bool -> ExprM f (Var Wire f Bool)
 retBool label sig = compileWithWire (boolInput Public label) sig
@@ -129,13 +116,15 @@ retBool label sig = compileWithWire (boolInput Public label) sig
 retField :: (PrimeField f, Hashable f) => Text -> Signal f f -> ExprM f (Var Wire f f)
 retField label sig = compileWithWire (fieldInput Public label) sig
 
-retBools :: forall n f. 
-  (KnownNat n, GaloisField f, Hashable f) => 
-  Text -> 
-  Signal f (Vector n Bool) -> 
+retBools ::
+  forall n f.
+  (KnownNat n, GaloisField f, Hashable f) =>
+  Text ->
+  Signal f (Vector n Bool) ->
   ExprM f (Vector n (Var Wire f Bool))
-retBools label sig = fromJust . SV.toSized . unsafeCoerce <$> do
-  compileWithWires (SV.fromSized <$> fieldsInput @n Public label) sig
+retBools label sig =
+  fromJust . SV.toSized . unsafeCoerce <$> do
+    compileWithWires (SV.fromSized <$> fieldsInput @n Public label) sig
 
 atIndex ::
   (Bundled f (Vector n ty)) =>
@@ -173,15 +162,15 @@ truncate_ v = do
 
 newtype And_ f = And_ {unAnd_ :: Signal f Bool}
 
-instance Semigroup (And_ f) where
-  And_ a <> And_ b = And_ $ binOp BAnd a b
+instance (Hashable f) => Semigroup (And_ f) where
+  And_ a <> And_ b = And_ $ binOp_ BAnd a b
 
 instance (Num f, Hashable f) => Monoid (And_ f) where
   mempty = And_ $ cBool True
 
 newtype Any_ f = Any_ {unAny_ :: Signal f Bool}
 
-instance (Eq f, Num f) => Semigroup (Any_ f) where
+instance (Num f, Hashable f) => Semigroup (Any_ f) where
   Any_ a <> Any_ b = Any_ $ or_ a b
 
 instance (Eq f, Num f, Hashable f) => Monoid (Any_ f) where
@@ -197,7 +186,7 @@ instance (Hashable f, Num f) => Monoid (Add_ f) where
 
 newtype XOr_ f = XOr_ {unXOr_ :: Signal f Bool}
 
-instance (Eq f, Num f) => Semigroup (XOr_ f) where
+instance (Hashable f, Num f) => Semigroup (XOr_ f) where
   XOr_ a <> XOr_ b = XOr_ $ xor_ a b
 
 instance (Eq f, Num f, Hashable f) => Monoid (XOr_ f) where
@@ -211,7 +200,7 @@ elem_ ::
   t (Signal f f) ->
   Signal f Bool
 elem_ a as =
-  let f b = eq a b
+  let f b = eq_ a b
    in any_ f as
 
 all_ ::
@@ -264,10 +253,10 @@ rotateLeft ::
   Vector n a ->
   Finite d ->
   Vector n a
-rotateLeft xs d = 
+rotateLeft xs d =
   fromJust $ SV.fromList $ rotateList (negate $ fromIntegral d) $ SV.toList xs
 
 rotateList :: Int -> [a] -> [a]
-rotateList steps x = 
+rotateList steps x =
   let n = length x
-  in take n $ drop (steps `mod` n) $ cycle x
+   in take n $ drop (steps `mod` n) $ cycle x

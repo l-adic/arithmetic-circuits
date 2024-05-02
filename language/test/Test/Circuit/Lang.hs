@@ -7,20 +7,19 @@ module Test.Circuit.Lang where
 import Circuit
 import Circuit.Language
 import Circuit.Language.SHA3
-import Data.Field.Galois (Prime, PrimeField (fromP))
-import Data.Finite (Finite)
-import Data.Map qualified as Map
 import Crypto.Hash as CH
 import Data.ByteArray qualified as BA
 import Data.ByteString qualified as BS
+import Data.Field.Galois (Prime, PrimeField (fromP))
+import Data.Finite (Finite)
+import Data.Map qualified as Map
 import Data.Vector.Sized (Vector)
 import Data.Vector.Sized qualified as SV
 import GHC.TypeNats (type (*), type (+))
-import qualified Prelude
 import Protolude
-import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (===), (==>))
+import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (=/=), (===), (==>))
 import Test.QuickCheck.Monadic (monadicIO, run)
-
+import Prelude qualified
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
@@ -32,14 +31,14 @@ nBits = 254
 bitSplitJoin :: ExprM Fr (Var Wire Fr Fr)
 bitSplitJoin = do
   _x <- deref <$> fieldInput Public "x"
-  retField "out" $ joinBits $ splitBits _x
+  retField "out" $ join_ $ split_ _x
 
-prop_bitsSplitJoin :: Fr -> Bool
+prop_bitsSplitJoin :: Fr -> Property
 prop_bitsSplitJoin x =
   let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder bitSplitJoin
       input = assignInputs bsVars $ Map.singleton "x" x
       w = solve bsVars bsCircuit input
-   in lookupVar bsVars "out" w == x
+   in lookupVar bsVars "out" w === x
 
 prop_bitsSplitJoinContra :: Fr -> Fr -> Property
 prop_bitsSplitJoinContra x y =
@@ -47,14 +46,14 @@ prop_bitsSplitJoinContra x y =
     let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder bitSplitJoin
         input = assignInputs bsVars $ Map.singleton "x" x
         w = solve bsVars bsCircuit input
-    in lookupVar bsVars "out" w /= y
+     in lookupVar bsVars "out" w =/= y
 
 factors :: ExprM Fr (Var Wire Fr Bool)
 factors = do
   n <- deref <$> fieldInput Public "n"
   a <- deref <$> fieldInput Public "a"
   b <- deref <$> fieldInput Public "b"
-  let isFactorization = eq n (a * b)
+  let isFactorization = eq_ n (a * b)
   retBool "out" isFactorization
 
 prop_factorization :: Fr -> Fr -> Property
@@ -75,24 +74,24 @@ prop_factorizationContra x y z =
 bitIndex :: Finite (NBits Fr) -> ExprM Fr (Var Wire Fr Bool)
 bitIndex i = do
   x <- deref <$> fieldInput Public "x"
-  let bits = splitBits x
+  let bits = split_ x
   retBool "out" =<< atIndex i bits
 
-prop_bitIndex :: Int -> Fr -> Bool
+prop_bitIndex :: Int -> Fr -> Property
 prop_bitIndex i x =
   let _i = i `mod` nBits
       _x = fromP x
       BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (bitIndex $ fromIntegral _i)
       input = assignInputs bsVars $ Map.singleton "x" x
       w = solve bsVars bsCircuit input
-   in (lookupVar bsVars "out" w) ==  if testBit _x _i then 1 else 0
+   in (lookupVar bsVars "out" w) === if testBit _x _i then 1 else 0
 
 setAtIndex :: Finite (NBits Fr) -> Bool -> ExprM Fr (Var Wire Fr Fr)
 setAtIndex i b = do
   x <- deref <$> fieldInput Public "x"
-  let bits = splitBits x
+  let bits = split_ x
   bits' <- updateIndex_ i (cBool b) bits
-  retField "out" $ joinBits bits'
+  retField "out" $ join_ bits'
 
 prop_setAtIndex :: Int -> Fr -> Bool -> Property
 prop_setAtIndex i x b =
@@ -108,7 +107,7 @@ prop_setAtIndex i x b =
 bundleUnbundle :: ExprM Fr (Var Wire Fr Fr)
 bundleUnbundle = do
   x <- deref <$> fieldInput Public "x"
-  bits <- unbundle $ splitBits x
+  bits <- unbundle $ split_ x
   let negated = map not_ bits
   let res = unAdd_ $ foldMap (Add_ . coerceGroundType) negated
   retField "out" res
@@ -170,8 +169,6 @@ assignInputs CircuitVars {..} inputs =
           ]
    in res
 
-
-
 unpack :: [Bool] -> Word8
 unpack bools = foldl setBit zeroBits (map fst . filter snd $ indexedBools)
   where
@@ -189,7 +186,6 @@ boolToField False = 0
 
 --------------------------------------------------------------------------------
 
-
 BuilderState {bsVars = shaVars, bsCircuit = shaCircuit} = snd $ runCircuitBuilder sha3Program
 
 prop :: forall n n0. (((n + 1) + n0) ~ 25, KnownNat n0, KnownNat ((n + 1) * 64)) => ([Word8] -> [Word8]) -> Int -> Vector n (Vector 64 Bool) -> Property
@@ -199,8 +195,8 @@ prop hashFunc mdlen vec = monadicIO $ run $ do
       inIndices :: [Finite ((n + 1) * 64)]
       inIndices = [minBound .. maxBound]
       assignments =
-          Map.fromList $
-            map (\i -> ("b_" <> show @Int (fromIntegral i), boolToField $ inputVec `SV.index` i)) inIndices
+        Map.fromList $
+          map (\i -> ("b_" <> show @Int (fromIntegral i), boolToField $ inputVec `SV.index` i)) inIndices
   let input =
         assignInputs shaVars $ assignments
   let w = altSolve shaCircuit input
@@ -226,14 +222,15 @@ prop_sha256 (ArbVec v) =
 newtype ArbVec = ArbVec (Vector 16 (Vector 64 Bool)) deriving (Eq)
 
 instance Show ArbVec where
-  show (ArbVec v) = show $ mkOutput $ toList $  concatVec v
+  show (ArbVec v) = show $ mkOutput $ toList $ concatVec v
 
 instance Arbitrary (ArbVec) where
   arbitrary = ArbVec <$> SV.replicateM (SV.replicateM arbitrary)
 
 altSolve :: ArithCircuit Fr -> Map Int Fr -> Map Int Fr
-altSolve program inputs = evalArithCircuit
-          (\w m -> Map.lookup (wireName w) m)
-          (\w m -> Map.insert (wireName w) m)
-          program
-          inputs
+altSolve program inputs =
+  evalArithCircuit
+    (\w m -> Map.lookup (wireName w) m)
+    (\w m -> Map.insert (wireName w) m)
+    program
+    inputs

@@ -56,12 +56,12 @@ validateBoxes ss boxes =
   let f box = isPermutation (Vec.toList ss) (Vec.toList $ Vec.concat box)
    in all_ f $ Vec.concat boxes
 
-mkBoard :: ExprM f (Board (Signal f f))
+mkBoard :: (Hashable f) => ExprM f (Board (Signal f f))
 mkBoard =
   for (universe @Nat9) $ \i ->
     for (universe @Nat9) $ \j -> do
       let varName = "cell_" <> show i <> show j
-      var <$> fieldInput Public varName
+      var_ <$> fieldInput Public varName
 
 initializeBoard ::
   (PrimeField f, Hashable f) =>
@@ -72,8 +72,8 @@ initializeBoard board = do
     for (universe @Nat9) $ \j -> do
       let cell = board Vec.! i Vec.! j
           varName = "private_cell_" <> show i <> show j
-      v <- var <$> fieldInput Private varName
-      pure $ cond (cell `eq` cField 0) v cell
+      v <- var_ <$> fieldInput Private varName
+      pure $ cond (cell `eq_` cField 0) v cell
 
 validate :: (PrimeField f, Hashable f) => ExprM f (Var Wire f Bool)
 validate = do
@@ -99,6 +99,9 @@ spec_sudokuSolver = do
               map (first (\a -> "private_cell_" <> show (fst a) <> show (snd a))) $
                 filter (\(_, v) -> v /= 0) sol
             BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
+        print $ "NVars " ++ show (length $ cvVars bsVars)
+        print $ "NGates " ++ show (nGates bsCircuit)
+
         let pubInputs =
               Map.fromList $
                 [ (_var, fromIntegral value)
