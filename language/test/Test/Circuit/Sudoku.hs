@@ -30,13 +30,13 @@ mkBoxes :: Board a -> BoxGrid a
 mkBoxes = Vec.chunks @Nat3 . fmap (Vec.chunks @Nat3)
 
 sudokuSet ::
-  (Num f) =>
+  (Num f, Hashable f) =>
   SudokuSet (Signal f f)
 sudokuSet = Vec.tabulate (cField . (+ 1) . fromIntegral)
 
 isPermutation ::
   forall f.
-  (PrimeField f) =>
+  (PrimeField f, Hashable f) =>
   [Signal f f] ->
   [Signal f f] ->
   Signal f Bool
@@ -48,7 +48,7 @@ isPermutation as bs =
    in all_ f (zip as [0 ..])
 
 validateBoxes ::
-  (PrimeField f) =>
+  (PrimeField f, Hashable f) =>
   SudokuSet (Signal f f) ->
   BoxGrid (Signal f f) ->
   Signal f Bool
@@ -61,10 +61,10 @@ mkBoard =
   for (universe @Nat9) $ \i ->
     for (universe @Nat9) $ \j -> do
       let varName = "cell_" <> show i <> show j
-      EVar <$> fieldInput Public varName
+      var <$> fieldInput Public varName
 
 initializeBoard ::
-  (PrimeField f) =>
+  (PrimeField f, Hashable f) =>
   Board (Signal f f) ->
   ExprM f (Board (Signal f f))
 initializeBoard board = do
@@ -72,7 +72,7 @@ initializeBoard board = do
     for (universe @Nat9) $ \j -> do
       let cell = board Vec.! i Vec.! j
           varName = "private_cell_" <> show i <> show j
-      v <- EVar <$> fieldInput Private varName
+      v <- var <$> fieldInput Private varName
       pure $ cond (cell `eq` cField 0) v cell
 
 validate :: (PrimeField f, Hashable f) => ExprM f (Var Wire f Bool)
@@ -101,15 +101,15 @@ spec_sudokuSolver = do
             BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
         let pubInputs =
               Map.fromList $
-                [ (var, fromIntegral value)
-                  | (label, var) <- Map.toList $ cvInputsLabels bsVars,
+                [ (_var, fromIntegral value)
+                  | (label, _var) <- Map.toList $ cvInputsLabels bsVars,
                     (l, value) <- pubAssignments,
                     l == label
                 ]
             privInputs =
               Map.fromList $
-                [ (var, fromIntegral value)
-                  | (label, var) <- Map.toList $ cvInputsLabels bsVars,
+                [ (_var, fromIntegral value)
+                  | (label, _var) <- Map.toList $ cvInputsLabels bsVars,
                     (l, value) <- privAssignments,
                     l == label
                 ]

@@ -13,17 +13,26 @@ module Circuit.Language.TExpr
     rawVal,
     Ground (..),
     type NBits,
+    getId,
+    val,
+    var,
+    unOp,
+    binOp,
+    if_,
+    eq,
+    split,
+    join_,
+    bundle_,
   )
 where
 
-import Circuit.Arithmetic
-import Data.Field.Galois (GaloisField, PrimeField (fromP))
+import Data.Field.Galois (PrimeField (fromP))
 import Data.Map qualified as Map
-import Data.Semiring (Ring (..), Semiring (..))
 import Data.Vector.Sized qualified as SV
-import Protolude hiding (Semiring)
+import Protolude hiding (Semiring(..))
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
+import Data.Semiring (Semiring(..), Ring(..))
 
 data Val f ty where
   ValField :: f -> Val f f
@@ -144,17 +153,28 @@ instance Ground (Var i f) ty f where
 -- | Expression data type of (arithmetic) expressions over a field @f@
 -- with variable names/indices coming from @i@.
 data Expr i f ty where
-  EVal :: Val f ty -> Expr i f ty
-  EVar :: Var i f ty -> Expr i f ty
-  EUnOp :: UnOp f ty -> Expr i f ty -> Expr i f ty
-  EBinOp :: BinOp f ty -> Expr i f ty -> Expr i f ty -> Expr i f ty
-  EIf :: Expr i f Bool -> Expr i f ty -> Expr i f ty -> Expr i f ty
-  EEq :: Expr i f f -> Expr i f f -> Expr i f Bool
-  ESplit :: (KnownNat (NBits f)) => Expr i f f -> Expr i f (SV.Vector (NBits f) Bool)
-  EJoin :: (KnownNat n) => Expr i f (SV.Vector n Bool) -> Expr i f f
-  EBundle :: SV.Vector n (Expr i f ty) -> Expr i f (SV.Vector n ty)
+  EVal :: Int -> Val f ty -> Expr i f ty
+  EVar :: Int -> Var i f ty -> Expr i f ty
+  EUnOp :: Int -> UnOp f ty -> Expr i f ty -> Expr i f ty
+  EBinOp :: Int -> BinOp f ty -> Expr i f ty -> Expr i f ty -> Expr i f ty
+  EIf :: Int -> Expr i f Bool -> Expr i f ty -> Expr i f ty -> Expr i f ty
+  EEq :: Int -> Expr i f f -> Expr i f f -> Expr i f Bool
+  ESplit :: (KnownNat (NBits f)) => Int -> Expr i f f -> Expr i f (SV.Vector (NBits f) Bool)
+  EJoin :: (KnownNat n) => Int -> Expr i f (SV.Vector n Bool) -> Expr i f f
+  EBundle :: Int -> SV.Vector n (Expr i f ty) -> Expr i f (SV.Vector n ty)
 
 deriving instance (Show i, Show f) => Show (Expr i f ty)
+
+getId :: Expr i f ty -> Int
+getId (EVal i _) = i
+getId (EVar i _) = i
+getId (EUnOp i _ _) = i
+getId (EBinOp i _ _ _) = i
+getId (EIf i _ _ _) = i
+getId (EEq i _ _) = i
+getId (ESplit i _) = i
+getId (EJoin i _) = i
+getId (EBundle i _) = i
 
 instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
   pretty = prettyPrec 0
@@ -162,25 +182,25 @@ instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
       prettyPrec :: Int -> Expr i f ty -> Doc
       prettyPrec p e =
         case e of
-          EVal v ->
+          EVal _ v ->
             pretty v
-          EVar v ->
+          EVar _ v ->
             pretty v
           -- TODO correct precedence
-          EUnOp op e1 -> parens (pretty op <+> pretty e1)
-          EBinOp op e1 e2 ->
+          EUnOp _ op e1 -> parens (pretty op <+> pretty e1)
+          EBinOp _ op e1 e2 ->
             parensPrec (opPrecedence op) p $
               prettyPrec (opPrecedence op) e1
                 <+> pretty op
                 <+> prettyPrec (opPrecedence op) e2
-          EIf b true false ->
+          EIf _ b true false ->
             parensPrec 4 p (text "if" <+> pretty b <+> text "then" <+> pretty true <+> text "else" <+> pretty false)
           -- TODO correct precedence
-          EEq l r ->
+          EEq _ l r ->
             parensPrec 1 p (pretty l) <+> text "=" <+> parensPrec 1 p (pretty r)
-          ESplit i -> text "split" <+> parens (pretty i)
-          EBundle b -> text "bundle" <+> parens (pretty (SV.toList b))
-          EJoin i -> text "join" <+> parens (pretty i)
+          ESplit _ i -> text "split" <+> parens (pretty i)
+          EBundle _ b -> text "bundle" <+> parens (pretty (SV.toList b))
+          EJoin _ i -> text "join" <+> parens (pretty i)
 
 parensPrec :: Int -> Int -> Doc -> Doc
 parensPrec opPrec p = if p > opPrec then parens else identity
@@ -201,12 +221,12 @@ evalExpr' ::
   -- | resulting value
   State (Map i f) ty
 evalExpr' expr = case expr of
-  EVal v -> pure $ case v of
+  EVal _ v -> pure $ case v of
     ValBool b -> b == 1
     ValField f -> f
-  EVar var -> do
+  EVar _ _var -> do
     m <- get
-    pure $ case var of
+    pure $ case _var of
       VarField i -> do
         case Map.lookup i m of
           Just v -> v
@@ -215,11 +235,11 @@ evalExpr' expr = case expr of
         case Map.lookup i m of
           Just v -> v == 1
           Nothing -> panic $ "TODO: incorrect var lookup: " <> Protolude.show i
-  EUnOp UNeg e1 ->
+  EUnOp _ UNeg e1 ->
     Protolude.negate <$> evalExpr' e1
-  EUnOp UNot e1 ->
+  EUnOp _ UNot e1 ->
     not <$> evalExpr' e1
-  EBinOp op e1 e2 -> do
+  EBinOp _ op e1 e2 -> do
     e1' <- evalExpr' e1
     e2' <- evalExpr' e2
     pure $ apply e1' e2'
@@ -232,38 +252,84 @@ evalExpr' expr = case expr of
         BAnd -> (&&)
         BOr -> (||)
         BXor -> \x y -> (x || y) && not (x && y)
-  EIf b true false -> do
+  EIf _ b true false -> do
     cond <- evalExpr' b
     if cond
       then evalExpr' true
       else evalExpr' false
-  EEq lhs rhs -> do
+  EEq _ lhs rhs -> do
     lhs' <- evalExpr' lhs
     rhs' <- evalExpr' rhs
     pure $ lhs' == rhs'
-  ESplit i -> do
+  ESplit _ i -> do
     x <- evalExpr' i
     pure $ SV.generate $ \_ix -> testBit (fromP x) (fromIntegral _ix)
-  EBundle as -> traverse evalExpr' as
-  EJoin i -> do
+  EBundle _ as -> traverse evalExpr' as
+  EJoin _ i -> do
     bits <- evalExpr' i
     pure $
       SV.ifoldl (\acc _ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer _ix) else 0) 0 bits
 
-instance (GaloisField f) => Semiring (Expr Wire f f) where
-  plus = EBinOp BAdd
-  zero = EVal $ ValField 0
-  times = EBinOp BMul
-  one = EVal $ ValField 1
+instance (Hashable f, Num f) => Semiring (Expr i f f) where
+  plus = binOp BAdd
+  zero = val (ValField 0)
+  times = binOp BMul
+  one = val (ValField 1)
 
-instance (GaloisField f) => Ring (Expr Wire f f) where
-  negate = EUnOp UNeg
+instance (Num f, Hashable f) => Ring (Expr i f f) where
+  negate = unOp UNeg
 
-instance (GaloisField f) => Num (Expr Wire f f) where
+instance (Num f, Hashable f) => Num (Expr i f f) where
   (+) = plus
   (*) = times
-  (-) = EBinOp BSub
-  negate = EUnOp UNeg
+  (-) = binOp BSub
+  negate = unOp UNeg
   abs = identity
   signum = const 1
-  fromInteger = EVal . ValField . fromInteger
+  fromInteger = val . ValField . fromInteger
+
+
+val :: Hashable f => Val f ty -> Expr i f ty
+val v = 
+  let h = hash v
+  in EVal h v
+
+var :: Hashable i => Var i f ty -> Expr i f ty
+var v = 
+  let h = hash v
+  in EVar h v
+
+unOp :: UnOp f a -> Expr i f a -> Expr i f a
+unOp op e = 
+  let h = hash (op, getId e)
+  in EUnOp h op e
+
+binOp :: BinOp f a -> Expr i f a -> Expr i f a -> Expr i f a
+binOp op e1 e2 = 
+  let h = hash (op, getId e1, getId e2)
+  in EBinOp h op e1 e2
+
+if_ :: Expr i f Bool -> Expr i f a -> Expr i f a -> Expr i f a
+if_ b t f = 
+  let h = hash (getId b, getId t, getId f)
+  in EIf h b t f
+
+eq :: Expr i f f -> Expr i f f -> Expr i f Bool
+eq l r = 
+  let h = hash (getId l, getId r)
+  in EEq h l r
+
+split :: KnownNat (NBits f) => Expr i f f -> Expr i f (SV.Vector (NBits f) Bool)
+split i = 
+  let h = hash (getId i)
+  in ESplit h i
+
+join_ :: KnownNat n => Expr i f (SV.Vector n Bool) -> Expr i f f
+join_ i = 
+  let h = hash (getId i)
+  in EJoin h i
+
+bundle_ :: SV.Vector n (Expr i f ty) -> Expr i f (SV.Vector n ty)
+bundle_ b = 
+  let h = hash (getId <$> b)
+  in EBundle h b

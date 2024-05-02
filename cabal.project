@@ -1,4 +1,4 @@
-profiling: True
+tests: True
 
 packages: .
 

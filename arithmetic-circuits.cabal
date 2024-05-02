@@ -77,6 +77,7 @@ library language
   import: deps, extensions, warnings
   visibility: public
   exposed-modules:
+    Circuit.Language.CacheCompile
     Circuit.Language.Compile
     Circuit.Language.Expr
     Circuit.Language.TExpr
@@ -87,11 +88,13 @@ library language
   hs-source-dirs:     language/src
   build-depends:
       arithmetic-circuits
+    , array
     , distributive
     , hashable
     , intern
     , microlens
     , mtl
+    , unordered-containers
     , vector
     , vector-sized
 

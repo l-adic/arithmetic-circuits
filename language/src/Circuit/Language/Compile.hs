@@ -36,6 +36,7 @@ import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
 import Circuit.Language.Expr qualified as Expr
 import Control.Monad.Cont (ContT (runContT))
+import Circuit.Language.TExpr (NBits)
 
 -------------------------------------------------------------------------------
 -- Circuit Builder
@@ -211,8 +212,8 @@ compileWithWires ::
   TExpr.Expr Wire f ty ->
   m (V.Vector (TExpr.Var Wire f f))
 compileWithWires ws expr = do
-  let e = unType expr
-  compileOut <- memoizedCompile e
+  --let e = unType expr
+  compileOut <- memoizedCompile expr
   _ws <- ws
   for (V.zip compileOut _ws) $ \(o, freshWire) -> do
     case o of
@@ -254,32 +255,32 @@ withCompilerCache i m = do
   pure res
 
 _compile ::
-  forall f m.
+  forall f m ty.
   (Hashable f, GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  Expr Wire f ->
+  TExpr.Expr Wire f ty ->
   m (V.Vector (SignalSource f))
-_compile expr = withCompilerCache (Expr.getId expr) $ case expr of
-  EVal _ f -> pure $ V.singleton $ AffineSource $ ConstGate f
-  EVar _ (UVar var) -> pure . V.singleton $ WireSource var
-  EUnOp _ op e1 -> do
+_compile expr = withCompilerCache (TExpr.getId expr) $ case expr of
+  TExpr.EVal _ f -> pure $ V.singleton $ AffineSource $ ConstGate (TExpr.rawVal f)
+  TExpr.EVar _ v -> pure . V.singleton $ WireSource (TExpr.rawWire v)
+  TExpr.EUnOp _ op e1 -> do
     e1Outs <- memoizedCompile e1
     for e1Outs $ \e1Out ->
       case op of
-        UNeg -> pure . AffineSource $ ScalarMul (-1) (addVar e1Out)
-        UNot -> pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
-  EBinOp _ op e1 e2 -> do
+        TExpr.UNeg -> pure . AffineSource $ ScalarMul (-1) (addVar e1Out)
+        TExpr.UNot -> pure . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar e1Out))
+  TExpr.EBinOp _ op e1 e2 -> do
     e1Outs <- memoizedCompile e1
     e2Outs <- memoizedCompile e2
     assertSameSourceSize e1Outs e2Outs
     for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
       case op of
-        BAdd -> pure . AffineSource $ Add e1Out e2Out
-        BMul -> do
+        TExpr.BAdd -> pure . AffineSource $ Add e1Out e2Out
+        TExpr.BMul -> do
           tmp1 <- mulToImm (AffineSource e1Out) (AffineSource e2Out)
           pure . WireSource $ tmp1
-        BDiv -> do
+        TExpr.BDiv -> do
           _recip <- imm
           _one <- addWire $ AffineSource $ ConstGate 1
           emit $ Mul e2Out (Var _recip) _one
@@ -287,22 +288,22 @@ _compile expr = withCompilerCache (Expr.getId expr) $ case expr of
           emit $ Mul e1Out (Var _recip) out
           pure $ WireSource out
         -- SUB(x, y) = x + (-y)
-        BSub -> pure . AffineSource $ Add e1Out (ScalarMul (-1) e2Out)
-        BAnd -> do
+        TExpr.BSub -> pure . AffineSource $ Add e1Out (ScalarMul (-1) e2Out)
+        TExpr.BAnd -> do
           tmp1 <- mulToImm (AffineSource e1Out) (AffineSource e2Out)
           pure . WireSource $ tmp1
-        BOr -> do
+        TExpr.BOr -> do
           -- OR(input1, input2) = (input1 + input2) - (input1 * input2)
           tmp1 <- imm
           emit $ Mul e1Out e2Out tmp1
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-1) (Var tmp1))
-        BXor -> do
+        TExpr.BXor -> do
           -- XOR(input1, input2) = (input1 + input2) - 2 * (input1 * input2)
           tmp1 <- imm
           emit $ Mul e1Out e2Out tmp1
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
   -- IF(cond, true, false) = (cond*true) + ((!cond) * false)
-  EIf _ cond true false -> do
+  TExpr.EIf _ cond true false -> do
     condOut <- addVar <$> (memoizedCompile cond >>= assertSingleSource)
     trueOuts <- memoizedCompile true
     falseOuts <- memoizedCompile false
@@ -315,11 +316,12 @@ _compile expr = withCompilerCache (Expr.getId expr) $ case expr of
       emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
     pure . V.singleton . AffineSource $ Add (Var tmp1) (Var tmp2)
   -- EQ(lhs, rhs) = (lhs - rhs == 1) only allowed for field comparison
-  EEq _ lhs rhs -> do
+  TExpr.EEq _ lhs rhs -> do
     -- assertSingle is justified as the lhs and rhs must be of type f
-    let e = Expr.binOp BSub lhs rhs
+    let h = hash (TExpr.BSub, TExpr.getId lhs, TExpr.getId rhs)
+        e = TExpr.EBinOp h TExpr.BSub lhs rhs
     eqInWire <- do
-      eOut <- withCompilerCache (Expr.getId e) (memoizedCompile e)
+      eOut <- withCompilerCache h (memoizedCompile e)
       assertSingleSource eOut >>= addWire
     eqFreeWire <- imm
     eqOutWire <- imm
@@ -328,7 +330,8 @@ _compile expr = withCompilerCache (Expr.getId expr) $ case expr of
     -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
     -- neqOutWire instead.
     pure . V.singleton . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
-  ESplit _ n input -> do
+  TExpr.ESplit _ input -> do
+    let n = fromIntegral $ natVal (Proxy @(TExpr.NBits f))
     -- assertSingle is justified as the input must be of type f
     i <- memoizedCompile input >>= assertSingleSource >>= addWire
     outputs <- V.generateM n $ \_ -> do
@@ -340,27 +343,29 @@ _compile expr = withCompilerCache (Expr.getId expr) $ case expr of
       <$> for
         outputs
         ( \o ->
-            let e = Expr.var (UVar o)
+            let v = TExpr.VarBool o
+                h = hash v
+                e = TExpr.EVar h v
              in memoizedCompile e
         )
-  EBundle _ as -> do
+  TExpr.EBundle _ as -> do
     as' <- traverse memoizedCompile as
     pure $ fold as'
-  EJoin _ bits -> do
+  TExpr.EJoin _ bits -> do
     bs <- toList <$> memoizedCompile bits
     ws <- traverse addWire bs
     pure . V.singleton . AffineSource $ unsplit ws
 
 memoizedCompile ::
-  forall f m.
+  forall f m ty.
   (Hashable f, GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  Expr Wire f ->
+  TExpr.Expr Wire f ty ->
   m (V.Vector (SignalSource f))
 memoizedCompile expr = do
   m <- gets bsMemoMap
-  case Map.lookup (Expr.getId expr) m of
+  case Map.lookup (TExpr.getId expr) m of
     Just ws -> pure ws
     Nothing -> _compile expr
 
@@ -372,8 +377,8 @@ exprToArithCircuit ::
   Wire ->
   ExprM f ()
 exprToArithCircuit expr output = do
-  let e =  unType expr
-  compileOut <- memoizedCompile e >>= assertSingleSource
+  -- let e =  unType expr
+  compileOut <- memoizedCompile expr >>= assertSingleSource
   emit $ Mul (ConstGate 1) (addVar compileOut) output
 
 fieldToBool ::
@@ -381,8 +386,8 @@ fieldToBool ::
   TExpr.Expr Wire f f ->
   ExprM f (TExpr.Expr Wire f Bool)
 fieldToBool e = do
-  let eOut = unType e
-  a <- memoizedCompile eOut >>= assertSingleSource >>= addWire
+  --let eOut = unType e
+  a <- memoizedCompile e >>= assertSingleSource >>= addWire
   emit $ Boolean a
   pure $ unsafeCoerce e
 
@@ -391,38 +396,38 @@ unType e = evalState (runContT (_unType e) pure) mempty
 
 _unType :: forall m r f ty. Hashable f => MonadState (Map Int (Expr Wire f)) m => TExpr.Expr Wire f ty -> ContT r m (Expr Wire f)
 _unType = \case
-  TExpr.EVal v ->
+  TExpr.EVal _ v ->
     let f = TExpr.rawVal v
     in pure $ Expr.val f
-  TExpr.EVar  v -> 
+  TExpr.EVar _  v -> 
     let v' = TExpr.rawWire v
      in pure $ Expr.var (UVar v')
-  TExpr.EUnOp op e -> do
+  TExpr.EUnOp _ op e -> do
     e' <- _unType e
     let op' = untypeUnOp op
     pure $ Expr.unOp op' e'
-  TExpr.EBinOp op e1 e2 -> do
+  TExpr.EBinOp _ op e1 e2 -> do
     e1' <- _unType e1
     e2' <- _unType e2
     let op' = untypeBinOp op
     pure $ Expr.binOp op' e1' e2'
-  TExpr.EIf b t f -> do
+  TExpr.EIf _ b t f -> do
     b' <- _unType b
     t' <- _unType t
     f' <- _unType f
     pure $ Expr.if_ b' t' f'
-  TExpr.EEq l r -> do
+  TExpr.EEq _ l r -> do
     l' <- _unType l
     r' <- _unType r
     pure  $ Expr.eq l' r'
-  TExpr.ESplit i -> do
+  TExpr.ESplit _ i -> do
     i' <- _unType i
     let n = fromIntegral $ natVal (Proxy @(TExpr.NBits f))
     pure $ Expr.split n i'
-  TExpr.EJoin i -> do
+  TExpr.EJoin _ i -> do
     i' <- _unType i
     pure $ Expr.join_ i'
-  TExpr.EBundle b -> do
+  TExpr.EBundle _ b -> do
     x <- traverse _unType $ SV.fromSized b
     pure $ Expr.bundle x
   where
@@ -441,7 +446,6 @@ _unType = \case
       TExpr.UNeg -> UNeg
       TExpr.UNot -> UNot
 
-
 _unBundle ::
   forall n f ty.
   (KnownNat n) =>
@@ -450,6 +454,6 @@ _unBundle ::
   TExpr.Expr Wire f (SV.Vector n ty) ->
   ExprM f (SV.Vector n (TExpr.Expr Wire f f))
 _unBundle b = do
-  bis <- memoizedCompile . unType $  b
+  bis <- memoizedCompile  b
   ws <- traverse addWire bis
-  pure $ fromJust $ SV.toSized (TExpr.EVar . TExpr.VarField <$> ws)
+  pure $ fromJust $ SV.toSized (TExpr.var . TExpr.VarField <$> ws)

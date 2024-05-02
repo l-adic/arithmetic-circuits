@@ -62,14 +62,14 @@ import Unsafe.Coerce (unsafeCoerce)
 type Signal f = Expr Wire f
 
 -- | Convert constant to expression
-cField :: f -> Signal f f
-cField = EVal . ValField
+cField :: Hashable f =>f -> Signal f f
+cField = val . ValField
 
-cBool :: (Num f) => Bool -> Signal f Bool
-cBool b = EVal . ValBool $ if b then 1 else 0
+cBool :: (Hashable f, Num f) => Bool -> Signal f Bool
+cBool b = val . ValBool $ if b then 1 else 0
 
 -- | Binary arithmetic operations on expressions
-add, sub, mul :: (GaloisField f) => Signal f f -> Signal f f -> Signal f f
+add, sub, mul :: (Hashable f, Num f) => Signal f f -> Signal f f -> Signal f f
 add = (+)
 sub = (-)
 mul = (*)
@@ -77,38 +77,18 @@ mul = (*)
 -- | Binary logic operations on expressions
 -- Have to use underscore or similar to avoid shadowing @and@ and @or@
 -- from Prelude/Protolude.
-and_, or_, xor_ :: (Eq f, Num f) => Signal f Bool -> Signal f Bool -> Signal f Bool
-and_ a b = case (a,b) of 
-  (EVal (ValBool 0), _) -> cBool False
-  (_, EVal (ValBool 0)) -> cBool False
-  (EVal (ValBool 1), EVal (ValBool 1)) -> cBool True
-  _ -> EBinOp BAnd a b
+and_, or_, xor_ :: Signal f Bool -> Signal f Bool -> Signal f Bool
+and_ = binOp BAnd
 
-or_ a b = case (a,b) of 
-  (EVal (ValBool 1), _) -> cBool True
-  (_, EVal (ValBool 1)) -> cBool True
-  (EVal (ValBool 0), EVal (ValBool 0)) -> cBool False
-  _ -> EBinOp BOr a b
+or_ = binOp BOr
 
 
-xor_ a b = case (a,b) of 
-  (EVal (ValBool 0), x) -> x
-  (x, EVal (ValBool 0)) -> x
-  (EVal (ValBool _a), EVal (ValBool _b)) -> 
-    if _a == 1 
-      then cBool $ _b /= 1
-      else cBool (_b == 1)
-  _ -> EBinOp BXor a b
+xor_ = binOp BXor
 
 -- | Negate expression
-not_ :: Num f => Signal f Bool -> Signal f Bool
-not_ a = case a of
-  EVal (ValBool b) -> EVal $ ValBool $ 1 - b
-  _ -> EUnOp UNot a
+not_ :: Signal f Bool -> Signal f Bool
+not_ = unOp UNot
 
--- | Compare two expressions
-eq :: Signal f f -> Signal f f -> Signal f Bool
-eq = EEq
 
 fieldInput :: InputType -> Text -> ExprM f (Var Wire f f)
 fieldInput it label =
@@ -129,19 +109,19 @@ fieldsInput it label = SV.generateM $ \i -> fieldInput it $ label <> show (fromI
 
 -- | Conditional statement on expressions
 cond :: Signal f Bool -> Signal f ty -> Signal f ty -> Signal f ty
-cond = EIf
+cond = if_
 
 splitBits ::
   (KnownNat (NBits f)) =>
   Signal f f ->
   Signal f (Vector (NBits f) Bool)
-splitBits = ESplit
+splitBits = split
 
 joinBits :: (KnownNat n) => Signal f (Vector n Bool) -> Signal f f
-joinBits = EJoin
+joinBits = join_
 
 deref :: Var Wire f ty -> Signal f ty
-deref = EVar
+deref = var
 
 retBool :: (GaloisField f, Hashable f) => Text -> Signal f Bool -> ExprM f (Var Wire f Bool)
 retBool label sig = compileWithWire (boolInput Public label) sig
@@ -194,9 +174,9 @@ truncate_ v = do
 newtype And_ f = And_ {unAnd_ :: Signal f Bool}
 
 instance Semigroup (And_ f) where
-  And_ a <> And_ b = And_ $ EBinOp BAnd a b
+  And_ a <> And_ b = And_ $ binOp BAnd a b
 
-instance (Num f) => Monoid (And_ f) where
+instance (Num f, Hashable f) => Monoid (And_ f) where
   mempty = And_ $ cBool True
 
 newtype Any_ f = Any_ {unAny_ :: Signal f Bool}
@@ -204,15 +184,15 @@ newtype Any_ f = Any_ {unAny_ :: Signal f Bool}
 instance (Eq f, Num f) => Semigroup (Any_ f) where
   Any_ a <> Any_ b = Any_ $ or_ a b
 
-instance (Eq f, Num f) => Monoid (Any_ f) where
+instance (Eq f, Num f, Hashable f) => Monoid (Any_ f) where
   mempty = Any_ $ cBool False
 
 newtype Add_ f = Add_ {unAdd_ :: Signal f f}
 
-instance (GaloisField f) => Semigroup (Add_ f) where
+instance (Hashable f, Num f) => Semigroup (Add_ f) where
   Add_ a <> Add_ b = Add_ $ add a b
 
-instance (GaloisField f) => Monoid (Add_ f) where
+instance (Hashable f, Num f) => Monoid (Add_ f) where
   mempty = Add_ $ cField 0
 
 newtype XOr_ f = XOr_ {unXOr_ :: Signal f Bool}
@@ -220,13 +200,13 @@ newtype XOr_ f = XOr_ {unXOr_ :: Signal f Bool}
 instance (Eq f, Num f) => Semigroup (XOr_ f) where
   XOr_ a <> XOr_ b = XOr_ $ xor_ a b
 
-instance (Eq f, Num f) => Monoid (XOr_ f) where
+instance (Eq f, Num f, Hashable f) => Monoid (XOr_ f) where
   mempty = XOr_ $ cBool False
 
 --------------------------------------------------------------------------------
 
 elem_ ::
-  (Eq f, Num f, Foldable t) =>
+  (Num f, Foldable t, Hashable f) =>
   Signal f f ->
   t (Signal f f) ->
   Signal f Bool
@@ -235,14 +215,14 @@ elem_ a as =
    in any_ f as
 
 all_ ::
-  (Num f, Foldable t) =>
+  (Num f, Foldable t, Hashable f) =>
   (a -> Signal f Bool) ->
   t a ->
   Signal f Bool
 all_ f = unAnd_ . foldMap (And_ . f)
 
 any_ ::
-  (Eq f, Num f, Foldable t) =>
+  (Num f, Foldable t, Hashable f) =>
   (a -> Signal f Bool) ->
   t a ->
   Signal f Bool
@@ -258,11 +238,11 @@ class Bundled f a where
   unbundle :: Signal f a -> ExprM f (Unbundled f a)
 
 instance (KnownNat p, KnownNat n) => Bundled (Prime p) (Vector n (Prime p)) where
-  bundle = EBundle
+  bundle = bundle_
   unbundle = _unBundle
 
 instance (Hashable f, GaloisField f, KnownNat n) => Bundled f (Vector n Bool) where
-  bundle = EBundle
+  bundle = bundle_
   unbundle = fmap unsafeCoerce . _unBundle
 
 --------------------------------------------------------------------------------

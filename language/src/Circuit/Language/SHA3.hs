@@ -19,34 +19,33 @@ import Data.Vector qualified as V
 import GHC.TypeNats (type (+),  type (*))
 import Lens.Micro
 import Protolude
-import Data.Field.Galois (GaloisField)
 
 
 
 -- | Row major 5x5 matrix of 64 bit values
 type SHA3State f = Vector 5 (Vector 5 (BitVector f 64))
 
-emptyState :: forall f. Num f => SHA3State f
+emptyState :: forall f. Hashable f => Num f => SHA3State f
 emptyState = SV.replicate (SV.replicate zeroBits_)
 
 type BitVector f n = Vector n (Signal f Bool)
 
-zeroBits_ :: Num f => BitVector f 64
+zeroBits_ :: Hashable f => Num f => BitVector f 64
 zeroBits_ = SV.replicate (cBool False)
 
-xors :: (Eq f, Num f) => BitVector f 64 -> BitVector f 64 -> BitVector f 64
+xors :: BitVector f 64 -> BitVector f 64 -> BitVector f 64
 xors = SV.zipWith xor_
 
-ands :: (Eq f, Num f) => BitVector f 64 -> BitVector f 64 -> BitVector f 64
+ands :: BitVector f 64 -> BitVector f 64 -> BitVector f 64
 ands = SV.zipWith and_
 
-complement_ :: (Num f) => BitVector f 64 -> BitVector f 64
+complement_ :: BitVector f 64 -> BitVector f 64
 complement_ = SV.map not_
 
 --------------------------------------------------------------------------------
 
 -- | Theta block permutation step
-theta :: forall f. GaloisField f => SHA3State f -> SHA3State f
+theta :: forall f. SHA3State f -> SHA3State f
 theta rows = distribute $ SV.zipWith (map . xors) toXor $ distribute rows
   where
     paritys :: Vector 5 (BitVector f 64)
@@ -90,7 +89,7 @@ pi_ rows =
         :< Nil)
 
 -- | Chi block permutation step
-chi :: forall f. GaloisField f => SHA3State f -> SHA3State f
+chi :: forall f. SHA3State f -> SHA3State f
 chi rows = distribute $ 
     SV.zipWith3 (SV.zipWith3 func) cols (rotateLeft cols (1 :: Finite 5)) (rotateLeft cols (2 :: Finite 5))
   where
@@ -105,7 +104,7 @@ mkBitVector a = SV.generate $ \_i ->
  -- | Iota block permutation step
 iota ::
   forall f.
-  (GaloisField f) =>
+  (Hashable f, Num f) =>
   Finite 24 ->
   SHA3State f ->
   SHA3State f
@@ -146,16 +145,17 @@ iota i rows =
 
 
 -- | Block permutation round
-round_ :: (GaloisField f) => Finite 24 -> SHA3State f -> SHA3State f
+round_ :: (Hashable f, Num f) => Finite 24 -> SHA3State f -> SHA3State f
 round_ i = iota i . chi . pi_ . rho . theta
 
-rounds :: Vector 2 (Finite 24)
-rounds = fromJust $ SV.fromList [0 .. 1]
+rounds :: Vector 4 (Finite 24)
+rounds = fromJust $ SV.fromList [0 .. 3]
 
 -- | Xor the data to be hashed into the block
 updateState ::  forall n n0 f.
   ((n + n0) ~ 25) => 
-  GaloisField f =>
+  Hashable f =>
+  Num f =>
   KnownNat n0 => 
   Vector n (BitVector f 64) -> 
   SHA3State f -> 
@@ -165,7 +165,8 @@ updateState dat st =
 
 -- | SHA3
 sha3 :: forall f n n0. 
-  GaloisField f =>
+  Hashable f =>
+  Num f =>
   (n + n0) ~ 25 => 
   KnownNat n0 =>
   Vector n (BitVector f 64) ->
@@ -183,7 +184,8 @@ num_words = rate / 64
 
 sha3Packed ::
   forall inputSize outputSize rate drop f.
-  GaloisField f =>
+  Hashable f =>
+  Num f =>
   1600 ~ (outputSize + drop) => 
   25 ~ (inputSize + rate) =>
   KnownNat rate => 

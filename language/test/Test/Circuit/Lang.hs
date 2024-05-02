@@ -189,7 +189,6 @@ boolToField False = 0
 
 --------------------------------------------------------------------------------
 
-{-
 
 BuilderState {bsVars = shaVars, bsCircuit = shaCircuit} = snd $ runCircuitBuilder sha3Program
 
@@ -219,8 +218,8 @@ mkOutput :: [Bool] -> [Word8]
 mkOutput = map unpack . chunkList 8
 
 --
-prop*sha256 :: ArbVec -> Property
-prop*sha256 (ArbVec v) =
+prop_sha256 :: ArbVec -> Property
+prop_sha256 (ArbVec v) =
   withMaxSuccess 1 $
     prop (\x -> BA.unpack (CH.hash (BS.pack x) :: Digest SHA3_256)) 32 v
 
@@ -238,5 +237,3 @@ altSolve program inputs = evalArithCircuit
           (\w m -> Map.insert (wireName w) m)
           program
           inputs
-
--}
