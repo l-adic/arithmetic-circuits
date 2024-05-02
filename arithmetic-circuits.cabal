@@ -87,10 +87,9 @@ library language
   hs-source-dirs:     language/src
   build-depends:
       arithmetic-circuits
-    , cryptohash-sha256
     , distributive
     , hashable
-    , intern == 0.9.5
+    , intern
     , microlens
     , mtl
     , vector
