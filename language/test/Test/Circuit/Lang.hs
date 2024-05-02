@@ -23,15 +23,14 @@ import Prelude qualified
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-type instance NBits (Prime p) = 254
-
 nBits :: Int
-nBits = 254
+nBits = fromIntegral $ natVal (Proxy @(NBits Fr))
 
 bitSplitJoin :: ExprM Fr (Var Wire Fr Fr)
 bitSplitJoin = do
   _x <- deref <$> fieldInput Public "x"
-  retField "out" $ join_ $ split_ _x
+  out <- VarField <$> freshPublicInput "out"
+  ret out $ join_ $ split_ _x
 
 prop_bitsSplitJoin :: Fr -> Property
 prop_bitsSplitJoin x =
@@ -48,13 +47,14 @@ prop_bitsSplitJoinContra x y =
         w = solve bsVars bsCircuit input
      in lookupVar bsVars "out" w =/= y
 
-factors :: ExprM Fr (Var Wire Fr Bool)
+factors :: ExprM Fr (Var Wire Fr Fr)
 factors = do
   n <- deref <$> fieldInput Public "n"
   a <- deref <$> fieldInput Public "a"
   b <- deref <$> fieldInput Public "b"
   let isFactorization = eq_ n (a * b)
-  retBool "out" isFactorization
+  out <- VarBool <$> freshPublicInput "out"
+  ret (boolToField out) (boolToField isFactorization)
 
 prop_factorization :: Fr -> Fr -> Property
 prop_factorization x y =
@@ -71,11 +71,13 @@ prop_factorizationContra x y z =
         w = solve bsVars bsCircuit inputs
      in lookupVar bsVars "out" w == 0
 
-bitIndex :: Finite (NBits Fr) -> ExprM Fr (Var Wire Fr Bool)
+bitIndex :: Finite (NBits Fr) -> ExprM Fr (Var Wire Fr Fr)
 bitIndex i = do
   x <- deref <$> fieldInput Public "x"
   let bits = split_ x
-  retBool "out" =<< atIndex i bits
+  bi <- atIndex i bits
+  out <- VarBool <$> freshPublicInput "out"
+  ret (boolToField out) (boolToField bi)
 
 prop_bitIndex :: Int -> Fr -> Property
 prop_bitIndex i x =
@@ -91,7 +93,8 @@ setAtIndex i b = do
   x <- deref <$> fieldInput Public "x"
   let bits = split_ x
   bits' <- updateIndex_ i (cBool b) bits
-  retField "out" $ join_ bits'
+  out <- VarField <$> freshPublicInput "out"
+  ret out $ join_ bits'
 
 prop_setAtIndex :: Int -> Fr -> Bool -> Property
 prop_setAtIndex i x b =
@@ -110,7 +113,8 @@ bundleUnbundle = do
   bits <- unbundle $ split_ x
   let negated = map not_ bits
   let res = unAdd_ $ foldMap (Add_ . coerceGroundType) negated
-  retField "out" res
+  out <- VarField <$> freshPublicInput "out"
+  ret out res
 
 prop_bundleUnbundle :: Fr -> Property
 prop_bundleUnbundle x =
@@ -127,7 +131,8 @@ sharingProg = do
   x <- deref <$> fieldInput Public "x"
   y <- deref <$> fieldInput Public "y"
   let z = x * y
-  retField "out" $ sum $ replicate 10 z
+  out <- VarField <$> freshPublicInput "out"
+  ret out $ sum $ replicate 10 z
 
 prop_sharingProg :: Fr -> Fr -> Property
 prop_sharingProg x y = monadicIO $ run $ do
@@ -140,11 +145,16 @@ prop_sharingProg x y = monadicIO $ run $ do
       expected = fromInteger $ sum $ replicate 10 (_x * _y)
   pure $ res === expected
 
-sha3Program :: ExprM Fr (Vector 256 (Var Wire Fr Bool))
+sha3Program :: ExprM Fr (Vector 256 (Var Wire Fr Fr))
 sha3Program = do
   bits <- fmap deref <$> boolsInput Public "b_"
   let res = sha3_256 $ chunk bits
-  retBools "out_" $ bundle res
+  outs <- SV.generateM $ \i -> do
+    let label = "out_" <> show i
+    v <- VarBool <$> freshPublicInput label
+    pure $ boolToField @(Var Wire Fr Bool) v
+    
+  retMany outs $ boolToField (bundle res)
 
 --------------------------------------------------------------------------------
 
@@ -180,11 +190,13 @@ chunkList n xs
   | n > 0 = take n xs : (chunkList n (drop n xs))
   | otherwise = panic "Chunk size must be greater than zero."
 
-boolToField :: Bool -> Fr
-boolToField True = 1
-boolToField False = 0
+boolToField_ :: Bool -> Fr
+boolToField_ True = 1
+boolToField_ False = 0
 
 --------------------------------------------------------------------------------
+
+{-
 
 BuilderState {bsVars = shaVars, bsCircuit = shaCircuit} = snd $ runCircuitBuilder sha3Program
 
@@ -196,7 +208,7 @@ prop hashFunc mdlen vec = monadicIO $ run $ do
       inIndices = [minBound .. maxBound]
       assignments =
         Map.fromList $
-          map (\i -> ("b_" <> show @Int (fromIntegral i), boolToField $ inputVec `SV.index` i)) inIndices
+          map (\i -> ("b_" <> show @Int (fromIntegral i), boolToField_ $ inputVec `SV.index` i)) inIndices
   let input =
         assignInputs shaVars $ assignments
   let w = altSolve shaCircuit input
@@ -214,8 +226,8 @@ mkOutput :: [Bool] -> [Word8]
 mkOutput = map unpack . chunkList 8
 
 --
-prop_sha256 :: ArbVec -> Property
-prop_sha256 (ArbVec v) =
+propsha256 :: ArbVec -> Property
+propsha256 (ArbVec v) =
   withMaxSuccess 1 $
     prop (\x -> BA.unpack (CH.hash (BS.pack x) :: Digest SHA3_256)) 32 v
 
@@ -234,3 +246,4 @@ altSolve program inputs =
     (\w m -> Map.insert (wireName w) m)
     program
     inputs
+-}

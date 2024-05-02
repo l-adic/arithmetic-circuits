@@ -1,5 +1,5 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeFamilies, FunctionalDependencies, UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Circuit.Language.Expr
@@ -28,11 +28,12 @@ module Circuit.Language.Expr
     UBinOp (..),
     UUnOp (..),
     reifyGraph,
+    BoolToField(..)
   )
 where
 
 import Control.Monad.Cont (ContT (runContT))
-import Data.Field.Galois (PrimeField (fromP))
+import Data.Field.Galois (PrimeField (fromP), Prime)
 import Data.Graph (graphFromEdges, reverseTopSort)
 import Data.Map qualified as Map
 import Data.Semiring (Ring (..), Semiring (..))
@@ -43,6 +44,7 @@ import Numeric (showHex)
 import Protolude hiding (Semiring (..))
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
+import GHC.TypeNats (Log2, type (+))
 
 data Val f ty where
   ValField :: f -> Val f f
@@ -121,7 +123,8 @@ opPrecedence BAdd = 6
 opPrecedence BMul = 7
 opPrecedence BDiv = 8
 
-type family NBits a :: Nat
+type family NBits a :: Nat where
+  NBits (Prime p) = (Log2 p) + 1
 
 -- | This constring prevents us from building up nested vectors inside the expression type
 class Ground (t :: Type -> Type) (ty :: Type) (f :: Type) where
@@ -388,7 +391,24 @@ bundle_ b =
   let h = Hash $ hash (NBundle (getId <$> SV.fromSized b) :: Node i f)
    in EBundle h b
 
---------------------------------------------------------------------------------
+class BoolToField b f | b -> f where
+  boolToField :: b -> f
+
+instance BoolToField (Val f Bool) (Val f f) where
+  boolToField (ValBool b) = ValField b
+  boolToField (ValField b) = ValField b
+
+instance BoolToField (Var i f Bool) (Var i f f) where
+  boolToField (VarBool i) = VarField i
+  boolToField (VarField i) = VarField i
+
+instance BoolToField (Expr i f Bool) (Expr i f f) where
+  boolToField = unsafeCoerce
+
+instance BoolToField (Expr i f (SV.Vector n Bool)) (Expr i f (SV.Vector n f)) where
+  boolToField = unsafeCoerce
+
+-------------------------------------------------------------------------------
 
 data UBinOp = UBAdd | UBSub | UBMul | UBDiv | UBAnd | UBOr | UBXor deriving (Show, Eq, Generic)
 

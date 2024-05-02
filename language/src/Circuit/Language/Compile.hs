@@ -53,11 +53,13 @@ defaultBuilderState =
 data CircuitBuilderError f
   = ExpectedSingleWire (V.Vector (SignalSource f))
   | MismatchedWireTypes (V.Vector (SignalSource f)) (V.Vector (SignalSource f))
+  | MissingCacheKey Hash
 
 instance (GaloisField f) => Pretty (CircuitBuilderError f) where
   pretty = \case
     ExpectedSingleWire wires -> "Expected a single wire, but got:" <+> pretty (toList wires)
     MismatchedWireTypes l r -> "Mismatched wire types:" <+> pretty (toList l) <+> pretty (toList r)
+    MissingCacheKey h -> "Missing cache key:" <+> pretty @Text (show h)
 
 type ExprM f a = ExceptT (CircuitBuilderError f) (State (BuilderState f)) a
 
@@ -191,26 +193,25 @@ compileWithWire ::
   (GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  m (Var Wire f ty) ->
-  Expr Wire f ty ->
-  m (Var Wire f ty)
+  Var Wire f f ->
+  Expr Wire f f ->
+  m (Var Wire f f)
 compileWithWire freshWire e = do
-  unsafeCoerceGroundType . V.head
-    <$> compileWithWires (V.singleton . coerceGroundType <$> freshWire) e
+    res <- compileWithWires (V.singleton freshWire) e
+    pure . V.head $ res
 
 compileWithWires ::
   (Hashable f) =>
   (GaloisField f) =>
   (MonadState (BuilderState f) m) =>
   (MonadError (CircuitBuilderError f) m) =>
-  m (V.Vector (Var Wire f f)) ->
+  V.Vector (Var Wire f f) ->
   Expr Wire f ty ->
   m (V.Vector (Var Wire f f))
 compileWithWires ws expr = do
   --let e = unType expr
   compileOut <- compile expr
-  _ws <- ws
-  for (V.zip compileOut _ws) $ \(o, freshWire) -> do
+  for (V.zip compileOut ws) $ \(o, freshWire) -> do
     case o of
       WireSource wire -> do
         let wire' = rawWire freshWire
@@ -220,24 +221,6 @@ compileWithWires ws expr = do
         let wire = rawWire freshWire
         emit $ Mul (ConstGate 1) circ wire
         pure $ VarField wire
-
-assertSingleSource ::
-  (MonadError (CircuitBuilderError f) m) =>
-  V.Vector (SignalSource f) ->
-  m (SignalSource f)
-assertSingleSource xs = case xs V.!? 0 of
-  Just x -> pure x
-  _ -> throwError $ ExpectedSingleWire xs
-
-assertSameSourceSize ::
-  (MonadError (CircuitBuilderError f) m) =>
-  V.Vector (SignalSource f) ->
-  V.Vector (SignalSource f) ->
-  m ()
-assertSameSourceSize l r =
-  unless (V.length l == V.length r) $
-    throwError $
-      MismatchedWireTypes l r
 
 compile :: (Hashable f, GaloisField f) 
   => (MonadState (BuilderState f) m)
@@ -369,14 +352,29 @@ _compile (h, expr) = case expr of
     ws <- traverse addWire bs
     pure . V.singleton . AffineSource $ unsplit ws
   where
-    cachResult :: Hash -> V.Vector (SignalSource f) -> m ()
-    cachResult i ws = modify $ \s -> s {bsMemoMap = Map.insert i ws (bsMemoMap s)}
-    assertFromCache :: Hash -> m (V.Vector (SignalSource f))
+
+    cachResult i ws = modify $ \s -> 
+       s {bsMemoMap = Map.insert i ws (bsMemoMap s)}
+
     assertFromCache i = do
       m <- gets bsMemoMap
       case Map.lookup i m of
         Just ws -> pure ws
-        Nothing -> panic $ "assertFromCache failed on key " <> show i
+        Nothing -> throwError $ MissingCacheKey i
+
+    assertSameSourceSize l r =
+      unless (V.length l == V.length r) $
+        throwError $
+          MismatchedWireTypes l r
+
+assertSingleSource ::
+  (MonadError (CircuitBuilderError f) m) =>
+  V.Vector (SignalSource f) ->
+  m (SignalSource f)
+assertSingleSource xs = case xs V.!? 0 of
+  Just x -> pure x
+  _ -> throwError $ ExpectedSingleWire xs
+
 
 exprToArithCircuit ::
   (Hashable f, GaloisField f) =>
@@ -399,7 +397,6 @@ fieldToBool e = do
   a <- compile e >>= assertSingleSource >>= addWire
   emit $ Boolean a
   pure $ unsafeCoerce e
-
 
 _unBundle ::
   forall n f ty.

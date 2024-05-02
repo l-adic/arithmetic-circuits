@@ -75,13 +75,15 @@ initializeBoard board = do
       v <- var_ <$> fieldInput Private varName
       pure $ cond (cell `eq_` cField 0) v cell
 
-validate :: (PrimeField f, Hashable f) => ExprM f (Var Wire f Bool)
+validate :: ExprM Fr (Var Wire Fr Fr)
 validate = do
   b <- mkBoard >>= initializeBoard
   let rowsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> b)
       colsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> distribute b)
       boxesValid = validateBoxes sudokuSet (mkBoxes b)
-  retBool "out" $ rowsValid `and_` colsValid `and_` boxesValid
+  out <- VarBool <$> freshPublicInput "out"
+  let res = boolToField $ rowsValid `and_` colsValid `and_` boxesValid
+  ret (boolToField out) res
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
@@ -98,7 +100,7 @@ spec_sudokuSolver = do
             privAssignments =
               map (first (\a -> "private_cell_" <> show (fst a) <> show (snd a))) $
                 filter (\(_, v) -> v /= 0) sol
-            BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
+            BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder validate
         let pubInputs =
               Map.fromList $
                 [ (_var, fromIntegral value)

@@ -17,13 +17,12 @@ module Circuit.Language.DSL
     not_,
     eq_,
     deref,
-    retBool,
-    retField,
+    ret,
+    retMany,
     fieldInput,
     boolInput,
     boolsInput,
     fieldsInput,
-    retBools,
     cond,
     compileWithWire,
     split_,
@@ -48,7 +47,7 @@ where
 import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
 import Circuit.Language.Compile
 import Circuit.Language.Expr
-import Data.Field.Galois (GaloisField, Prime, PrimeField)
+import Data.Field.Galois (GaloisField, Prime)
 import Data.Finite (Finite)
 import Data.Maybe (fromJust)
 import Data.Vector.Sized (Vector, ix)
@@ -110,21 +109,11 @@ cond = if_
 deref :: (Hashable f) => Var Wire f ty -> Signal f ty
 deref = var_
 
-retBool :: (GaloisField f, Hashable f) => Text -> Signal f Bool -> ExprM f (Var Wire f Bool)
-retBool label sig = compileWithWire (boolInput Public label) sig
+ret :: (Hashable f, GaloisField f) => Var Wire f f -> Signal f f -> ExprM f (Var Wire f f)
+ret v s = compileWithWire v s
 
-retField :: (PrimeField f, Hashable f) => Text -> Signal f f -> ExprM f (Var Wire f f)
-retField label sig = compileWithWire (fieldInput Public label) sig
-
-retBools ::
-  forall n f.
-  (KnownNat n, GaloisField f, Hashable f) =>
-  Text ->
-  Signal f (Vector n Bool) ->
-  ExprM f (Vector n (Var Wire f Bool))
-retBools label sig =
-  fromJust . SV.toSized . unsafeCoerce <$> do
-    compileWithWires (SV.fromSized <$> fieldsInput @n Public label) sig
+retMany :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f f) -> Signal f (Vector n f) -> ExprM f (Vector n (Var Wire f f))
+retMany vs s = fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
 
 atIndex ::
   (Bundled f (Vector n ty)) =>
