@@ -81,13 +81,11 @@ library language
     Circuit.Language.Expr
     Circuit.Language.DSL
     Circuit.Language
-    Circuit.Language.SHA3
 
   hs-source-dirs:     language/src
   build-depends:
       arithmetic-circuits
     , array
-    , distributive
     , hashable
     , intern
     , microlens
@@ -130,6 +128,7 @@ test-suite language-tests
     Test.Circuit.Expr
     Test.Circuit.Sudoku
     Test.Circuit.Lang
+    Test.Circuit.SHA3
 
   hs-source-dirs:     language/test
 
@@ -140,6 +139,7 @@ test-suite language-tests
     , array
     , distributive 
     , fin
+    , microlens
     , quickcheck-instances  >=0.3
     , QuickCheck
     , random
@@ -149,6 +149,7 @@ test-suite language-tests
     , tasty-hspec
     , tasty-quickcheck      >=0.10
     , vec
+    , vector
     , vector-sized
     , crypton
     , bytestring

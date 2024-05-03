@@ -16,6 +16,8 @@ module Circuit.Arithmetic
     CircuitVars (..),
     relabel,
     collectCircuitVars,
+    assignInputs,
+    lookupVar,
     booleanWires,
     nGates,
   )
@@ -154,24 +156,24 @@ evalGate ::
   Gate f i ->
   -- | context after evaluation
   vars
-evalGate lookupVar updateVar vars gate =
+evalGate _lookupVar _updateVar vars gate =
   case gate of
     Mul l r outputWire ->
-      let lval = evalAffineCircuit lookupVar vars l
-          rval = evalAffineCircuit lookupVar vars r
+      let lval = evalAffineCircuit _lookupVar vars l
+          rval = evalAffineCircuit _lookupVar vars r
           res = lval * rval
-       in updateVar outputWire res vars
+       in _updateVar outputWire res vars
     Equal i m outputWire ->
-      case lookupVar i vars of
+      case _lookupVar i vars of
         Nothing ->
           panic "evalGate: the impossible happened"
         Just inp ->
           let res = if inp == 0 then 0 else 1
               mid = if inp == 0 then 0 else recip inp
-           in updateVar outputWire res $
-                updateVar m mid vars
+           in _updateVar outputWire res $
+                _updateVar m mid vars
     Split i os ->
-      case lookupVar i vars of
+      case _lookupVar i vars of
         Nothing ->
           panic "evalGate: the impossible happened"
         Just inp ->
@@ -179,11 +181,11 @@ evalGate lookupVar updateVar vars gate =
               bool2val False = 0
               setWire (ix, oldEnv) currentOut =
                 ( ix + 1,
-                  updateVar currentOut (bool2val $ testBit (fromP inp) ix) oldEnv
+                  _updateVar currentOut (bool2val $ testBit (fromP inp) ix) oldEnv
                 )
            in snd . foldl setWire (0, vars) $ os
     Boolean i ->
-      case lookupVar i vars of
+      case _lookupVar i vars of
         Nothing ->
           panic "evalGate: the impossible happened"
         Just inp ->
@@ -256,8 +258,8 @@ evalArithCircuit ::
   vars ->
   -- | input and output variables
   vars
-evalArithCircuit lookupVar updateVar (ArithCircuit gates) vars =
-  foldl' (evalGate lookupVar updateVar) vars gates
+evalArithCircuit _lookupVar _updateVar (ArithCircuit gates) vars =
+  foldl' (evalGate _lookupVar _updateVar) vars gates
 
 -- | Turn a binary expansion back into a single value.
 unsplit ::
@@ -340,6 +342,22 @@ collectCircuitVars (ArithCircuit gates) =
           cvOutputs = os,
           cvInputsLabels = Map.fromList ls
         }
+
+assignInputs :: Ord label => CircuitVars label -> Map label f -> Map Int f
+assignInputs CircuitVars {..} inputs =
+  let res =
+        Map.fromList
+          [ (var, val)
+            | (l1, var) <- Map.toList cvInputsLabels,
+              (l2, val) <- Map.toList inputs,
+              l1 == l2
+          ]
+   in res
+
+lookupVar :: Ord label => CircuitVars label -> label -> Map Int f -> Maybe f
+lookupVar vs label sol = do
+  var <- Map.lookup label (cvInputsLabels vs)
+  Map.lookup var sol
 
 booleanWires :: ArithCircuit f -> Set Wire
 booleanWires (ArithCircuit gates) = foldMap f gates

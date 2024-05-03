@@ -31,4 +31,4 @@ program = do
   n <- deref <$> fieldInput Public "n"
   a <- deref <$> fieldInput Private "a"
   b <- deref <$> fieldInput Private "b"
-  retBool "out" $ eq n (a * b)
+  boolOutput "out" $ eq_ n (a * b)

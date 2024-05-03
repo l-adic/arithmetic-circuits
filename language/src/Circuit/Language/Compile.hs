@@ -209,7 +209,6 @@ compileWithWires ::
   Expr Wire f ty ->
   m (V.Vector (Var Wire f f))
 compileWithWires ws expr = do
-  --let e = unType expr
   compileOut <- compile expr
   for (V.zip compileOut ws) $ \(o, freshWire) -> do
     case o of

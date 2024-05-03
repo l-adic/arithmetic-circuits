@@ -17,12 +17,12 @@ module Circuit.Language.DSL
     not_,
     eq_,
     deref,
-    ret,
-    retMany,
     fieldInput,
     boolInput,
-    boolsInput,
-    fieldsInput,
+    fieldOutput,
+    boolOutput,
+    fieldsOutput,
+    boolsOutput,
     cond,
     compileWithWire,
     split_,
@@ -96,11 +96,11 @@ boolInput it label = case it of
   Public -> VarBool <$> freshPublicInput label
   Private -> VarBool <$> freshPrivateInput label
 
-boolsInput :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f Bool))
-boolsInput it label = SV.generateM $ \i -> boolInput it $ label <> show (fromIntegral @_ @Int i)
-
-fieldsInput :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f f))
-fieldsInput it label = SV.generateM $ \i -> fieldInput it $ label <> show (fromIntegral @_ @Int i)
+--boolsInput :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f Bool))
+--boolsInput it label = SV.generateM $ \i -> boolInput it $ label <> show (fromIntegral @_ @Int i)
+--
+--fieldsInput :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f f))
+--fieldsInput it label = SV.generateM $ \i -> fieldInput it $ label <> show (fromIntegral @_ @Int i)
 
 -- | Conditional statement on expressions
 cond :: (Hashable f) => Signal f Bool -> Signal f ty -> Signal f ty -> Signal f ty
@@ -109,11 +109,21 @@ cond = if_
 deref :: (Hashable f) => Var Wire f ty -> Signal f ty
 deref = var_
 
-ret :: (Hashable f, GaloisField f) => Var Wire f f -> Signal f f -> ExprM f (Var Wire f f)
-ret v s = compileWithWire v s
+fieldOutput :: (Hashable f, GaloisField f) => Text -> Signal f f -> ExprM f (Var Wire f f)
+fieldOutput label s = do
+  out <- VarField <$> freshPublicInput label
+  compileWithWire out s
 
-retMany :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f f) -> Signal f (Vector n f) -> ExprM f (Vector n (Var Wire f f))
-retMany vs s = fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
+fieldsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f f) -> Signal f (Vector n f) -> ExprM f (Vector n (Var Wire f f))
+fieldsOutput vs s = fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
+
+boolOutput :: (Hashable f, GaloisField f) => Text -> Signal f Bool -> ExprM f (Var Wire f Bool)
+boolOutput v s = do 
+  out <- VarBool <$> freshPublicInput v
+  unsafeCoerce <$> compileWithWire (boolToField out) (boolToField s)
+
+boolsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f Bool) -> Signal f (Vector n Bool) -> ExprM f (Vector n (Var Wire f Bool))
+boolsOutput vs s = unsafeCoerce <$> fieldsOutput (boolToField <$> vs) (boolToField s)
 
 atIndex ::
   (Bundled f (Vector n ty)) =>
