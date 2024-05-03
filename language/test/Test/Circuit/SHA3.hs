@@ -10,9 +10,16 @@
 --    TODO: test on more than one block
 module Test.Circuit.SHA3 where
 
+import Circuit
 import Circuit.Language
+import Crypto.Hash as CH
+import Data.ByteArray qualified as BA
+import Data.ByteString qualified as BS
 import Data.Distributive (Distributive (distribute))
+import Data.Field.Galois (Prime)
 import Data.Finite (Finite)
+import Data.IntMap qualified as IntMap
+import Data.Map qualified as Map
 import Data.Maybe (fromJust)
 import Data.Vector qualified as V
 import Data.Vector.Sized (BuildVector (..), Vector, pattern Build)
@@ -20,18 +27,11 @@ import Data.Vector.Sized qualified as SV
 import GHC.TypeNats (type (*), type (+))
 import Lens.Micro
 import Protolude
+import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (===))
+import Test.QuickCheck.Monadic (monadicIO, run)
+import Prelude qualified
 
--- import Crypto.Hash as CH
--- import Data.ByteArray qualified as BA
--- import Data.Vector.Sized (Vector)
--- import Data.Vector.Sized qualified as SV
--- import GHC.TypeNats (type (*), type (+))
--- import Protolude
--- import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (=/=), (===), (==>), Large (Large))
--- import Test.QuickCheck.Monadic (monadicIO, run)
--- import Prelude qualified
--- import GHC.TypeNats (Natural, withKnownNat, SNat, withSomeSNat)
--- import Data.ByteString qualified as BS
+type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 -- | Row major 5x5 matrix of 64 bit values
 type SHA3State f = Vector 5 (Vector 5 (BitVector f 64))
@@ -284,24 +284,20 @@ chunk v =
 
 --------------------------------------------------------------------------------
 
-{-
-
-sha3Program :: ExprM Fr (Vector 256 (Var Wire Fr Fr))
-sha3Program = do
-  bits <- fmap deref <$> boolsInput Public "b_"
+sha3Program :: (KnownNat n) => Proxy n -> ExprM Fr (Vector 256 (Var Wire Fr Bool))
+sha3Program _ = do
+  bits <- SV.generateM $ \i ->
+    var_ <$> boolInput Public ("b_" <> show (toInteger i))
   let res = sha3_256 $ chunk bits
   outs <- SV.generateM $ \i -> do
-    let label = "out_" <> show i
-    v <- VarBool <$> freshPublicInput label
-    pure $ boolToField @(Var Wire Fr Bool) v
-
-  retMany outs $ boolToField (bundle res)
-
-BuilderState {bsVars = shaVars, bsCircuit = shaCircuit} = snd $ runCircuitBuilder sha3Program
+    let label = "out_" <> show (toInteger i)
+    VarBool <$> freshPublicInput label
+  boolsOutput outs $ bundle res
 
 prop :: forall n n0. (((n + 1) + n0) ~ 25, KnownNat n0, KnownNat ((n + 1) * 64)) => ([Word8] -> [Word8]) -> Int -> Vector n (Vector 64 Bool) -> Property
-prop hashFunc mdlen vec = monadicIO $ run $ do
-  let inputVec :: Vector ((n + 1) * 64) Bool
+prop hashFunc mdlen vec = withMaxSuccess 1 $ monadicIO $ run $ do
+  let BuilderState {bsVars = shaVars, bsCircuit = shaCircuit} = snd $ runCircuitBuilder $ sha3Program (Proxy :: Proxy ((n + 1) * 64))
+      inputVec :: Vector ((n + 1) * 64) Bool
       inputVec = concatVec (vec `SV.snoc` mkBitVector @Integer 0x8000000000000006)
       inIndices :: [Finite ((n + 1) * 64)]
       inIndices = [minBound .. maxBound]
@@ -309,13 +305,14 @@ prop hashFunc mdlen vec = monadicIO $ run $ do
         Map.fromList $
           map (\i -> ("b_" <> show @Int (fromIntegral i), boolToField_ $ inputVec `SV.index` i)) inIndices
   let input =
-        assignInputs shaVars $ assignments
+        assignInputs shaVars $
+          assignments
   let w = altSolve shaCircuit input
   let outIndices :: [Finite 256]
       outIndices = [minBound .. maxBound]
       res :: [Bool]
-      res = map (\i -> _fieldToBool $ lookupVar shaVars ("out_" <> show (fromIntegral @_ @Int i)) w) outIndices
-  let str = reverse $ map unpack $ chunkList 8 $ toList inputVec
+      res = map (\i -> _fieldToBool $ fromJust $ lookupVar shaVars ("out_" <> show (fromIntegral @_ @Int i)) w) outIndices
+  -- let str = reverse $ map unpack $ chunkList 8 $ toList inputVec
   let resStr = take mdlen $ mkOutput res
   let testIn = mkOutput $ toList inputVec
   let expect = hashFunc testIn
@@ -338,11 +335,11 @@ instance Show ArbVec where
 instance Arbitrary (ArbVec) where
   arbitrary = ArbVec <$> SV.replicateM (SV.replicateM arbitrary)
 
-altSolve :: ArithCircuit Fr -> Map Int Fr -> Map Int Fr
+altSolve :: ArithCircuit Fr -> IntMap Fr -> IntMap Fr
 altSolve program inputs =
   evalArithCircuit
-    (\w m -> Map.lookup (wireName w) m)
-    (\w m -> Map.insert (wireName w) m)
+    (\w m -> IntMap.lookup (wireName w) m)
+    (\w m -> IntMap.insert (wireName w) m)
     program
     inputs
 
@@ -356,4 +353,10 @@ chunkList _ [] = []
 chunkList n xs
   | n > 0 = take n xs : (chunkList n (drop n xs))
   | otherwise = panic "Chunk size must be greater than zero."
--}
+
+_fieldToBool :: Fr -> Bool
+_fieldToBool x = x /= 0
+
+boolToField_ :: Bool -> Fr
+boolToField_ True = 1
+boolToField_ False = 0

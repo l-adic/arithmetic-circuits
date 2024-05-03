@@ -16,14 +16,12 @@ module Circuit.Language.DSL
     xor_,
     not_,
     eq_,
-    deref,
     fieldInput,
     boolInput,
     fieldOutput,
     boolOutput,
     fieldsOutput,
     boolsOutput,
-    cond,
     compileWithWire,
     split_,
     join_,
@@ -63,9 +61,11 @@ type Signal f = Expr Wire f
 -- | Convert constant to expression
 cField :: (Hashable f) => f -> Signal f f
 cField = val_ . ValField
+{-# INLINE cField #-}
 
 cBool :: (Hashable f, Num f) => Bool -> Signal f Bool
 cBool b = val_ . ValBool $ if b then 1 else 0
+{-# INLINE cBool #-}
 
 -- | Binary arithmetic operations on expressions
 add, sub, mul :: (Hashable f, Num f) => Signal f f -> Signal f f -> Signal f f
@@ -90,24 +90,13 @@ fieldInput it label =
   case it of
     Public -> VarField <$> freshPublicInput label
     Private -> VarField <$> freshPrivateInput label
+{-# INLINE fieldInput #-}
 
 boolInput :: InputType -> Text -> ExprM f (Var Wire f Bool)
 boolInput it label = case it of
   Public -> VarBool <$> freshPublicInput label
   Private -> VarBool <$> freshPrivateInput label
-
---boolsInput :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f Bool))
---boolsInput it label = SV.generateM $ \i -> boolInput it $ label <> show (fromIntegral @_ @Int i)
---
---fieldsInput :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f f))
---fieldsInput it label = SV.generateM $ \i -> fieldInput it $ label <> show (fromIntegral @_ @Int i)
-
--- | Conditional statement on expressions
-cond :: (Hashable f) => Signal f Bool -> Signal f ty -> Signal f ty -> Signal f ty
-cond = if_
-
-deref :: (Hashable f) => Var Wire f ty -> Signal f ty
-deref = var_
+{-# INLINE boolInput #-}
 
 fieldOutput :: (Hashable f, GaloisField f) => Text -> Signal f f -> ExprM f (Var Wire f f)
 fieldOutput label s = do
@@ -118,7 +107,7 @@ fieldsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f 
 fieldsOutput vs s = fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
 
 boolOutput :: (Hashable f, GaloisField f) => Text -> Signal f Bool -> ExprM f (Var Wire f Bool)
-boolOutput v s = do 
+boolOutput v s = do
   out <- VarBool <$> freshPublicInput v
   unsafeCoerce <$> compileWithWire (boolToField out) (boolToField s)
 

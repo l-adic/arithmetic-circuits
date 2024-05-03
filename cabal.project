@@ -1,6 +1,8 @@
 tests: True
+benchmarks: True
 
 packages: .
+
 
 source-repository-package
   type: git
@@ -18,10 +20,4 @@ source-repository-package
   type: git
   location: https://github.com/martyall/propagators.git
   tag: 6c1778171ee7c37ca29cf1ec4efaf79c5ec8af62
-  --sha256: 6MUrOeUvp/iRFCTdvAyAGT2ymm5yKRqfN4GCkZ4eDyo=
-
-source-repository-package
-  type: git
-  location: https://github.com/l-adic/intern.git
-  tag: 5d0df17db13978d16533530370c2f7fd51e37cc8
   --sha256: 6MUrOeUvp/iRFCTdvAyAGT2ymm5yKRqfN4GCkZ4eDyo=

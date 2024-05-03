@@ -1,5 +1,7 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeFamilies, FunctionalDependencies, UndecidableInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Circuit.Language.Expr
@@ -28,23 +30,23 @@ module Circuit.Language.Expr
     UBinOp (..),
     UUnOp (..),
     reifyGraph,
-    BoolToField(..)
+    BoolToField (..),
   )
 where
 
 import Control.Monad.Cont (ContT (runContT))
-import Data.Field.Galois (PrimeField (fromP), Prime)
-import Data.Graph (graphFromEdges, reverseTopSort)
+import Data.Field.Galois (Prime, PrimeField (fromP))
 import Data.Map qualified as Map
 import Data.Semiring (Ring (..), Semiring (..))
+import Data.Sequence ((|>))
 import Data.Set qualified as Set
 import Data.Vector qualified as V
 import Data.Vector.Sized qualified as SV
+import GHC.TypeNats (Log2, type (+))
 import Numeric (showHex)
 import Protolude hiding (Semiring (..))
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
-import GHC.TypeNats (Log2, type (+))
 
 data Val f ty where
   ValField :: f -> Val f f
@@ -180,6 +182,7 @@ getId (EEq i _ _) = i
 getId (ESplit i _) = i
 getId (EJoin i _) = i
 getId (EBundle i _) = i
+{-# INLINE getId #-}
 
 instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
   pretty = prettyPrec 0
@@ -302,6 +305,7 @@ val_ ::
 val_ v =
   let h = Hash $ hash $ (NVal (rawVal v) :: Node i f)
    in EVal h v
+{-# INLINE val_ #-}
 
 var_ ::
   forall i f ty.
@@ -312,6 +316,7 @@ var_ ::
 var_ v =
   let h = Hash $ hash (NVar (rawWire v) :: Node i f)
    in EVar h v
+{-# INLINE var_ #-}
 
 unOp_ ::
   forall i f a.
@@ -323,6 +328,7 @@ unOp_ ::
 unOp_ op e =
   let h = Hash $ hash $ (NUnOp (untypeUnOp op) (getId e) :: Node i f)
    in EUnOp h op e
+{-# INLINE unOp_ #-}
 
 binOp_ ::
   forall i f a.
@@ -335,6 +341,7 @@ binOp_ ::
 binOp_ op e1 e2 =
   let h = Hash $ hash $ (NBinOp (untypeBinOp op) (getId e1) (getId e2) :: Node i f)
    in EBinOp h op e1 e2
+{-# INLINE binOp_ #-}
 
 if_ ::
   forall i f a.
@@ -347,6 +354,7 @@ if_ ::
 if_ b t f =
   let h = Hash $ hash (NIf (getId b) (getId t) (getId f) :: Node i f)
    in EIf h b t f
+{-# INLINE if_ #-}
 
 eq_ ::
   forall i f.
@@ -358,6 +366,7 @@ eq_ ::
 eq_ l r =
   let h = Hash $ hash (NEq (getId l) (getId r) :: Node i f)
    in EEq h l r
+{-# INLINE eq_ #-}
 
 split_ ::
   forall i f.
@@ -369,6 +378,7 @@ split_ ::
 split_ i =
   let h = Hash $ hash (NSplit (getId i) (fromIntegral $ natVal (Proxy @(NBits f))) :: Node i f)
    in ESplit h i
+{-# INLINE split_ #-}
 
 join_ ::
   forall i f n.
@@ -380,6 +390,7 @@ join_ ::
 join_ i =
   let h = Hash $ hash (NJoin (getId i) :: Node i f)
    in EJoin h i
+{-# INLINE join_ #-}
 
 bundle_ ::
   forall i f n ty.
@@ -390,6 +401,7 @@ bundle_ ::
 bundle_ b =
   let h = Hash $ hash (NBundle (getId <$> SV.fromSized b) :: Node i f)
    in EBundle h b
+{-# INLINE bundle_ #-}
 
 class BoolToField b f | b -> f where
   boolToField :: b -> f
@@ -485,18 +497,16 @@ untypeBinOp BXor = UBXor
 
 --------------------------------------------------------------------------------
 
-reifyGraph :: Expr i f ty -> [(Hash, Node i f)]
+reifyGraph :: Expr i f ty -> Seq (Hash, Node i f)
 reifyGraph e =
-  let h (a, b, _) = (b, a)
-   in h . f <$> reverseTopSort g
-  where
-    (g, f, _) = graphFromEdges $ gbsEdges $ execState (runContT (buildGraph_ e) pure) (GraphBuilderState mempty mempty)
+  gbsEdges $ execState (runContT (buildGraph_ e) pure) (GraphBuilderState mempty mempty)
 
 data GraphBuilderState i f = GraphBuilderState
   { gbsSharedNodes :: Set Hash,
-    gbsEdges :: [(Node i f, Hash, [Hash])]
+    gbsEdges :: Seq (Hash, Node i f)
   }
 
+{-# SCC buildGraph_ #-}
 buildGraph_ :: forall i f r ty. Expr i f ty -> ContT r (State (GraphBuilderState i f)) ()
 buildGraph_ = \case
   EVal h v -> do
@@ -506,7 +516,7 @@ buildGraph_ = \case
       modify $ \s ->
         s
           { gbsSharedNodes = Set.insert h ns,
-            gbsEdges = (n, h, []) : gbsEdges s
+            gbsEdges = gbsEdges s |> (h, n)
           }
   EVar h v -> do
     ns <- gets gbsSharedNodes
@@ -515,7 +525,7 @@ buildGraph_ = \case
       modify $ \s ->
         s
           { gbsSharedNodes = Set.insert h ns,
-            gbsEdges = (n, h, []) : gbsEdges s
+            gbsEdges = gbsEdges s |> (h, n)
           }
   EUnOp h op e -> do
     ns <- gets gbsSharedNodes
@@ -528,7 +538,7 @@ buildGraph_ = \case
       let n = NUnOp (untypeUnOp op) (getId e)
       modify $ \s ->
         s
-          { gbsEdges = (n, h, [getId e]) : gbsEdges s
+          { gbsEdges = gbsEdges s |> (h, n)
           }
   EBinOp h op e1 e2 -> do
     ns <- gets gbsSharedNodes
@@ -542,7 +552,7 @@ buildGraph_ = \case
       let n = NBinOp (untypeBinOp op) (getId e1) (getId e2)
       modify $ \s ->
         s
-          { gbsEdges = (n, h, [getId e1, getId e2]) : gbsEdges s
+          { gbsEdges = gbsEdges s |> (h, n)
           }
   EIf h b t f -> do
     ns <- gets gbsSharedNodes
@@ -557,7 +567,7 @@ buildGraph_ = \case
       let n = NIf (getId b) (getId t) (getId f)
       modify $ \s ->
         s
-          { gbsEdges = (n, h, [getId b, getId t, getId f]) : gbsEdges s
+          { gbsEdges = gbsEdges s |> (h, n)
           }
   EEq h l r -> do
     ns <- gets gbsSharedNodes
@@ -571,7 +581,7 @@ buildGraph_ = \case
       let n = NEq (getId l) (getId r)
       modify $ \s ->
         s
-          { gbsEdges = (n, h, [getId l, getId r]) : gbsEdges s
+          { gbsEdges = gbsEdges s |> (h, n)
           }
   ESplit h i -> do
     ns <- gets gbsSharedNodes
@@ -584,7 +594,7 @@ buildGraph_ = \case
       let n = NSplit (getId i) (fromIntegral $ natVal (Proxy @(NBits f)))
       modify $ \s ->
         s
-          { gbsEdges = (n, h, [getId i]) : gbsEdges s
+          { gbsEdges = gbsEdges s |> (h, n)
           }
   EJoin h i -> do
     ns <- gets gbsSharedNodes
@@ -597,7 +607,7 @@ buildGraph_ = \case
       let n = NJoin (getId i)
       modify $ \s ->
         s
-          { gbsEdges = (n, h, [getId i]) : gbsEdges s
+          { gbsEdges = gbsEdges s |> (h, n)
           }
   EBundle h b -> do
     ns <- gets gbsSharedNodes
@@ -610,5 +620,5 @@ buildGraph_ = \case
       let n = NBundle (getId <$> SV.fromSized b)
       modify $ \s ->
         s
-          { gbsEdges = (n, h, getId <$> toList b) : gbsEdges s
+          { gbsEdges = gbsEdges s |> (h, n)
           }

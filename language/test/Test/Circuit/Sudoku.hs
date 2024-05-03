@@ -8,6 +8,7 @@ import Data.Array.IO (IOArray, getElems, newArray, readArray, writeArray)
 import Data.Distributive (Distributive (distribute))
 import Data.Field.Galois (Prime, PrimeField)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IntMap qualified as IntMap
 import Data.List (union, (!!), (\\))
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
@@ -73,7 +74,7 @@ initializeBoard board = do
       let cell = board Vec.! i Vec.! j
           varName = "private_cell_" <> show i <> show j
       v <- var_ <$> fieldInput Private varName
-      pure $ cond (cell `eq_` cField 0) v cell
+      pure $ if_ (cell `eq_` cField 0) v cell
 
 validate :: ExprM Fr (Var Wire Fr Bool)
 validate = do
@@ -101,23 +102,23 @@ spec_sudokuSolver = do
                 filter (\(_, v) -> v /= 0) sol
             BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder validate
         let pubInputs =
-              Map.fromList $
+              IntMap.fromList $
                 [ (_var, fromIntegral value)
-                  | (label, _var) <- Map.toList $ cvInputsLabels bsVars,
+                  | (label, _var) <- Map.toList $ labelToVar $ cvInputsLabels bsVars,
                     (l, value) <- pubAssignments,
                     l == label
                 ]
             privInputs =
-              Map.fromList $
+              IntMap.fromList $
                 [ (_var, fromIntegral value)
-                  | (label, _var) <- Map.toList $ cvInputsLabels bsVars,
+                  | (label, _var) <- Map.toList $ labelToVar $ cvInputsLabels bsVars,
                     (l, value) <- privAssignments,
                     l == label
                 ]
-            outVar = fromJust $ Map.lookup "out" $ cvInputsLabels bsVars
-            sol2 = solve bsVars bsCircuit (pubInputs `Map.union` privInputs)
+            out = lookupVar bsVars "out" sol2
+            sol2 = altSolve bsCircuit (pubInputs `IntMap.union` privInputs)
         verifier (map snd sol) `shouldBe` True
-        (i, Map.lookup outVar sol2) `shouldBe` (i, Just 1)
+        (i, out) `shouldBe` (i, Just 1)
 
 verifier :: [Int] -> Bool
 verifier _input =
@@ -246,3 +247,11 @@ examplePuzzles =
       [0, 0, 0, 0, 0, 4, 0, 0, 0]
     ]
   ]
+
+altSolve :: ArithCircuit Fr -> IntMap Fr -> IntMap Fr
+altSolve p inputs =
+  evalArithCircuit
+    (\w m -> IntMap.lookup (wireName w) m)
+    (\w m -> IntMap.insert (wireName w) m)
+    p
+    inputs

@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternSynonyms #-}
+
 module Circuit.Language.Compile
   ( ExprM,
     BuilderState (..),
@@ -20,9 +22,10 @@ import Circuit.Affine
 import Circuit.Arithmetic
 import Circuit.Language.Expr
 import Data.Field.Galois (GaloisField)
+import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
-import Data.Set qualified as Set
+import Data.Sequence (pattern (:|>))
 import Data.Vector qualified as V
 import Data.Vector.Sized qualified as SV
 import Protolude hiding (Semiring)
@@ -96,14 +99,16 @@ fresh = do
   v <- gets bsNextVar
   modify $ \s ->
     s
-      { bsVars = (bsVars s) {cvVars = Set.insert v (cvVars $ bsVars s)},
+      { bsVars = (bsVars s) {cvVars = IntSet.insert v (cvVars $ bsVars s)},
         bsNextVar = v + 1
       }
   pure v
+{-# INLINE fresh #-}
 
 -- | Fresh intermediate variables
 imm :: (MonadState (BuilderState f) m) => m Wire
 imm = IntermediateWire <$> fresh
+{-# INLINE imm #-}
 
 -- | Fresh input variables
 freshPublicInput :: (MonadState (BuilderState f) m) => Text -> m Wire
@@ -113,11 +118,12 @@ freshPublicInput label = do
     s
       { bsVars =
           (bsVars s)
-            { cvPublicInputs = Set.insert (wireName v) (cvPublicInputs $ bsVars s),
-              cvInputsLabels = Map.insert label (wireName v) (cvInputsLabels $ bsVars s)
+            { cvPublicInputs = IntSet.insert (wireName v) (cvPublicInputs $ bsVars s),
+              cvInputsLabels = insertInputBinding label (wireName v) (cvInputsLabels $ bsVars s)
             }
       }
   pure v
+{-# INLINE freshPublicInput #-}
 
 freshPrivateInput :: (MonadState (BuilderState f) m) => Text -> m Wire
 freshPrivateInput label = do
@@ -126,11 +132,12 @@ freshPrivateInput label = do
     s
       { bsVars =
           (bsVars s)
-            { cvPrivateInputs = Set.insert (wireName v) (cvPrivateInputs $ bsVars s),
-              cvInputsLabels = Map.insert label (wireName v) (cvInputsLabels $ bsVars s)
+            { cvPrivateInputs = IntSet.insert (wireName v) (cvPrivateInputs $ bsVars s),
+              cvInputsLabels = insertInputBinding label (wireName v) (cvInputsLabels $ bsVars s)
             }
       }
   pure v
+{-# INLINE freshPrivateInput #-}
 
 -- | Fresh output variables
 freshOutput :: (MonadState (BuilderState f) m) => m Wire
@@ -140,10 +147,11 @@ freshOutput = do
     s
       { bsVars =
           (bsVars s)
-            { cvOutputs = Set.insert (wireName v) (cvOutputs $ bsVars s)
+            { cvOutputs = IntSet.insert (wireName v) (cvOutputs $ bsVars s)
             }
       }
   pure v
+{-# INLINE freshOutput #-}
 
 --------------------------------------------------------------------------------
 
@@ -197,8 +205,8 @@ compileWithWire ::
   Expr Wire f f ->
   m (Var Wire f f)
 compileWithWire freshWire e = do
-    res <- compileWithWires (V.singleton freshWire) e
-    pure . V.head $ res
+  res <- compileWithWires (V.singleton freshWire) e
+  pure . V.head $ res
 
 compileWithWires ::
   (Hashable f) =>
@@ -214,26 +222,28 @@ compileWithWires ws expr = do
     case o of
       WireSource wire -> do
         let wire' = rawWire freshWire
-        emit $ Mul (ConstGate 1) (Var wire') wire
+        emit $ Mul (ConstGate 1) (Var wire) wire'
         pure $ VarField wire
       AffineSource circ -> do
         let wire = rawWire freshWire
         emit $ Mul (ConstGate 1) circ wire
         pure $ VarField wire
 
-compile :: (Hashable f, GaloisField f) 
-  => (MonadState (BuilderState f) m)
-  => (MonadError (CircuitBuilderError f) m)
-  => Expr Wire f ty -> 
-     m (V.Vector (SignalSource f))
+{-# SCC compile #-}
+compile ::
+  (Hashable f, GaloisField f) =>
+  (MonadState (BuilderState f) m) =>
+  (MonadError (CircuitBuilderError f) m) =>
+  Expr Wire f ty ->
+  m (V.Vector (SignalSource f))
 compile e = do
   let g = reifyGraph e
-  go g
-  where
-    go [] = panic "empty graph"
-    go [x] = _compile x
-    go (x : xs) = _compile x >> go xs
+  res <- traverse _compile g
+  case res of
+    (_ :|> x) -> pure x
+    _ -> panic "empty graph"
 
+{-# SCC _compile #-}
 _compile ::
   forall f m.
   (Hashable f, GaloisField f) =>
@@ -249,7 +259,7 @@ _compile (h, expr) = case expr of
   NVar v -> do
     let source = V.singleton $ WireSource v
     cachResult h source
-    pure source 
+    pure source
   NUnOp op e -> do
     eOuts <- assertFromCache e
     let f eOut = case op of
@@ -292,7 +302,6 @@ _compile (h, expr) = case expr of
           pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
     cachResult h source
     pure source
-
   NIf cond true false -> do
     condOut <- addVar <$> (assertFromCache cond >>= assertSingleSource)
     trueOuts <- assertFromCache true
@@ -307,7 +316,6 @@ _compile (h, expr) = case expr of
     let source = V.singleton . AffineSource $ Add (Var tmp1) (Var tmp2)
     cachResult h source
     pure source
-
   NEq lhs rhs -> do
     let e = NBinOp UBSub lhs rhs
     eqInWire <- do
@@ -322,7 +330,6 @@ _compile (h, expr) = case expr of
     let source = V.singleton . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
     cachResult h source
     pure source
-
   NSplit input n -> do
     i <- assertFromCache input >>= assertSingleSource >>= addWire
     outputs <- V.generateM n $ \_ -> do
@@ -330,41 +337,42 @@ _compile (h, expr) = case expr of
       emit $ Boolean w
       pure w
     emit $ Split i (V.toList outputs)
-    source <- fold
-      <$> for
-        outputs
-        ( \o -> do
-            -- TODO this is kind of a hack
-            let e = NVar o
-            res <- _compile (Hash $ hash e, e)
-            pure res
-        )
+    source <-
+      fold
+        <$> for
+          outputs
+          ( \o -> do
+              -- TODO this is kind of a hack
+              let e = NVar o
+              res <- _compile (Hash $ hash e, e)
+              pure res
+          )
     cachResult h source
     pure source
   NBundle as -> do
     source <- fold <$> traverse assertFromCache as
     cachResult h source
     pure source
-
   NJoin bits -> do
     bs <- toList <$> assertFromCache bits
     ws <- traverse addWire bs
     pure . V.singleton . AffineSource $ unsplit ws
   where
-
-    cachResult i ws = modify $ \s -> 
-       s {bsMemoMap = Map.insert i ws (bsMemoMap s)}
+    cachResult i ws = modify $ \s ->
+      s {bsMemoMap = Map.insert i ws (bsMemoMap s)}
 
     assertFromCache i = do
       m <- gets bsMemoMap
       case Map.lookup i m of
         Just ws -> pure ws
         Nothing -> throwError $ MissingCacheKey i
+    {-# INLINE assertFromCache #-}
 
     assertSameSourceSize l r =
       unless (V.length l == V.length r) $
         throwError $
           MismatchedWireTypes l r
+    {-# INLINE assertSameSourceSize #-}
 
 assertSingleSource ::
   (MonadError (CircuitBuilderError f) m) =>
@@ -373,7 +381,7 @@ assertSingleSource ::
 assertSingleSource xs = case xs V.!? 0 of
   Just x -> pure x
   _ -> throwError $ ExpectedSingleWire xs
-
+{-# INLINE assertSingleSource #-}
 
 exprToArithCircuit ::
   (Hashable f, GaloisField f) =>
@@ -392,7 +400,7 @@ fieldToBool ::
   Expr Wire f f ->
   ExprM f (Expr Wire f Bool)
 fieldToBool e = do
-  --let eOut = unType e
+  -- let eOut = unType e
   a <- compile e >>= assertSingleSource >>= addWire
   emit $ Boolean a
   pure $ unsafeCoerce e
@@ -405,6 +413,6 @@ _unBundle ::
   Expr Wire f (SV.Vector n ty) ->
   ExprM f (SV.Vector n (Expr Wire f f))
 _unBundle b = do
-  bis <- compile  b
+  bis <- compile b
   ws <- traverse addWire bis
   pure $ fromJust $ SV.toSized (var_ . VarField <$> ws)

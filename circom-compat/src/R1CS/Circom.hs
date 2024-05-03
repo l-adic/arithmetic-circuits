@@ -21,7 +21,7 @@ import Data.Binary.Get (getInt32le, getInt64le, getWord32le, getWord64le, lookAh
 import Data.Binary.Put (putInt32le, putLazyByteString, putWord32le, putWord64le, runPut)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Field.Galois (GaloisField (char), PrimeField, fromP)
-import Data.Map qualified as Map
+import Data.IntMap qualified as IntMap
 import Data.Vector (Vector)
 import Data.Vector qualified as V
 import Protolude
@@ -261,14 +261,14 @@ getPoly fieldSize = do
   LinearCombination factors <- getLinearCombination fieldSize
   pure $
     LinearPoly $
-      foldl (\acc (Factor {wireId, value}) -> Map.insert (fromIntegral wireId) value acc) mempty factors
+      foldl (\acc (Factor {wireId, value}) -> IntMap.insert (fromIntegral wireId) value acc) mempty factors
 
 putPoly :: (PrimeField k) => FieldSize -> LinearPoly k -> Put
 putPoly fieldSize (LinearPoly p) =
   putLinearCombination fieldSize $
     LinearCombination
       [ Factor {wireId = fromIntegral var, value}
-        | (var, value) <- Map.toAscList p,
+        | (var, value) <- IntMap.toAscList p,
           value /= 0
       ]
 
@@ -325,14 +325,14 @@ witnessToCircomWitness (Witness m) =
         WitnessHeader
           { whFieldSize = FieldSize 32,
             whPrime = fromIntegral $ char (1 :: f),
-            whWitnessSize = fromIntegral $ Map.size m
+            whWitnessSize = fromIntegral $ IntMap.size m
           },
-      wtnsValues = snd <$> Map.toAscList m
+      wtnsValues = snd <$> IntMap.toAscList m
     }
 
 witnessFromCircomWitness :: CircomWitness f -> Witness f
 witnessFromCircomWitness (CircomWitness {wtnsValues}) =
-  Witness $ Map.fromList $ zip [0 ..] wtnsValues
+  Witness $ IntMap.fromList $ zip [0 ..] wtnsValues
 
 instance (PrimeField k) => Binary (CircomWitness k) where
   get = do
@@ -425,6 +425,7 @@ putWitnessValues fieldSize values = do
 integerFromLittleEndian :: Vector Word32 -> Integer
 integerFromLittleEndian bytes =
   foldl' (\acc (i, byte) -> acc .|. (fromIntegral byte `shiftL` (i * 32))) 0 (V.zip (V.fromList [0 ..]) bytes)
+{-# INLINE integerFromLittleEndian #-}
 
 integerToLittleEndian :: FieldSize -> Integer -> Vector Word32
 integerToLittleEndian fieldSize n =
@@ -434,3 +435,4 @@ integerToLittleEndian fieldSize n =
   where
     go 0 = mempty
     go x = fromIntegral (x .&. 0xffffffff) `V.cons` go (x `shiftR` 32)
+{-# INLINE integerToLittleEndian #-}

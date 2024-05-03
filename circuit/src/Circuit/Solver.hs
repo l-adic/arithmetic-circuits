@@ -3,7 +3,8 @@ module Circuit.Solver (solve) where
 import Circuit.Affine
 import Circuit.Arithmetic
 import Data.Field.Galois (GaloisField, PrimeField (fromP), pow)
-import Data.Map qualified as Map
+import Data.IntMap qualified as IntMap
+import Data.IntSet qualified as IntSet
 import Data.Propagator
 import Data.Propagator.Cell (unify)
 import Data.Propagator.Num
@@ -12,9 +13,10 @@ import Protolude
 --------------------------------------------------------------------------------
 
 newtype SolverEnv s f = SolverEnv
-  { vars :: Map Int (Cell s f)
+  { vars :: IntMap (Cell s f)
   }
 
+{-# SCC affineCircuitToCell #-}
 affineCircuitToCell ::
   (GaloisField f) =>
   SolverEnv s f ->
@@ -35,8 +37,8 @@ affineCircuitToCell env (ScalarMul c a) = do
 affineCircuitToCell _ (ConstGate c) = known c
 affineCircuitToCell env (Var i) =
   pure $ assertLookupCell env (wireName i)
-affineCircuitToCell _ Nil = cell
 
+{-# SCC gateToPropagator #-}
 gateToPropagator ::
   (PrimeField f) =>
   SolverEnv s f ->
@@ -82,34 +84,36 @@ gateToPropagator env (Split i outs) = do
     bool2val False = 0
 gateToPropagator _ (Boolean _) = pure ()
 
+{-# SCC solve #-}
 solve ::
   forall k l.
   (PrimeField k) =>
   CircuitVars l ->
   ArithCircuit k ->
-  Map Int k ->
-  Map Int k
+  IntMap k ->
+  IntMap k
 solve CircuitVars {cvVars = wireNames} (ArithCircuit gates) initialAssignments = runST $ do
-  env <- SolverEnv <$> foldlM (\m i -> Map.insert i <$> cell <*> pure m) mempty wireNames
+  let wires = IntSet.toList wireNames
+  env <- SolverEnv <$> foldlM (\m i -> IntMap.insert i <$> cell <*> pure m) mempty wires
   for_ gates $ gateToPropagator env
-  for_ (Map.toList initialAssignments) $ \(v, a) -> do
+  for_ (IntMap.toList initialAssignments) $ \(v, a) -> do
     -- its possible that the input variables aren't even used in the circuit,
     -- in which case we'd get Nothing
-    case Map.lookup v (vars env) of
+    case IntMap.lookup v (vars env) of
       Nothing -> pure ()
       Just vCell -> write vCell a
   bindings <-
     foldlM
       ( \m v -> do
           ma <- content $ assertLookupCell env v
-          pure $ maybe m (\a -> Map.insert v a m) ma
+          pure $ maybe m (\a -> IntMap.insert v a m) ma
       )
       mempty
-      wireNames
-  pure $ bindings `Map.union` initialAssignments
+      wires
+  pure $ bindings `IntMap.union` initialAssignments
 
 assertLookupCell :: SolverEnv s f -> Int -> Cell s f
 assertLookupCell env i = do
-  case Map.lookup i (vars env) of
+  case IntMap.lookup i (vars env) of
     Nothing -> panic $ "Wire not found: " <> show i
     Just c -> c
