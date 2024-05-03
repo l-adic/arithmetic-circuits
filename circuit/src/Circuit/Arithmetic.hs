@@ -16,6 +16,12 @@ module Circuit.Arithmetic
     CircuitVars (..),
     relabel,
     collectCircuitVars,
+    assignInputs,
+    lookupVar,
+    booleanWires,
+    nGates,
+    InputBidings (..),
+    insertInputBinding,
   )
 where
 
@@ -25,8 +31,11 @@ import Circuit.Affine
   )
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Field.Galois (PrimeField, fromP)
+import Data.IntMap qualified as IntMap
+import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
 import Data.Set qualified as Set
+import Data.Text qualified as Text
 import Protolude
 import Text.PrettyPrint.Leijen.Text as PP
   ( Pretty (..),
@@ -63,7 +72,8 @@ instance Pretty Wire where
     let a = case t of
           Public -> "pub"
           Private -> "priv"
-     in text (a <> "_input_") <> pretty v <> "_" <> pretty label
+        suffix = if Text.null label then "" else "_" <> label
+     in text (a <> "_input_") <> pretty v <> pretty suffix
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
 
@@ -88,6 +98,7 @@ data Gate f i
       { splitInput :: i,
         splitOutputs :: [i]
       }
+  | Boolean i
   deriving (Show, Eq, Ord, Generic, NFData, FromJSON, ToJSON)
 
 deriving instance Functor (Gate f)
@@ -101,6 +112,7 @@ instance Bifunctor Gate where
     Mul l r o -> Mul (bimap f g l) (bimap f g r) (g o)
     Equal i m o -> Equal (g i) (g m) (g o)
     Split i os -> Split (g i) (map g os)
+    Boolean o -> Boolean (g o)
 
 -- | List output wires of a gate
 outputWires :: Gate f i -> [i]
@@ -108,8 +120,9 @@ outputWires = \case
   Mul _ _ out -> [out]
   Equal _ _ out -> [out]
   Split _ outs -> outs
+  Boolean _ -> []
 
-instance (Pretty i, Show f) => Pretty (Gate f i) where
+instance (Pretty i, Pretty f) => Pretty (Gate f i) where
   pretty (Mul l r o) =
     hsep
       [ pretty o,
@@ -132,10 +145,13 @@ instance (Pretty i, Show f) => Pretty (Gate f i) where
         text "split",
         pretty inp
       ]
+  pretty (Boolean o) = pretty o <> text ":= bool"
+
+{-# SCC evalGate #-}
 
 -- | Evaluate a single gate
 evalGate ::
-  (PrimeField f) =>
+  (PrimeField f, Show i) =>
   -- | lookup a value at a wire
   (i -> vars -> Maybe f) ->
   -- | update a value at a wire
@@ -146,24 +162,24 @@ evalGate ::
   Gate f i ->
   -- | context after evaluation
   vars
-evalGate lookupVar updateVar vars gate =
+evalGate _lookupVar _updateVar vars gate =
   case gate of
     Mul l r outputWire ->
-      let lval = evalAffineCircuit lookupVar vars l
-          rval = evalAffineCircuit lookupVar vars r
+      let lval = evalAffineCircuit _lookupVar vars l
+          rval = evalAffineCircuit _lookupVar vars r
           res = lval * rval
-       in updateVar outputWire res vars
+       in _updateVar outputWire res vars
     Equal i m outputWire ->
-      case lookupVar i vars of
+      case _lookupVar i vars of
         Nothing ->
           panic "evalGate: the impossible happened"
         Just inp ->
           let res = if inp == 0 then 0 else 1
               mid = if inp == 0 then 0 else recip inp
-           in updateVar outputWire res $
-                updateVar m mid vars
+           in _updateVar outputWire res $
+                _updateVar m mid vars
     Split i os ->
-      case lookupVar i vars of
+      case _lookupVar i vars of
         Nothing ->
           panic "evalGate: the impossible happened"
         Just inp ->
@@ -171,9 +187,17 @@ evalGate lookupVar updateVar vars gate =
               bool2val False = 0
               setWire (ix, oldEnv) currentOut =
                 ( ix + 1,
-                  updateVar currentOut (bool2val $ testBit (fromP inp) ix) oldEnv
+                  _updateVar currentOut (bool2val $ testBit (fromP inp) ix) oldEnv
                 )
            in snd . foldl setWire (0, vars) $ os
+    Boolean i ->
+      case _lookupVar i vars of
+        Nothing ->
+          panic "evalGate: the impossible happened"
+        Just inp ->
+          if not (inp == 0 || inp == 1)
+            then panic $ "evalGate: boolean input is not 0 or 1: " <> show inp
+            else vars
 
 -- | A circuit is a list of multiplication gates along with their
 -- output wire labels (which can be intermediate or actual outputs).
@@ -188,7 +212,7 @@ instance (ToJSON f) => ToJSON (ArithCircuit f)
 instance Functor ArithCircuit where
   fmap f (ArithCircuit gates) = ArithCircuit $ map (first f) gates
 
-instance (Show f) => Pretty (ArithCircuit f) where
+instance (Pretty f) => Pretty (ArithCircuit f) where
   pretty (ArithCircuit gs) = vcat . map pretty $ gs
 
 -- | Check whether an arithmetic circuit does not refer to
@@ -222,6 +246,9 @@ validArithCircuit (ArithCircuit gates) =
     -- variable "m", as it is filled
     -- in when evaluating the circuit
     fetchVarsGate (Split i _) = [i]
+    fetchVarsGate (Boolean i) = [i]
+
+{-# SCC evalArithCircuit #-}
 
 -- | Evaluate an arithmetic circuit on a given environment containing
 -- the inputs. Outputs the entire environment (outputs, intermediate
@@ -239,8 +266,8 @@ evalArithCircuit ::
   vars ->
   -- | input and output variables
   vars
-evalArithCircuit lookupVar updateVar (ArithCircuit gates) vars =
-  foldl' (evalGate lookupVar updateVar) vars gates
+evalArithCircuit _lookupVar _updateVar (ArithCircuit gates) vars =
+  foldl' (evalGate _lookupVar _updateVar) vars gates
 
 -- | Turn a binary expansion back into a single value.
 unsplit ::
@@ -259,22 +286,22 @@ reindex f (ArithCircuit gates) = ArithCircuit $ map (second $ mapWire f) gates
     mapWire g (OutputWire v) = OutputWire (g v)
 
 data CircuitVars label = CircuitVars
-  { cvVars :: Set Int,
-    cvPrivateInputs :: Set Int,
-    cvPublicInputs :: Set Int,
-    cvOutputs :: Set Int,
-    cvInputsLabels :: Map label Int
+  { cvVars :: IntSet,
+    cvPrivateInputs :: IntSet,
+    cvPublicInputs :: IntSet,
+    cvOutputs :: IntSet,
+    cvInputsLabels :: InputBidings label
   }
   deriving (Show)
 
 instance (Pretty label) => Pretty (CircuitVars label) where
   pretty CircuitVars {cvVars, cvPrivateInputs, cvPublicInputs, cvOutputs, cvInputsLabels} =
     vcat
-      [ text "vars:" <+> pretty (toList cvVars),
-        text "private inputs:" <+> pretty (toList cvPrivateInputs),
-        text "public inputs:" <+> pretty (toList cvPublicInputs),
-        text "outputs:" <+> pretty (toList cvOutputs),
-        text "input labels:" <+> pretty (toList cvInputsLabels)
+      [ text "vars:" <+> pretty (IntSet.toList cvVars),
+        text "private inputs:" <+> pretty (IntSet.toList cvPrivateInputs),
+        text "public inputs:" <+> pretty (IntSet.toList cvPublicInputs),
+        text "outputs:" <+> pretty (IntSet.toList cvOutputs),
+        text "input labels:" <+> pretty cvInputsLabels
       ]
 
 instance (Ord label) => Semigroup (CircuitVars label) where
@@ -284,7 +311,7 @@ instance (Ord label) => Semigroup (CircuitVars label) where
         cvPrivateInputs = cvPrivateInputs a <> cvPrivateInputs b,
         cvPublicInputs = cvPublicInputs a <> cvPublicInputs b,
         cvOutputs = cvOutputs a <> cvOutputs b,
-        cvInputsLabels = cvInputsLabels a `Map.union` cvInputsLabels b
+        cvInputsLabels = cvInputsLabels a <> cvInputsLabels b
       }
 
 instance (Ord label) => Monoid (CircuitVars label) where
@@ -304,22 +331,83 @@ relabel f (CircuitVars vars priv pub outs labels) =
       cvPrivateInputs = priv,
       cvPublicInputs = pub,
       cvOutputs = outs,
-      cvInputsLabels = Map.mapKeys f labels
+      cvInputsLabels = mapLabels f labels
     }
 
 collectCircuitVars :: ArithCircuit f -> CircuitVars Text
 collectCircuitVars (ArithCircuit gates) =
   let f (pubInputs, privInputs, intermediates, outputs, labels) w = case w of
         InputWire label it i -> case it of
-          Public -> (Set.insert i pubInputs, privInputs, intermediates, outputs, (label, i) : labels)
-          Private -> (pubInputs, Set.insert i privInputs, intermediates, outputs, labels)
-        IntermediateWire i -> (pubInputs, privInputs, Set.insert i intermediates, outputs, labels)
-        OutputWire i -> (pubInputs, privInputs, intermediates, Set.insert i outputs, labels)
+          Public -> (IntSet.insert i pubInputs, privInputs, intermediates, outputs, (label, i) : labels)
+          Private -> (pubInputs, IntSet.insert i privInputs, intermediates, outputs, labels)
+        IntermediateWire i -> (pubInputs, privInputs, IntSet.insert i intermediates, outputs, labels)
+        OutputWire i -> (pubInputs, privInputs, intermediates, IntSet.insert i outputs, labels)
       (pubis, prvis, imms, os, ls) = foldMap (foldl f mempty) gates
    in CircuitVars
-        { cvVars = Set.unions [pubis, prvis, imms, os],
+        { cvVars = IntSet.unions [pubis, prvis, imms, os],
           cvPrivateInputs = prvis,
           cvPublicInputs = pubis,
           cvOutputs = os,
-          cvInputsLabels = Map.fromList ls
+          cvInputsLabels = inputBindingsFromList ls
         }
+
+assignInputs :: (Ord label) => CircuitVars label -> Map label f -> IntMap f
+assignInputs CircuitVars {..} inputs =
+  IntMap.mapMaybe (\label -> Map.lookup label inputs) (varToLabel cvInputsLabels)
+
+lookupVar :: (Ord label) => CircuitVars label -> label -> IntMap f -> Maybe f
+lookupVar vs label sol = do
+  let labelBindings = labelToVar $ cvInputsLabels vs
+  var <- Map.lookup label labelBindings
+  IntMap.lookup var sol
+
+booleanWires :: ArithCircuit f -> Set Wire
+booleanWires (ArithCircuit gates) = foldMap f gates
+  where
+    f (Boolean i) = Set.singleton i
+    f _ = mempty
+
+nGates :: ArithCircuit f -> Int
+nGates (ArithCircuit gates) = length gates
+
+--------------------------------------------------------------------------------
+data InputBidings label = InputBidings
+  { labelToVar :: Map label Int,
+    varToLabel :: IntMap label
+  }
+  deriving (Show)
+
+mapLabels :: (Ord l2) => (l1 -> l2) -> InputBidings l1 -> InputBidings l2
+mapLabels f InputBidings {labelToVar, varToLabel} =
+  InputBidings
+    { labelToVar = Map.mapKeys f labelToVar,
+      varToLabel = fmap f varToLabel
+    }
+
+instance (Ord label) => Semigroup (InputBidings label) where
+  a <> b =
+    InputBidings
+      { labelToVar = labelToVar a <> labelToVar b,
+        varToLabel = varToLabel a <> varToLabel b
+      }
+
+instance (Ord label) => Monoid (InputBidings label) where
+  mempty =
+    InputBidings
+      { labelToVar = mempty,
+        varToLabel = mempty
+      }
+
+instance (Pretty label) => Pretty (InputBidings label) where
+  pretty InputBidings {labelToVar} =
+    pretty $ Map.toList labelToVar
+
+insertInputBinding :: (Ord label) => label -> Int -> InputBidings label -> InputBidings label
+insertInputBinding label var InputBidings {..} =
+  InputBidings
+    { labelToVar = Map.insert label var labelToVar,
+      varToLabel = IntMap.insert var label varToLabel
+    }
+
+inputBindingsFromList :: (Ord label) => [(label, Int)] -> InputBidings label
+inputBindingsFromList = foldl' (flip $ uncurry insertInputBinding) mempty

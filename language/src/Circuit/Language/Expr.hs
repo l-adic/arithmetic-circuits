@@ -1,141 +1,624 @@
-module Circuit.Language.Expr  
-  (  Expr(..),
-  UVar(..),
-  BinOp(..),
-  UnOp(..),
-  unType,
-  Hash(..),
-  hashCons,
-  getAnnotation,
-  ) where
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
-import Circuit.Language.TExpr qualified as TExpr
+module Circuit.Language.Expr
+  ( Val (..),
+    Var (..),
+    UnOp (..),
+    BinOp (..),
+    Expr,
+    evalExpr,
+    rawWire,
+    rawVal,
+    Ground (..),
+    type NBits,
+    getId,
+    val_,
+    var_,
+    unOp_,
+    binOp_,
+    if_,
+    eq_,
+    split_,
+    join_,
+    bundle_,
+    Hash (..),
+    Node (..),
+    UBinOp (..),
+    UUnOp (..),
+    reifyGraph,
+    BoolToField (..),
+  )
+where
+
+import Control.Monad.Cont (ContT (runContT))
+import Data.Field.Galois (Prime, PrimeField (fromP))
+import Data.Map qualified as Map
+import Data.Semiring (Ring (..), Semiring (..))
+import Data.Sequence ((|>))
+import Data.Set qualified as Set
 import Data.Vector qualified as V
 import Data.Vector.Sized qualified as SV
-import Protolude hiding (Semiring)
+import GHC.TypeNats (Log2, type (+))
+import Numeric (showHex)
+import Protolude hiding (Semiring (..))
+import Text.PrettyPrint.Leijen.Text hiding ((<$>))
+import Unsafe.Coerce (unsafeCoerce)
 
-newtype UVar i = UVar i
-  deriving (Show, Eq)
-  deriving (Hashable) via i
+data Val f ty where
+  ValField :: f -> Val f f
+  ValBool :: f -> Val f Bool
 
-data BinOp = BAdd | BSub | BMul | BDiv | BAnd | BOr | BXor deriving (Show, Eq, Generic)
+deriving instance (Eq f) => Eq (Val f ty)
 
-instance Hashable BinOp
+deriving instance (Show f) => Show (Val f ty)
 
-untypeBinOp :: TExpr.BinOp f a -> BinOp
-untypeBinOp = \case
-  TExpr.BAdd -> BAdd
-  TExpr.BSub -> BSub
-  TExpr.BMul -> BMul
-  TExpr.BDiv -> BDiv
-  TExpr.BAnd -> BAnd
-  TExpr.BOr -> BOr
-  TExpr.BXor -> BXor
+instance (Pretty f) => Pretty (Val f ty) where
+  pretty (ValField f) = pretty f
+  pretty (ValBool b) = pretty b
 
-data UnOp = UNeg | UNot deriving (Show, Eq, Generic)
+rawVal :: Val f ty -> f
+rawVal (ValField f) = f
+rawVal (ValBool f) = f
 
-instance Hashable UnOp
+data Var i f ty where
+  VarField :: i -> Var i f f
+  VarBool :: i -> Var i f Bool
 
-untypeUnOp :: TExpr.UnOp f a -> UnOp
-untypeUnOp = \case
-  TExpr.UNeg -> UNeg
-  TExpr.UNot -> UNot
+deriving instance (Eq i) => Eq (Var i f ty)
 
--- a is an annotation
-data Expr a i f
-  = EVal a f
-  | EVar a (UVar i)
-  | EUnOp a UnOp (Expr a i f)
-  | EBinOp a BinOp (Expr a i f) (Expr a i f)
-  | EIf a (Expr a i f) (Expr a i f) (Expr a i f)
-  | EEq a (Expr a i f) (Expr a i f)
-  | ESplit a Int (Expr a i f)
-  | EJoin a (Expr a i f)
-  | EAtIndex a (Expr a i f) Int
-  | EUpdateIndex a Int (Expr a i f) (Expr a i f)
-  | EBundle a (V.Vector (Expr a i f))
-  deriving (Eq, Show)
+deriving instance (Show i, Show f) => Show (Var i f ty)
 
-unType :: forall f i ty. TExpr.Expr i f ty -> Expr () i f
-unType = \case
-  TExpr.EVal v -> case v of
-    TExpr.ValBool b -> EVal () b
-    TExpr.ValField f -> EVal () f
-  TExpr.EVar v -> EVar () (UVar $ TExpr.rawWire v)
-  TExpr.EUnOp op e -> EUnOp () (untypeUnOp op) (unType e)
-  TExpr.EBinOp op e1 e2 -> EBinOp () (untypeBinOp op) (unType e1) (unType e2)
-  TExpr.EIf b t e -> EIf () (unType b) (unType t) (unType e)
-  TExpr.EEq l r -> EEq () (unType l) (unType r)
-  TExpr.ESplit i -> ESplit () (fromIntegral $ natVal (Proxy @(TExpr.NBits f))) (unType i)
-  TExpr.EJoin i -> EJoin () (unType i)
-  TExpr.EAtIndex v ix -> EAtIndex () (unType v) (fromIntegral ix)
-  TExpr.EUpdateIndex p b v -> EUpdateIndex () (fromIntegral p) (unType b) (unType v)
-  TExpr.EBundle b -> EBundle () (unType <$> SV.fromSized b)
+instance (Pretty i) => Pretty (Var i f ty) where
+  pretty (VarField f) = pretty f
+  pretty (VarBool b) = pretty b
 
-getAnnotation :: Expr a i f -> a
-getAnnotation = \case
-  EVal a _ -> a
-  EVar a _ -> a
-  EUnOp a _ _ -> a
-  EBinOp a _ _ _ -> a
-  EIf a _ _ _ -> a
-  EEq a _ _ -> a
-  ESplit a _ _ -> a
-  EJoin a _ -> a
-  EAtIndex a _ _ -> a
-  EUpdateIndex a _ _ _ -> a
-  EBundle a _ -> a
+rawWire :: Var i f ty -> i
+rawWire (VarField i) = i
+rawWire (VarBool i) = i
+
+data UnOp f a where
+  UNeg :: UnOp f f
+  UNot :: UnOp f Bool
+
+deriving instance (Show f) => Show (UnOp f a)
+
+deriving instance Eq (UnOp f a)
+
+instance Pretty (UnOp f a) where
+  pretty op = case op of
+    UNeg -> text "neg"
+    UNot -> text "!"
+
+data BinOp f a where
+  BAdd :: BinOp f f
+  BSub :: BinOp f f
+  BMul :: BinOp f f
+  BDiv :: BinOp f f
+  BAnd :: BinOp f Bool
+  BOr :: BinOp f Bool
+  BXor :: BinOp f Bool
+
+deriving instance (Show f) => Show (BinOp f a)
+
+deriving instance Eq (BinOp f a)
+
+instance Pretty (BinOp f a) where
+  pretty op = case op of
+    BAdd -> text "+"
+    BSub -> text "-"
+    BMul -> text "*"
+    BDiv -> text "/"
+    BAnd -> text "&&"
+    BOr -> text "||"
+    BXor -> text "xor"
+
+opPrecedence :: BinOp f a -> Int
+opPrecedence BOr = 5
+opPrecedence BXor = 5
+opPrecedence BAnd = 5
+opPrecedence BSub = 6
+opPrecedence BAdd = 6
+opPrecedence BMul = 7
+opPrecedence BDiv = 8
+
+type family NBits a :: Nat where
+  NBits (Prime p) = (Log2 p) + 1
+
+-- | This constring prevents us from building up nested vectors inside the expression type
+class Ground (t :: Type -> Type) (ty :: Type) (f :: Type) where
+  coerceGroundType :: t ty -> t f
+  unsafeCoerceGroundType :: t f -> t ty
+  unsafeCoerceGroundType = unsafeCoerce
+
+instance Ground (Expr i f) f f where
+  coerceGroundType = identity
+
+instance Ground (Expr i f) Bool f where
+  coerceGroundType = unsafeCoerce
+
+instance Ground (Val f) ty f where
+  coerceGroundType (ValBool b) = ValField b
+  coerceGroundType (ValField f) = ValField f
+
+instance Ground (Var i f) ty f where
+  coerceGroundType (VarField i) = VarField i
+  coerceGroundType (VarBool i) = VarField i
 
 newtype Hash = Hash Int
   deriving (Show, Eq, Ord)
   deriving (Hashable) via Int
 
-hashCons :: (Hashable i, Hashable f) => Expr () i f -> Expr Hash i f
-hashCons = \case
-  EVal _ f ->
-    let i = Hash $ hash (hash @Text "EVal", f)
-     in EVal i f
-  EVar _ v ->
-    let i = Hash $ hash (hash @Text "EVar", v)
-     in EVar i v
-  EUnOp _ op e ->
-    let e' = hashCons e
-        i = Hash $ hash (hash @Text "EUnOp", op, getAnnotation e')
-     in EUnOp i op e'
-  EBinOp _ op e1 e2 ->
-    let e1' = hashCons e1
-        e2' = hashCons e2
-        i = Hash $ hash (hash @Text "EBinOp", op, getAnnotation e1', getAnnotation e2')
-     in EBinOp i op e1' e2'
-  EIf _ b t e ->
-    let b' = hashCons b
-        t' = hashCons t
-        e' = hashCons e
-        i = Hash $ hash (hash @Text "EIf", getAnnotation b', getAnnotation t', getAnnotation e')
-     in EIf i b' t' e'
-  EEq _ l r ->
-    let l' = hashCons l
-        r' = hashCons r
-        i = Hash $ hash (hash @Text "EEq", getAnnotation l', getAnnotation r')
-     in EEq i l' r'
-  ESplit _ n e ->
-    let e' = hashCons e
-        i = Hash $ hash (hash @Text "ESplit", n, getAnnotation e')
-     in ESplit i n e'
-  EJoin _ e ->
-    let e' = hashCons e
-        i = Hash $ hash (hash @Text "EJoin", getAnnotation e')
-     in EJoin i e'
-  EAtIndex _ v ix ->
-    let v' = hashCons v
-        i = Hash $ hash (hash @Text "AtIndex", getAnnotation v', ix)
-     in EAtIndex i v' ix
-  EUpdateIndex _ p b v ->
-    let b' = hashCons b
-        v' = hashCons v
-        i = Hash $ hash (hash @Text "UpdateIndex", p, getAnnotation b', getAnnotation v')
-     in EUpdateIndex i p b' v'
-  EBundle _ b ->
-    let b' = V.map hashCons b
-        i = Hash $ hash (hash @Text "Bundle", toList $ fmap getAnnotation b')
-     in EBundle i b'
+instance Pretty Hash where
+  pretty (Hash i) =
+    let s = if i < 0 then "-" else ""
+     in s <> "0x" <> pretty (take 7 $ showHex (abs i) "")
+
+-- | Expression data type of (arithmetic) expressions over a field @f@
+-- with variable names/indices coming from @i@.
+data Expr i f ty where
+  EVal :: Hash -> Val f ty -> Expr i f ty
+  EVar :: Hash -> Var i f ty -> Expr i f ty
+  EUnOp :: Hash -> UnOp f ty -> Expr i f ty -> Expr i f ty
+  EBinOp :: Hash -> BinOp f ty -> Expr i f ty -> Expr i f ty -> Expr i f ty
+  EIf :: Hash -> Expr i f Bool -> Expr i f ty -> Expr i f ty -> Expr i f ty
+  EEq :: Hash -> Expr i f f -> Expr i f f -> Expr i f Bool
+  ESplit :: (KnownNat (NBits f)) => Hash -> Expr i f f -> Expr i f (SV.Vector (NBits f) Bool)
+  EJoin :: (KnownNat n) => Hash -> Expr i f (SV.Vector n Bool) -> Expr i f f
+  EBundle :: Hash -> SV.Vector n (Expr i f ty) -> Expr i f (SV.Vector n ty)
+
+deriving instance (Show i, Show f) => Show (Expr i f ty)
+
+getId :: Expr i f ty -> Hash
+getId (EVal i _) = i
+getId (EVar i _) = i
+getId (EUnOp i _ _) = i
+getId (EBinOp i _ _ _) = i
+getId (EIf i _ _ _) = i
+getId (EEq i _ _) = i
+getId (ESplit i _) = i
+getId (EJoin i _) = i
+getId (EBundle i _) = i
+{-# INLINE getId #-}
+
+instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
+  pretty = prettyPrec 0
+    where
+      prettyPrec :: Int -> Expr i f ty -> Doc
+      prettyPrec p e =
+        case e of
+          EVal _ v ->
+            pretty v
+          EVar _ v ->
+            pretty v
+          -- TODO correct precedence
+          EUnOp _ op e1 -> parens (pretty op <+> pretty e1)
+          EBinOp _ op e1 e2 ->
+            parensPrec (opPrecedence op) p $
+              prettyPrec (opPrecedence op) e1
+                <+> pretty op
+                <+> prettyPrec (opPrecedence op) e2
+          EIf _ b true false ->
+            parensPrec 4 p (text "if" <+> pretty b <+> text "then" <+> pretty true <+> text "else" <+> pretty false)
+          -- TODO correct precedence
+          EEq _ l r ->
+            parensPrec 1 p (pretty l) <+> text "=" <+> parensPrec 1 p (pretty r)
+          ESplit _ i -> text "split" <+> parens (pretty i)
+          EBundle _ b -> text "bundle" <+> parens (pretty (SV.toList b))
+          EJoin _ i -> text "join" <+> parens (pretty i)
+
+parensPrec :: Int -> Int -> Doc -> Doc
+parensPrec opPrec p = if p > opPrec then parens else identity
+
+--------------------------------------------------------------------------------
+
+evalExpr :: (PrimeField f, Ord i, Show i) => Map i f -> Expr i f ty -> ty
+evalExpr inputs e = evalState (evalExpr' e) inputs
+
+-- | Evaluate arithmetic expressions directly, given an environment
+evalExpr' ::
+  forall f i ty.
+  (PrimeField f, Ord i, Show i) =>
+  -- | variable lookup
+  -- | expression to evaluate
+  Expr i f ty ->
+  -- | input values
+  -- | resulting value
+  State (Map i f) ty
+evalExpr' expr = case expr of
+  EVal _ v -> pure $ case v of
+    ValBool b -> b == 1
+    ValField f -> f
+  EVar _ _var -> do
+    m <- get
+    pure $ case _var of
+      VarField i -> do
+        case Map.lookup i m of
+          Just v -> v
+          Nothing -> panic $ "TODO: incorrect var lookup: " <> Protolude.show i
+      VarBool i ->
+        case Map.lookup i m of
+          Just v -> v == 1
+          Nothing -> panic $ "TODO: incorrect var lookup: " <> Protolude.show i
+  EUnOp _ UNeg e1 ->
+    Protolude.negate <$> evalExpr' e1
+  EUnOp _ UNot e1 ->
+    not <$> evalExpr' e1
+  EBinOp _ op e1 e2 -> do
+    e1' <- evalExpr' e1
+    e2' <- evalExpr' e2
+    pure $ apply e1' e2'
+    where
+      apply = case op of
+        BAdd -> (+)
+        BSub -> (-)
+        BMul -> (*)
+        BDiv -> (/)
+        BAnd -> (&&)
+        BOr -> (||)
+        BXor -> \x y -> (x || y) && not (x && y)
+  EIf _ b true false -> do
+    cond <- evalExpr' b
+    if cond
+      then evalExpr' true
+      else evalExpr' false
+  EEq _ lhs rhs -> do
+    lhs' <- evalExpr' lhs
+    rhs' <- evalExpr' rhs
+    pure $ lhs' == rhs'
+  ESplit _ i -> do
+    x <- evalExpr' i
+    pure $ SV.generate $ \_ix -> testBit (fromP x) (fromIntegral _ix)
+  EBundle _ as -> traverse evalExpr' as
+  EJoin _ i -> do
+    bits <- evalExpr' i
+    pure $
+      SV.ifoldl (\acc _ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer _ix) else 0) 0 bits
+
+instance (Hashable f, Hashable i, Num f) => Semiring (Expr i f f) where
+  plus = binOp_ BAdd
+  zero = val_ (ValField 0)
+  times = binOp_ BMul
+  one = val_ (ValField 1)
+
+instance (Num f, Hashable i, Hashable f) => Ring (Expr i f f) where
+  negate = unOp_ UNeg
+
+instance (Num f, Hashable i, Hashable f) => Num (Expr i f f) where
+  (+) = plus
+  (*) = times
+  (-) = binOp_ BSub
+  negate = unOp_ UNeg
+  abs = identity
+  signum = const 1
+  fromInteger = val_ . ValField . fromInteger
+
+val_ ::
+  forall i f ty.
+  (Hashable i) =>
+  (Hashable f) =>
+  Val f ty ->
+  Expr i f ty
+val_ v =
+  let h = Hash $ hash $ (NVal (rawVal v) :: Node i f)
+   in EVal h v
+{-# INLINE val_ #-}
+
+var_ ::
+  forall i f ty.
+  (Hashable i) =>
+  (Hashable f) =>
+  Var i f ty ->
+  Expr i f ty
+var_ v =
+  let h = Hash $ hash (NVar (rawWire v) :: Node i f)
+   in EVar h v
+{-# INLINE var_ #-}
+
+unOp_ ::
+  forall i f a.
+  (Hashable i) =>
+  (Hashable f) =>
+  UnOp f a ->
+  Expr i f a ->
+  Expr i f a
+unOp_ op e =
+  let h = Hash $ hash $ (NUnOp (untypeUnOp op) (getId e) :: Node i f)
+   in EUnOp h op e
+{-# INLINE unOp_ #-}
+
+binOp_ ::
+  forall i f a.
+  (Hashable i) =>
+  (Hashable f) =>
+  BinOp f a ->
+  Expr i f a ->
+  Expr i f a ->
+  Expr i f a
+binOp_ op e1 e2 =
+  let h = Hash $ hash $ (NBinOp (untypeBinOp op) (getId e1) (getId e2) :: Node i f)
+   in EBinOp h op e1 e2
+{-# INLINE binOp_ #-}
+
+if_ ::
+  forall i f a.
+  (Hashable i) =>
+  (Hashable f) =>
+  Expr i f Bool ->
+  Expr i f a ->
+  Expr i f a ->
+  Expr i f a
+if_ b t f =
+  let h = Hash $ hash (NIf (getId b) (getId t) (getId f) :: Node i f)
+   in EIf h b t f
+{-# INLINE if_ #-}
+
+eq_ ::
+  forall i f.
+  (Hashable i) =>
+  (Hashable f) =>
+  Expr i f f ->
+  Expr i f f ->
+  Expr i f Bool
+eq_ l r =
+  let h = Hash $ hash (NEq (getId l) (getId r) :: Node i f)
+   in EEq h l r
+{-# INLINE eq_ #-}
+
+split_ ::
+  forall i f.
+  (Hashable i) =>
+  (Hashable f) =>
+  (KnownNat (NBits f)) =>
+  Expr i f f ->
+  Expr i f (SV.Vector (NBits f) Bool)
+split_ i =
+  let h = Hash $ hash (NSplit (getId i) (fromIntegral $ natVal (Proxy @(NBits f))) :: Node i f)
+   in ESplit h i
+{-# INLINE split_ #-}
+
+join_ ::
+  forall i f n.
+  (Hashable i) =>
+  (Hashable f) =>
+  (KnownNat n) =>
+  Expr i f (SV.Vector n Bool) ->
+  Expr i f f
+join_ i =
+  let h = Hash $ hash (NJoin (getId i) :: Node i f)
+   in EJoin h i
+{-# INLINE join_ #-}
+
+bundle_ ::
+  forall i f n ty.
+  (Hashable f) =>
+  (Hashable i) =>
+  SV.Vector n (Expr i f ty) ->
+  Expr i f (SV.Vector n ty)
+bundle_ b =
+  let h = Hash $ hash (NBundle (getId <$> SV.fromSized b) :: Node i f)
+   in EBundle h b
+{-# INLINE bundle_ #-}
+
+class BoolToField b f | b -> f where
+  boolToField :: b -> f
+
+instance BoolToField (Val f Bool) (Val f f) where
+  boolToField (ValBool b) = ValField b
+  boolToField (ValField b) = ValField b
+
+instance BoolToField (Var i f Bool) (Var i f f) where
+  boolToField (VarBool i) = VarField i
+  boolToField (VarField i) = VarField i
+
+instance BoolToField (Expr i f Bool) (Expr i f f) where
+  boolToField = unsafeCoerce
+
+instance BoolToField (Expr i f (SV.Vector n Bool)) (Expr i f (SV.Vector n f)) where
+  boolToField = unsafeCoerce
+
+-------------------------------------------------------------------------------
+
+data UBinOp = UBAdd | UBSub | UBMul | UBDiv | UBAnd | UBOr | UBXor deriving (Show, Eq, Generic)
+
+instance Hashable UBinOp
+
+instance Pretty UBinOp where
+  pretty op = case op of
+    UBAdd -> text "+"
+    UBSub -> text "-"
+    UBMul -> text "*"
+    UBDiv -> text "/"
+    UBAnd -> text "&&"
+    UBOr -> text "||"
+    UBXor -> text "xor"
+
+data UUnOp = UUNeg | UUNot deriving (Show, Eq, Generic)
+
+instance Hashable UUnOp
+
+instance Pretty UUnOp where
+  pretty op = case op of
+    UUNeg -> text "neg"
+    UUNot -> text "!"
+
+data Node i f where
+  NVal :: f -> Node i f
+  NVar :: i -> Node i f
+  NUnOp :: UUnOp -> Hash -> Node i f
+  NBinOp :: UBinOp -> Hash -> Hash -> Node i f
+  NIf :: Hash -> Hash -> Hash -> Node i f
+  NEq :: Hash -> Hash -> Node i f
+  NSplit :: Hash -> Int -> Node i f
+  NJoin :: Hash -> Node i f
+  NBundle :: V.Vector Hash -> Node i f
+
+instance (Pretty f, Pretty i) => Pretty (Node i f) where
+  pretty (NVal f) = pretty f
+  pretty (NVar i) = "Var" <+> pretty i
+  pretty (NUnOp op e) = pretty op <+> pretty e
+  pretty (NBinOp op e1 e2) = pretty e1 <+> pretty op <+> pretty e2
+  pretty (NIf b t f) = "if" <+> pretty b <+> "then" <+> pretty t <+> "else" <+> pretty f
+  pretty (NEq l r) = pretty l <+> "==" <+> pretty r
+  pretty (NSplit e n) = "split" <+> pretty e <+> pretty n
+  pretty (NJoin e) = "join" <+> pretty e
+  pretty (NBundle es) = "bundle" <+> pretty (toList es)
+
+deriving instance (Show i, Show f) => Show (Node i f)
+
+deriving instance (Eq i, Eq f) => Eq (Node i f)
+
+instance (Hashable i, Hashable f) => Hashable (Node i f) where
+  hashWithSalt s (NVal f) = s `hashWithSalt` ("NVal" :: Text) `hashWithSalt` f
+  hashWithSalt s (NVar i) = s `hashWithSalt` ("NVar" :: Text) `hashWithSalt` i
+  hashWithSalt s (NUnOp op e) = s `hashWithSalt` ("NUnOp" :: Text) `hashWithSalt` op `hashWithSalt` e
+  hashWithSalt s (NBinOp op e1 e2) = s `hashWithSalt` ("NBinOp" :: Text) `hashWithSalt` op `hashWithSalt` e1 `hashWithSalt` e2
+  hashWithSalt s (NIf b t f) = s `hashWithSalt` ("NIf" :: Text) `hashWithSalt` b `hashWithSalt` t `hashWithSalt` f
+  hashWithSalt s (NEq l r) = s `hashWithSalt` ("NEq" :: Text) `hashWithSalt` l `hashWithSalt` r
+  hashWithSalt s (NSplit e n) = s `hashWithSalt` ("NSplit" :: Text) `hashWithSalt` e `hashWithSalt` n
+  hashWithSalt s (NJoin e) = s `hashWithSalt` ("NJoin" :: Text) `hashWithSalt` e
+  hashWithSalt s (NBundle es) = s `hashWithSalt` ("NBundle" :: Text) `hashWithSalt` toList es
+
+untypeUnOp :: UnOp f a -> UUnOp
+untypeUnOp UNeg = UUNeg
+untypeUnOp UNot = UUNot
+
+untypeBinOp :: BinOp f a -> UBinOp
+untypeBinOp BAdd = UBAdd
+untypeBinOp BSub = UBSub
+untypeBinOp BMul = UBMul
+untypeBinOp BDiv = UBDiv
+untypeBinOp BAnd = UBAnd
+untypeBinOp BOr = UBOr
+untypeBinOp BXor = UBXor
+
+--------------------------------------------------------------------------------
+
+reifyGraph :: Expr i f ty -> Seq (Hash, Node i f)
+reifyGraph e =
+  gbsEdges $ execState (runContT (buildGraph_ e) pure) (GraphBuilderState mempty mempty)
+
+data GraphBuilderState i f = GraphBuilderState
+  { gbsSharedNodes :: Set Hash,
+    gbsEdges :: Seq (Hash, Node i f)
+  }
+
+{-# SCC buildGraph_ #-}
+buildGraph_ :: forall i f r ty. Expr i f ty -> ContT r (State (GraphBuilderState i f)) ()
+buildGraph_ = \case
+  EVal h v -> do
+    ns <- gets gbsSharedNodes
+    unless (h `Set.member` ns) $ do
+      let n = NVal (rawVal v)
+      modify $ \s ->
+        s
+          { gbsSharedNodes = Set.insert h ns,
+            gbsEdges = gbsEdges s |> (h, n)
+          }
+  EVar h v -> do
+    ns <- gets gbsSharedNodes
+    unless (h `Set.member` ns) $ do
+      let n = NVar (rawWire v)
+      modify $ \s ->
+        s
+          { gbsSharedNodes = Set.insert h ns,
+            gbsEdges = gbsEdges s |> (h, n)
+          }
+  EUnOp h op e -> do
+    ns <- gets gbsSharedNodes
+    unless (h `Set.member` ns) $ do
+      modify $ \s ->
+        s
+          { gbsSharedNodes = Set.insert h ns
+          }
+      buildGraph_ e
+      let n = NUnOp (untypeUnOp op) (getId e)
+      modify $ \s ->
+        s
+          { gbsEdges = gbsEdges s |> (h, n)
+          }
+  EBinOp h op e1 e2 -> do
+    ns <- gets gbsSharedNodes
+    unless (h `Set.member` ns) $ do
+      modify $ \s ->
+        s
+          { gbsSharedNodes = Set.insert h ns
+          }
+      buildGraph_ e1
+      buildGraph_ e2
+      let n = NBinOp (untypeBinOp op) (getId e1) (getId e2)
+      modify $ \s ->
+        s
+          { gbsEdges = gbsEdges s |> (h, n)
+          }
+  EIf h b t f -> do
+    ns <- gets gbsSharedNodes
+    unless (h `Set.member` ns) $ do
+      modify $ \s ->
+        s
+          { gbsSharedNodes = Set.insert h ns
+          }
+      buildGraph_ b
+      buildGraph_ t
+      buildGraph_ f
+      let n = NIf (getId b) (getId t) (getId f)
+      modify $ \s ->
+        s
+          { gbsEdges = gbsEdges s |> (h, n)
+          }
+  EEq h l r -> do
+    ns <- gets gbsSharedNodes
+    unless (h `Set.member` ns) $ do
+      modify $ \s ->
+        s
+          { gbsSharedNodes = Set.insert h ns
+          }
+      buildGraph_ l
+      buildGraph_ r
+      let n = NEq (getId l) (getId r)
+      modify $ \s ->
+        s
+          { gbsEdges = gbsEdges s |> (h, n)
+          }
+  ESplit h i -> do
+    ns <- gets gbsSharedNodes
+    unless (h `Set.member` ns) $ do
+      modify $ \s ->
+        s
+          { gbsSharedNodes = Set.insert h ns
+          }
+      buildGraph_ i
+      let n = NSplit (getId i) (fromIntegral $ natVal (Proxy @(NBits f)))
+      modify $ \s ->
+        s
+          { gbsEdges = gbsEdges s |> (h, n)
+          }
+  EJoin h i -> do
+    ns <- gets gbsSharedNodes
+    unless (h `Set.member` ns) $ do
+      modify $ \s ->
+        s
+          { gbsSharedNodes = Set.insert h ns
+          }
+      buildGraph_ i
+      let n = NJoin (getId i)
+      modify $ \s ->
+        s
+          { gbsEdges = gbsEdges s |> (h, n)
+          }
+  EBundle h b -> do
+    ns <- gets gbsSharedNodes
+    unless (h `Set.member` ns) $ do
+      modify $ \s ->
+        s
+          { gbsSharedNodes = Set.insert h ns
+          }
+      traverse_ buildGraph_ b
+      let n = NBundle (getId <$> SV.fromSized b)
+      modify $ \s ->
+        s
+          { gbsEdges = gbsEdges s |> (h, n)
+          }

@@ -8,6 +8,7 @@ import Data.Array.IO (IOArray, getElems, newArray, readArray, writeArray)
 import Data.Distributive (Distributive (distribute))
 import Data.Field.Galois (Prime, PrimeField)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IntMap qualified as IntMap
 import Data.List (union, (!!), (\\))
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
@@ -30,13 +31,13 @@ mkBoxes :: Board a -> BoxGrid a
 mkBoxes = Vec.chunks @Nat3 . fmap (Vec.chunks @Nat3)
 
 sudokuSet ::
-  (Num f) =>
+  (Num f, Hashable f) =>
   SudokuSet (Signal f f)
 sudokuSet = Vec.tabulate (cField . (+ 1) . fromIntegral)
 
 isPermutation ::
   forall f.
-  (PrimeField f) =>
+  (PrimeField f, Hashable f) =>
   [Signal f f] ->
   [Signal f f] ->
   Signal f Bool
@@ -48,7 +49,7 @@ isPermutation as bs =
    in all_ f (zip as [0 ..])
 
 validateBoxes ::
-  (PrimeField f) =>
+  (PrimeField f, Hashable f) =>
   SudokuSet (Signal f f) ->
   BoxGrid (Signal f f) ->
   Signal f Bool
@@ -56,15 +57,15 @@ validateBoxes ss boxes =
   let f box = isPermutation (Vec.toList ss) (Vec.toList $ Vec.concat box)
    in all_ f $ Vec.concat boxes
 
-mkBoard :: ExprM f (Board (Signal f f))
+mkBoard :: (Hashable f) => ExprM f (Board (Signal f f))
 mkBoard =
   for (universe @Nat9) $ \i ->
     for (universe @Nat9) $ \j -> do
       let varName = "cell_" <> show i <> show j
-      EVar <$> fieldInput Public varName
+      var_ <$> fieldInput Public varName
 
 initializeBoard ::
-  (PrimeField f) =>
+  (PrimeField f, Hashable f) =>
   Board (Signal f f) ->
   ExprM f (Board (Signal f f))
 initializeBoard board = do
@@ -72,16 +73,17 @@ initializeBoard board = do
     for (universe @Nat9) $ \j -> do
       let cell = board Vec.! i Vec.! j
           varName = "private_cell_" <> show i <> show j
-      v <- EVar <$> fieldInput Private varName
-      pure $ cond (cell `eq` cField 0) v cell
+      v <- var_ <$> fieldInput Private varName
+      pure $ if_ (cell `eq_` cField 0) v cell
 
-validate :: (PrimeField f, Hashable f) => ExprM f Wire
+validate :: ExprM Fr (Var Wire Fr Bool)
 validate = do
   b <- mkBoard >>= initializeBoard
   let rowsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> b)
       colsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> distribute b)
       boxesValid = validateBoxes sudokuSet (mkBoxes b)
-  retBool "out" $ rowsValid `and_` colsValid `and_` boxesValid
+  let res = rowsValid `and_` colsValid `and_` boxesValid
+  boolOutput "out" res
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
@@ -98,25 +100,25 @@ spec_sudokuSolver = do
             privAssignments =
               map (first (\a -> "private_cell_" <> show (fst a) <> show (snd a))) $
                 filter (\(_, v) -> v /= 0) sol
-            BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (validate @Fr)
+            BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder validate
         let pubInputs =
-              Map.fromList $
-                [ (var, fromIntegral value)
-                  | (label, var) <- Map.toList $ cvInputsLabels bsVars,
+              IntMap.fromList $
+                [ (_var, fromIntegral value)
+                  | (label, _var) <- Map.toList $ labelToVar $ cvInputsLabels bsVars,
                     (l, value) <- pubAssignments,
                     l == label
                 ]
             privInputs =
-              Map.fromList $
-                [ (var, fromIntegral value)
-                  | (label, var) <- Map.toList $ cvInputsLabels bsVars,
+              IntMap.fromList $
+                [ (_var, fromIntegral value)
+                  | (label, _var) <- Map.toList $ labelToVar $ cvInputsLabels bsVars,
                     (l, value) <- privAssignments,
                     l == label
                 ]
-            outVar = fromJust $ Map.lookup "out" $ cvInputsLabels bsVars
-            sol2 = solve bsVars bsCircuit (pubInputs `Map.union` privInputs)
+            out = lookupVar bsVars "out" sol2
+            sol2 = altSolve bsCircuit (pubInputs `IntMap.union` privInputs)
         verifier (map snd sol) `shouldBe` True
-        (i, Map.lookup outVar sol2) `shouldBe` (i, Just 1)
+        (i, out) `shouldBe` (i, Just 1)
 
 verifier :: [Int] -> Bool
 verifier _input =
@@ -245,3 +247,11 @@ examplePuzzles =
       [0, 0, 0, 0, 0, 4, 0, 0, 0]
     ]
   ]
+
+altSolve :: ArithCircuit Fr -> IntMap Fr -> IntMap Fr
+altSolve p inputs =
+  evalArithCircuit
+    (\w m -> IntMap.lookup (wireName w) m)
+    (\w m -> IntMap.insert (wireName w) m)
+    p
+    inputs

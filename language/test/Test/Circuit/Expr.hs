@@ -20,47 +20,47 @@ import Prelude (Show (..))
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-arbExprBool :: (GaloisField f) => Int -> Int -> Gen (Signal f Bool)
+arbExprBool :: (GaloisField f, Hashable f) => Int -> Int -> Gen (Signal f Bool)
 arbExprBool numVars size
   | size <= 0 =
       oneof $
-        [EVal . ValBool <$> oneof [pure 0, pure 1]]
+        [val_ . ValBool <$> oneof [pure 0, pure 1]]
           ++ if numVars > 0
             then []
             else []
   | otherwise =
       oneof
-        [ EBinOp BAnd
+        [ binOp_ BAnd
             <$> arbExprBool numVars (size - 1)
             <*> arbExprBool
               numVars
               (size - 1),
-          EBinOp BOr
+          binOp_ BOr
             <$> arbExprBool numVars (size - 1)
             <*> arbExprBool
               numVars
               (size - 1),
-          EUnOp UNot <$> arbExprBool numVars (size - 1),
-          EEq
+          unOp_ UNot <$> arbExprBool numVars (size - 1),
+          eq_
             <$> arbExpr numVars (size - 1)
             <*> arbExpr numVars (size - 1)
         ]
 
-arbExpr :: (GaloisField f) => Int -> Int -> Gen (Signal f f)
+arbExpr :: (GaloisField f, Hashable f) => Int -> Int -> Gen (Signal f f)
 arbExpr numVars size
   | size <= 0 =
       oneof $
-        [EVal . ValField <$> arbitrary]
+        [val_ . ValField <$> arbitrary]
           ++ if numVars > 0
-            then [EVar . VarField . InputWire "" Public <$> choose (0, numVars - 1)]
+            then [var_ . VarField . InputWire "" Public <$> choose (0, numVars - 1)]
             else []
   | otherwise =
       oneof
-        [ EBinOp BAdd <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
-          EBinOp BSub <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
-          EBinOp BMul <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
-          EUnOp UNeg <$> arbExpr numVars (size - 1),
-          EIf
+        [ binOp_ BAdd <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
+          binOp_ BSub <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
+          binOp_ BMul <$> arbExpr numVars (size - 1) <*> arbExpr numVars (size - 1),
+          unOp_ UNeg <$> arbExpr numVars (size - 1),
+          if_
             <$> arbExprBool numVars (size - 1)
             <*> arbExpr numVars (size - 1)
             <*> arbExpr numVars (size - 1)
@@ -68,7 +68,7 @@ arbExpr numVars size
 
 data ExprWithInputs f = ExprWithInputs (Signal f f) [Map Int f]
 
-instance (GaloisField f) => Arbitrary (ExprWithInputs f) where
+instance (GaloisField f, Hashable f) => Arbitrary (ExprWithInputs f) where
   arbitrary = do
     numVars <- abs <$> arbitrary
     program <- scale (`div` 10) $ sized (arbExpr numVars)

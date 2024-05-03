@@ -28,7 +28,6 @@ data AffineCircuit f i
   | ScalarMul f (AffineCircuit f i)
   | ConstGate f
   | Var i
-  | Nil
   deriving (Read, Eq, Ord, Show, Generic, NFData)
 
 instance (FromJSON i, FromJSON f) => FromJSON (AffineCircuit f i)
@@ -47,22 +46,18 @@ instance Bifunctor AffineCircuit where
     ScalarMul s x -> ScalarMul (f s) (bimap f g x)
     ConstGate c -> ConstGate (f c)
     Var i -> Var (g i)
-    Nil -> Nil
 
-instance (Pretty i, Show f) => Pretty (AffineCircuit f i) where
+instance (Pretty i, Pretty f) => Pretty (AffineCircuit f i) where
   pretty = prettyPrec 0
     where
       prettyPrec :: Int -> AffineCircuit f i -> Doc
       prettyPrec p e =
         case e of
-          Nil ->
-            text "nil"
           Var v ->
             pretty v
-          ConstGate f ->
-            text $ show f
+          ConstGate f -> pretty f
           ScalarMul f e1 ->
-            text (show f) <+> text "*" <+> parensPrec 7 p (prettyPrec p e1)
+            pretty f <+> text "*" <+> parensPrec 7 p (prettyPrec p e1)
           Add e1 e2 ->
             parensPrec 6 p $
               prettyPrec 6 e1
@@ -72,11 +67,13 @@ instance (Pretty i, Show f) => Pretty (AffineCircuit f i) where
 parensPrec :: Int -> Int -> Doc -> Doc
 parensPrec opPrec p = if p > opPrec then parens else identity
 
+{-# SCC evalAffineCircuit #-}
+
 -- | Evaluate the arithmetic circuit without mul-gates on the given
 -- input. Variable map is assumed to have all the variables referred
 -- to in the circuit. Failed lookups are currently treated as 0.
 evalAffineCircuit ::
-  (Num f) =>
+  (Num f, Show i) =>
   -- | lookup function for variable mapping
   (i -> vars -> Maybe f) ->
   -- | variables
@@ -85,9 +82,8 @@ evalAffineCircuit ::
   AffineCircuit f i ->
   f
 evalAffineCircuit lookupVar vars = \case
-  Nil -> 0
   ConstGate f -> f
-  Var i -> fromMaybe 0 $ lookupVar i vars
+  Var i -> fromMaybe (panic $ "missing variable assignment: " <> show i) $ lookupVar i vars
   Add l r -> evalAffineCircuit lookupVar vars l + evalAffineCircuit lookupVar vars r
   ScalarMul scalar expr -> evalAffineCircuit lookupVar vars expr * scalar
 
@@ -100,7 +96,6 @@ affineCircuitToAffineMap ::
   -- | constant part and non-constant part
   (f, Map i f)
 affineCircuitToAffineMap = \case
-  Nil -> (0, mempty)
   Var i -> (0, Map.singleton i 1)
   Add l r -> (constLeft + constRight, Map.unionWith (+) vecLeft vecRight)
     where

@@ -21,8 +21,9 @@ where
 import Circuit
 import Data.Field.Galois (GaloisField, PrimeField (fromP), char)
 import Data.IORef (IORef, readIORef, writeIORef)
+import Data.IntMap qualified as IntMap
+import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
-import Data.Set qualified as Set
 import Data.Vector qualified as V
 import Data.Vector.Mutable (IOVector)
 import Data.Vector.Mutable qualified as MV
@@ -52,8 +53,8 @@ mkProgramEnv vars circ =
     { peFieldSize = FieldSize 32,
       peRawPrime = toInteger $ char (1 :: f),
       peVersion = 2,
-      peInputsSize = Set.size $ cvPrivateInputs vars <> cvPublicInputs vars,
-      peWitnessSize = Set.size $ Set.insert oneVar $ cvVars vars,
+      peInputsSize = IntSet.size $ cvPrivateInputs vars <> cvPublicInputs vars,
+      peWitnessSize = IntSet.size $ IntSet.insert oneVar $ cvVars vars,
       peCircuit = circ,
       peCircuitVars = relabel hashText vars
     }
@@ -125,16 +126,16 @@ _setInputSignal env@(ProgramEnv {peCircuit, peInputsSize, peCircuitVars}) stRef 
   st <- readIORef stRef
   let Inputs inputs = psInputs st
   let h = mkFNV msb lsb
-      i = fromMaybe (panic $ "Hash not found: " <> show h) $ Map.lookup h (cvInputsLabels peCircuitVars)
+      i = fromMaybe (panic $ "Hash not found: " <> show h) $ Map.lookup h (labelToVar $ cvInputsLabels peCircuitVars)
   newInput <- fromInteger <$> readBuffer env stRef
-  let newInputs = Map.insert i newInput inputs
+  let newInputs = IntMap.insert i newInput inputs
   writeIORef stRef $
-    if Map.size newInputs == peInputsSize
+    if IntMap.size newInputs == peInputsSize
       then
         let wtns = solve peCircuitVars peCircuit newInputs
          in st
               { psInputs = Inputs newInputs,
-                psWitness = Witness $ Map.insert oneVar 1 wtns
+                psWitness = Witness $ IntMap.insert oneVar 1 wtns
               }
       else st {psInputs = Inputs newInputs}
 
@@ -149,7 +150,7 @@ _getWitness ::
   IO ()
 _getWitness env stRef i = do
   ProgramState {psWitness = Witness wtns} <- readIORef stRef
-  let wtn = maybe (panic $ "missing witness " <> show i) fromP $ Map.lookup i wtns
+  let wtn = maybe (panic $ "missing witness " <> show i) fromP $ IntMap.lookup i wtns
    in writeBuffer env stRef wtn
 
 --------------------------------------------------------------------------------

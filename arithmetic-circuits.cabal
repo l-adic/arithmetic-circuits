@@ -79,19 +79,21 @@ library language
   exposed-modules:
     Circuit.Language.Compile
     Circuit.Language.Expr
-    Circuit.Language.TExpr
     Circuit.Language.DSL
     Circuit.Language
 
   hs-source-dirs:     language/src
   build-depends:
       arithmetic-circuits
+    , array
     , hashable
     , microlens
+    , mtl
+    , unordered-containers
     , vector
     , vector-sized
 
-  ghc-options:        -freverse-errors -O2 -Wall
+  ghc-options:        -freverse-errors  -O2 -Wall
 
   default-language:   GHC2021
 
@@ -125,16 +127,18 @@ test-suite language-tests
     Test.Circuit.Expr
     Test.Circuit.Sudoku
     Test.Circuit.Lang
+    Test.Circuit.SHA3
 
   hs-source-dirs:     language/test
 
-  ghc-options:        -freverse-errors -O2 -Wall -main-is Main
+  ghc-options:        -freverse-errors  -O2 -Wall -main-is Main
   build-depends:
       arithmetic-circuits
     , arithmetic-circuits:language
     , array
     , distributive 
     , fin
+    , microlens
     , quickcheck-instances  >=0.3
     , QuickCheck
     , random
@@ -144,6 +148,13 @@ test-suite language-tests
     , tasty-hspec
     , tasty-quickcheck      >=0.10
     , vec
+    , vector
+    , vector-sized
+    , crypton
+    , bytestring
+    , memory
+    , unordered-containers
+
 
   build-tool-depends: tasty-discover:tasty-discover >=4.2
 
@@ -158,9 +169,11 @@ executable factors
     , arithmetic-circuits
     , arithmetic-circuits:language
     , arithmetic-circuits:circom-compat
+    , vector
 
   hs-source-dirs:   circom-compat/app
   default-language: GHC2021
+  ghc-options:      -freverse-errors -O2 -Wall -main-is Main
 
 test-suite circuit-tests
   import: deps, extensions
@@ -224,7 +237,7 @@ benchmark circuit-benchmarks
   type:               exitcode-stdio-1.0
   main-is:            Main.hs
   other-modules:
-    Circuit
+    Circuit.Bench
     Paths_arithmetic_circuits
 
   hs-source-dirs:     bench
@@ -232,6 +245,8 @@ benchmark circuit-benchmarks
   ghc-options:        -freverse-errors -O2 -Wall -main-is Main
   build-depends:
       arithmetic-circuits
-    , criterion            >=1.6
+    , arithmetic-circuits:language
+    , criterion
+    , vector
 
   default-language:   GHC2021
