@@ -10,6 +10,7 @@ module R1CS.Circom
     witnessFromCircomWitness,
     FieldSize (..),
     n32,
+    circomReindexMap,
     -- for testing
     integerFromLittleEndian,
     integerToLittleEndian,
@@ -22,9 +23,11 @@ import Data.Binary.Put (putInt32le, putLazyByteString, putWord32le, putWord64le,
 import Data.ByteString.Lazy qualified as LBS
 import Data.Field.Galois (GaloisField (char), PrimeField, fromP)
 import Data.IntMap qualified as IntMap
+import Data.IntSet qualified as IntSet
 import Data.Vector (Vector)
 import Data.Vector qualified as V
 import Protolude
+import Circuit (CircuitVars(..))
 import R1CS (LinearPoly (..), R1C (..), R1CS (..), Witness (..))
 import Prelude (fail)
 
@@ -54,9 +57,9 @@ r1csToCircomR1CS R1CS {..} =
           { rhFieldSize = FieldSize 32,
             rhPrime = fromIntegral $ char (1 :: f),
             rhNVars = fromIntegral r1csNumVars,
-            rhNPubOut = fromIntegral r1csNumOutputs,
-            rhNPubIn = fromIntegral r1csNumPublicInputs,
-            rhNPrvIn = fromIntegral r1csNumPrivateInputs,
+            rhNPubOut = fromIntegral $ length r1csOutputs,
+            rhNPubIn = fromIntegral $ length r1csPublicInputs,
+            rhNPrvIn = fromIntegral $ length r1csPrivateInputs,
             -- I'm not sure what a label is, but i doubt we're using it
             rhNLabels = 0,
             rhNConstraints = fromIntegral $ length r1csConstraints
@@ -71,10 +74,37 @@ r1csFromCircomR1CS (CircomR1CS {..}) =
   R1CS
     { r1csConstraints = crConstraints,
       r1csNumVars = fromIntegral $ rhNVars crHeader,
-      r1csNumPublicInputs = fromIntegral $ rhNPubIn crHeader,
-      r1csNumPrivateInputs = fromIntegral $ rhNPrvIn crHeader,
-      r1csNumOutputs = fromIntegral $ rhNPubOut crHeader
+      r1csPublicInputs = [fst pubVars .. snd pubVars],
+      r1csPrivateInputs = [fst privVars .. snd privVars],
+      r1csOutputs = [fst outputVars .. snd outputVars]
     }
+  where
+    -- circom variables follow this convention
+    outputVars =
+      let start = 1 :: Int
+          end = fromIntegral $ rhNPubOut crHeader
+       in (start, end)
+    pubVars =
+      let start = snd outputVars + 1
+          end = start + fromIntegral (rhNPubIn crHeader)
+       in (start, end)
+    privVars =
+      let start = snd pubVars + 1
+          end = start + fromIntegral (rhNPrvIn crHeader)
+       in (start, end)
+
+circomReindexMap :: CircuitVars label -> IntMap Int
+circomReindexMap CircuitVars {..} =
+  let importantVars =
+        concat
+          [ IntSet.toAscList cvOutputs,
+            IntSet.toAscList cvPublicInputs,
+            IntSet.toAscList cvPrivateInputs
+          ]
+      otherVars =
+        let s = IntSet.fromList importantVars
+         in IntSet.toAscList $ cvVars IntSet.\\ s
+   in IntMap.fromList $ zip (importantVars <> otherVars) [1 ..]
 
 newtype CircomR1CSBuilder k = CircomR1CSBuilder (CircomR1CS k -> CircomR1CS k)
 

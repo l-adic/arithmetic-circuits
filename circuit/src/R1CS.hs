@@ -12,7 +12,7 @@ module R1CS
   )
 where
 
-import Circuit (AffineCircuit (..), ArithCircuit (..), CircuitVars (..), Gate (..), Wire (..), solve, unsplit, wireName)
+import Circuit (AffineCircuit (..), ArithCircuit (..), CircuitVars (..), Gate (..), Reindexable (..), Wire (..), solve, unsplit, wireName)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Field.Galois (PrimeField)
 import Data.IntMap qualified as IntMap
@@ -98,9 +98,9 @@ mkR1C = \case
 data R1CS f = R1CS
   { r1csConstraints :: [R1C f],
     r1csNumVars :: Int,
-    r1csNumPublicInputs :: Int,
-    r1csNumPrivateInputs :: Int,
-    r1csNumOutputs :: Int
+    r1csPublicInputs :: [Int],
+    r1csPrivateInputs :: [Int],
+    r1csOutputs :: [Int]
   }
   deriving (Show)
 
@@ -146,9 +146,9 @@ toR1CS CircuitVars {..} (ArithCircuit gates) =
   R1CS
     { r1csConstraints = mkR1C <$> gates,
       r1csNumVars = IntSet.size $ IntSet.insert oneVar cvVars,
-      r1csNumPublicInputs = IntSet.size cvPublicInputs,
-      r1csNumPrivateInputs = IntSet.size cvPrivateInputs,
-      r1csNumOutputs = IntSet.size cvOutputs
+      r1csPublicInputs = IntSet.toList cvPublicInputs,
+      r1csPrivateInputs = IntSet.toList cvPrivateInputs,
+      r1csOutputs = IntSet.toList cvOutputs
     }
 
 calculateWitness ::
@@ -162,3 +162,27 @@ calculateWitness vars circuit (Inputs m) =
   let r1cs = toR1CS vars circuit
       w = solve vars circuit (IntMap.insert oneVar 1 m)
    in (r1cs, Witness w)
+
+--------------------------------------------------------------------------------
+
+instance Reindexable (LinearPoly f) where
+  reindex f (LinearPoly p) = LinearPoly $ IntMap.compose p f
+
+instance Reindexable (Witness f) where
+  reindex f (Witness w) = Witness $ IntMap.compose w f
+
+instance Reindexable (R1C f) where
+  reindex f (R1C (a, b, c)) =
+    R1C (reindex f a, reindex f b, reindex f c)
+
+instance Reindexable (R1CS f) where
+  reindex f R1CS {..} =
+    R1CS
+      { r1csConstraints = reindex f <$> r1csConstraints,
+        r1csNumVars = r1csNumVars,
+        r1csPublicInputs = g <$> r1csPublicInputs,
+        r1csPrivateInputs = g <$> r1csPrivateInputs,
+        r1csOutputs = g <$> r1csOutputs
+      }
+    where
+      g i = fromMaybe i $ IntMap.lookup i f
