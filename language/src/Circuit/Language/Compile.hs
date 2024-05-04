@@ -147,8 +147,8 @@ freshOutput label = do
     s
       { bsVars =
           (bsVars s)
-            { cvOutputs = IntSet.insert (wireName v) (cvOutputs $ bsVars s)
-            , cvInputsLabels = insertInputBinding label (wireName v) (cvInputsLabels $ bsVars s)
+            { cvOutputs = IntSet.insert (wireName v) (cvOutputs $ bsVars s),
+              cvInputsLabels = insertInputBinding label (wireName v) (cvInputsLabels $ bsVars s)
             }
       }
   pure v

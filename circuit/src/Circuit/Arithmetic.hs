@@ -12,7 +12,6 @@ module Circuit.Arithmetic
     evalGate,
     evalArithCircuit,
     unsplit,
-    reindex,
     CircuitVars (..),
     relabel,
     collectCircuitVars,
@@ -22,6 +21,7 @@ module Circuit.Arithmetic
     nGates,
     InputBidings (..),
     insertInputBinding,
+    Reindexable (..),
   )
 where
 
@@ -278,13 +278,6 @@ unsplit ::
   AffineCircuit f Wire
 unsplit = snd . foldl (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (ScalarMul (2 ^ ix) (Var wire)))) (0, ConstGate 0)
 
-reindex :: (Int -> Int) -> ArithCircuit f -> ArithCircuit f
-reindex f (ArithCircuit gates) = ArithCircuit $ map (second $ mapWire f) gates
-  where
-    mapWire g (InputWire l t v) = InputWire l t (g v)
-    mapWire g (IntermediateWire v) = IntermediateWire (g v)
-    mapWire g (OutputWire v) = OutputWire (g v)
-
 data CircuitVars label = CircuitVars
   { cvVars :: IntSet,
     cvPrivateInputs :: IntSet,
@@ -411,3 +404,30 @@ insertInputBinding label var InputBidings {..} =
 
 inputBindingsFromList :: (Ord label) => [(label, Int)] -> InputBidings label
 inputBindingsFromList = foldl' (flip $ uncurry insertInputBinding) mempty
+
+--------------------------------------------------------------------------------
+
+class Reindexable a where
+  reindex :: IntMap Int -> a -> a
+
+instance Reindexable Wire where
+  reindex f = \case
+    InputWire l t i -> InputWire l t (g i)
+    IntermediateWire i -> IntermediateWire (g i)
+    OutputWire i -> OutputWire (g i)
+    where
+      g i = fromMaybe i $ IntMap.lookup i f
+
+instance Reindexable (AffineCircuit f Wire) where
+  reindex f (Add l r) = Add (reindex f l) (reindex f r)
+  reindex f (Var i) = Var $ reindex f i
+  reindex _ a = a
+
+instance Reindexable (Gate f Wire) where
+  reindex f (Mul l r o) = Mul (reindex f l) (reindex f r) (reindex f o)
+  reindex f (Equal i m o) = Equal (reindex f i) (reindex f m) (reindex f o)
+  reindex f (Split i os) = Split (reindex f i) (reindex f <$> os)
+  reindex f (Boolean i) = Boolean (reindex f i)
+
+instance Reindexable (ArithCircuit f) where
+  reindex f (ArithCircuit gs) = ArithCircuit (reindex f <$> gs)
