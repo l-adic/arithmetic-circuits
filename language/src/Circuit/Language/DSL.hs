@@ -100,15 +100,15 @@ boolInput it label = case it of
 
 fieldOutput :: (Hashable f, GaloisField f) => Text -> Signal f f -> ExprM f (Var Wire f f)
 fieldOutput label s = do
-  out <- VarField <$> freshPublicInput label
+  out <- VarField <$> freshOutput label
   compileWithWire out s
 
 fieldsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f f) -> Signal f (Vector n f) -> ExprM f (Vector n (Var Wire f f))
 fieldsOutput vs s = fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
 
 boolOutput :: (Hashable f, GaloisField f) => Text -> Signal f Bool -> ExprM f (Var Wire f Bool)
-boolOutput v s = do
-  out <- VarBool <$> freshPublicInput v
+boolOutput label s = do
+  out <- VarBool <$> freshOutput label
   unsafeCoerce <$> compileWithWire (boolToField out) (boolToField s)
 
 boolsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f Bool) -> Signal f (Vector n Bool) -> ExprM f (Vector n (Var Wire f Bool))

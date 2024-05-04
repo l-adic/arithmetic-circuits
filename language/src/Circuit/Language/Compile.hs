@@ -140,14 +140,15 @@ freshPrivateInput label = do
 {-# INLINE freshPrivateInput #-}
 
 -- | Fresh output variables
-freshOutput :: (MonadState (BuilderState f) m) => m Wire
-freshOutput = do
+freshOutput :: (MonadState (BuilderState f) m) => Text -> m Wire
+freshOutput label = do
   v <- OutputWire <$> fresh
   modify $ \s ->
     s
       { bsVars =
           (bsVars s)
             { cvOutputs = IntSet.insert (wireName v) (cvOutputs $ bsVars s)
+            , cvInputsLabels = insertInputBinding label (wireName v) (cvInputsLabels $ bsVars s)
             }
       }
   pure v
