@@ -9,7 +9,6 @@ module R1CS
     validateWitness,
     isValidWitness,
     calculateWitness,
-    Reindexable (..),
   )
 where
 

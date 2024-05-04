@@ -27,6 +27,7 @@ import Data.IntSet qualified as IntSet
 import Data.Vector (Vector)
 import Data.Vector qualified as V
 import Protolude
+import Circuit (CircuitVars(..))
 import R1CS (LinearPoly (..), R1C (..), R1CS (..), Witness (..))
 import Prelude (fail)
 
@@ -92,17 +93,17 @@ r1csFromCircomR1CS (CircomR1CS {..}) =
           end = start + fromIntegral (rhNPrvIn crHeader)
        in (start, end)
 
-circomReindexMap :: R1CS f -> IntMap Int
-circomReindexMap R1CS {..} =
+circomReindexMap :: CircuitVars label -> IntMap Int
+circomReindexMap CircuitVars {..} =
   let importantVars =
         concat
-          [ r1csOutputs,
-            r1csPublicInputs,
-            r1csPrivateInputs
+          [ IntSet.toAscList cvOutputs,
+            IntSet.toAscList cvPublicInputs,
+            IntSet.toAscList cvPrivateInputs
           ]
       otherVars =
         let s = IntSet.fromList importantVars
-         in filter (\v -> not $ v `IntSet.member` s) [1 .. r1csNumVars]
+         in IntSet.toAscList $ cvVars IntSet.\\ s
    in IntMap.fromList $ zip (importantVars <> otherVars) [1 ..]
 
 newtype CircomR1CSBuilder k = CircomR1CSBuilder (CircomR1CS k -> CircomR1CS k)

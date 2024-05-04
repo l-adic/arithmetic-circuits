@@ -316,6 +316,17 @@ instance (Ord label) => Monoid (CircuitVars label) where
         cvOutputs = mempty,
         cvInputsLabels = mempty
       }
+instance Reindexable (CircuitVars label) where
+  reindex f CircuitVars {..} =
+    CircuitVars
+      { cvVars = IntSet.map g cvVars,
+        cvPrivateInputs = IntSet.map g cvPrivateInputs,
+        cvPublicInputs = IntSet.map g cvPublicInputs,
+        cvOutputs = IntSet.map g cvOutputs,
+        cvInputsLabels = reindex f cvInputsLabels
+      }
+    where
+      g i = fromMaybe i $ IntMap.lookup i f
 
 relabel :: (Ord l2) => (l1 -> l2) -> CircuitVars l1 -> CircuitVars l2
 relabel f (CircuitVars vars priv pub outs labels) =
@@ -376,6 +387,17 @@ mapLabels f InputBidings {labelToVar, varToLabel} =
     { labelToVar = Map.mapKeys f labelToVar,
       varToLabel = fmap f varToLabel
     }
+
+instance Reindexable (InputBidings label) where
+  reindex f InputBidings {..} =
+    InputBidings
+      { labelToVar = Map.mapMaybe (flip IntMap.lookup f) labelToVar,
+        varToLabel = IntMap.compose varToLabel (reverseMap f)
+      }
+      where
+      reverseMap :: IntMap Int -> IntMap Int
+      reverseMap = IntMap.foldlWithKey' (\acc k v -> IntMap.insert v k acc) mempty
+
 
 instance (Ord label) => Semigroup (InputBidings label) where
   a <> b =
