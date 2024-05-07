@@ -7,13 +7,24 @@ module Circuit.Language.DSL
     Bundle (..),
     cField,
     cBool,
-    add,
-    sub,
-    mul,
+    add_,
+    adds_,
+    sub_,
+    subs_,
+    mul_,
+    muls_,
+    div_,
+    divs_,
     and_,
+    ands_,
     or_,
+    ors_,
     xor_,
+    xors_,
+    neg_,
+    negs_,
     not_,
+    nots_,
     eq_,
     fieldInput,
     boolInput,
@@ -67,10 +78,24 @@ cBool b = val_ . ValBool $ if b then 1 else 0
 {-# INLINE cBool #-}
 
 -- | Binary arithmetic operations on expressions
-add, sub, mul :: (Hashable f, Num f) => Signal f 'TField -> Signal f 'TField -> Signal f 'TField
-add = (+)
-sub = (-)
-mul = (*)
+add_, sub_, mul_, div_ :: (Hashable f) => Signal f 'TField -> Signal f 'TField -> Signal f 'TField
+add_ = binOp_ BAdd
+sub_ = binOp_ BSub
+mul_ = binOp_ BMul
+div_ = binOp_ BDiv
+
+adds_,
+  subs_,
+  muls_,
+  divs_ ::
+    (Hashable f) =>
+    Signal f ('TVec n 'TField) ->
+    Signal f ('TVec n 'TField) ->
+    Signal f ('TVec n 'TField)
+adds_ = binOp_ BAdds
+subs_ = binOp_ BSubs
+muls_ = binOp_ BMuls
+divs_ = binOp_ BDivs
 
 -- | Binary logic operations on expressions
 -- Have to use underscore or similar to avoid shadowing @and@ and @or@
@@ -80,9 +105,29 @@ and_ = binOp_ BAnd
 or_ = binOp_ BOr
 xor_ = binOp_ BXor
 
+ands_,
+  ors_,
+  xors_ ::
+    (Hashable f) =>
+    Signal f ('TVec n 'TBool) ->
+    Signal f ('TVec n 'TBool) ->
+    Signal f ('TVec n 'TBool)
+ands_ = binOp_ BAnds
+ors_ = binOp_ BOrs
+xors_ = binOp_ BXors
+
 -- | Negate expression
 not_ :: (Hashable f) => Signal f 'TBool -> Signal f 'TBool
 not_ = unOp_ UNot
+
+nots_ :: (Hashable f) => Signal f ('TVec n 'TBool) -> Signal f ('TVec n 'TBool)
+nots_ = unOp_ UNots
+
+neg_ :: (Hashable f) => Signal f 'TField -> Signal f 'TField
+neg_ = unOp_ UNeg
+
+negs_ :: (Hashable f) => Signal f ('TVec n 'TField) -> Signal f ('TVec n 'TField)
+negs_ = unOp_ UNegs
 
 fieldInput :: InputType -> Text -> ExprM f (Var Wire f 'TField)
 fieldInput it label =
@@ -106,10 +151,10 @@ fieldOutput label s = do
 fieldsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f 'TField) -> Signal f ('TVec n 'TField) -> ExprM f (Vector n (Var Wire f 'TField))
 fieldsOutput vs s = fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
 
-boolOutput :: (Hashable f, GaloisField f) => Text -> Signal f 'TBool -> ExprM f (Var Wire f 'TBool)
+boolOutput :: forall f. (Hashable f, GaloisField f) => Text -> Signal f 'TBool -> ExprM f (Var Wire f 'TBool)
 boolOutput label s = do
   out <- VarBool <$> freshOutput label
-  unsafeCoerce <$> compileWithWire (boolToField out) (boolToField s)
+  unsafeCoerce <$> compileWithWire (boolToField @(Var Wire f 'TBool) out) (boolToField s)
 {-# INLINE boolOutput #-}
 
 boolsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f 'TBool) -> Signal f ('TVec n 'TBool) -> ExprM f (Vector n (Var Wire f 'TBool))
@@ -172,7 +217,7 @@ instance (Eq f, Num f, Hashable f) => Monoid (Any_ f) where
 newtype Add_ f = Add_ {unAdd_ :: Signal f 'TField}
 
 instance (Hashable f, Num f) => Semigroup (Add_ f) where
-  Add_ a <> Add_ b = Add_ $ add a b
+  Add_ a <> Add_ b = Add_ $ add_ a b
 
 instance (Hashable f, Num f) => Monoid (Add_ f) where
   mempty = Add_ $ cField 0
@@ -213,7 +258,7 @@ any_ f = unAny_ . foldMap (Any_ . f)
 --------------------------------------------------------------------------------
 
 class Bundle f a where
-  type Unbundled f a
+  type Unbundled f a = r | r -> a
   bundle :: Unbundled f a -> Signal f a
   unbundle :: Signal f a -> ExprM f (Unbundled f a)
 

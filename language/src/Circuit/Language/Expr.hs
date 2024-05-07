@@ -35,7 +35,7 @@ module Circuit.Language.Expr
   )
 where
 
-import Data.Field.Galois (Prime, PrimeField (fromP))
+import Data.Field.Galois (GaloisField, Prime, PrimeField (fromP))
 import Data.Semiring (Ring (..), Semiring (..))
 import Data.Sequence ((|>))
 import Data.Set qualified as Set
@@ -90,7 +90,9 @@ rawWire (VarBool i) = i
 
 data UnOp f (ty :: Ty) where
   UNeg :: UnOp f 'TField
+  UNegs :: UnOp f ('TVec n 'TField)
   UNot :: UnOp f 'TBool
+  UNots :: UnOp f ('TVec n 'TBool)
 
 deriving instance (Show f) => Show (UnOp f a)
 
@@ -99,16 +101,25 @@ deriving instance Eq (UnOp f a)
 instance Pretty (UnOp f a) where
   pretty op = case op of
     UNeg -> text "neg"
+    UNegs -> text "negs"
     UNot -> text "!"
+    UNots -> text "nots"
 
 data BinOp f (a :: Ty) where
   BAdd :: BinOp f 'TField
+  BAdds :: BinOp f (TVec n 'TField)
   BSub :: BinOp f 'TField
+  BSubs :: BinOp f (TVec n 'TField)
   BMul :: BinOp f 'TField
+  BMuls :: BinOp f (TVec n 'TField)
   BDiv :: BinOp f 'TField
+  BDivs :: BinOp f (TVec n 'TField)
   BAnd :: BinOp f 'TBool
+  BAnds :: BinOp f (TVec n 'TBool)
   BOr :: BinOp f 'TBool
+  BOrs :: BinOp f (TVec n 'TBool)
   BXor :: BinOp f 'TBool
+  BXors :: BinOp f (TVec n 'TBool)
 
 deriving instance (Show f) => Show (BinOp f a)
 
@@ -117,21 +128,35 @@ deriving instance Eq (BinOp f a)
 instance Pretty (BinOp f a) where
   pretty op = case op of
     BAdd -> text "+"
+    BAdds -> text ".+."
     BSub -> text "-"
+    BSubs -> text ".-."
     BMul -> text "*"
+    BMuls -> text ".*."
     BDiv -> text "/"
+    BDivs -> text "./."
     BAnd -> text "&&"
+    BAnds -> text ".&&."
     BOr -> text "||"
+    BOrs -> text ".||."
     BXor -> text "xor"
+    BXors -> text "xors"
 
 opPrecedence :: BinOp f a -> Int
 opPrecedence BOr = 5
+opPrecedence BOrs = 5
 opPrecedence BXor = 5
+opPrecedence BXors = 5
 opPrecedence BAnd = 5
+opPrecedence BAnds = 5
 opPrecedence BSub = 6
+opPrecedence BSubs = 6
 opPrecedence BAdd = 6
+opPrecedence BAdds = 6
 opPrecedence BMul = 7
+opPrecedence BMuls = 7
 opPrecedence BDiv = 8
+opPrecedence BDivs = 8
 
 type family NBits a :: Nat where
   NBits (Prime p) = (Log2 p) + 1
@@ -242,10 +267,15 @@ evalExpr lookupVar vars expr = case expr of
         case lookupVar i vars of
           Just v -> v == 1
           Nothing -> panic $ "TODO: incorrect bool var lookup: " <> Protolude.show i
-  EUnOp _ UNeg e1 ->
-    Protolude.negate $ evalExpr lookupVar vars e1
-  EUnOp _ UNot e1 ->
-    not $ evalExpr lookupVar vars e1
+  EUnOp _ op e1 ->
+    let e1' = evalExpr lookupVar vars e1
+     in apply e1'
+    where
+      apply = case op of
+        UNeg -> Protolude.negate
+        UNegs -> map Protolude.negate
+        UNot -> not
+        UNots -> map not
   EBinOp _ op e1 e2 ->
     let e1' = evalExpr lookupVar vars e1
         e2' = evalExpr lookupVar vars e2
@@ -253,12 +283,19 @@ evalExpr lookupVar vars expr = case expr of
     where
       apply = case op of
         BAdd -> (+)
+        BAdds -> SV.zipWith (+)
         BSub -> (-)
+        BSubs -> SV.zipWith (-)
         BMul -> (*)
+        BMuls -> SV.zipWith (*)
         BDiv -> (/)
+        BDivs -> SV.zipWith (/)
         BAnd -> (&&)
+        BAnds -> SV.zipWith (&&)
         BOr -> (||)
+        BOrs -> SV.zipWith (||)
         BXor -> \x y -> (x || y) && not (x && y)
+        BXors -> SV.zipWith (\x y -> (x || y) && not (x && y))
   EIf _ b true false ->
     let cond = evalExpr lookupVar vars b
      in if cond
@@ -401,8 +438,11 @@ bundle_ b =
    in EBundle h b
 {-# INLINE bundle_ #-}
 
-class BoolToField b f | b -> f where
+class BoolToField b f where
   boolToField :: b -> f
+
+instance (GaloisField f) => BoolToField Bool f where
+  boolToField b = fromInteger $ if b then 1 else 0
 
 instance BoolToField (Val f 'TBool) (Val f 'TField) where
   boolToField (ValBool b) = ValField b
@@ -418,7 +458,15 @@ instance BoolToField (Expr i f ('TVec n 'TBool)) (Expr i f ('TVec n 'TField)) wh
 
 -------------------------------------------------------------------------------
 
-data UBinOp = UBAdd | UBSub | UBMul | UBDiv | UBAnd | UBOr | UBXor deriving (Show, Eq, Generic)
+data UBinOp
+  = UBAdd
+  | UBSub
+  | UBMul
+  | UBDiv
+  | UBAnd
+  | UBOr
+  | UBXor
+  deriving (Show, Eq, Generic)
 
 instance Hashable UBinOp
 
@@ -480,17 +528,26 @@ instance (Hashable i, Hashable f) => Hashable (Node i f) where
 
 untypeUnOp :: UnOp f a -> UUnOp
 untypeUnOp UNeg = UUNeg
+untypeUnOp UNegs = UUNeg
 untypeUnOp UNot = UUNot
+untypeUnOp UNots = UUNot
 {-# INLINE untypeUnOp #-}
 
 untypeBinOp :: BinOp f a -> UBinOp
 untypeBinOp BAdd = UBAdd
+untypeBinOp BAdds = UBAdd
 untypeBinOp BSub = UBSub
+untypeBinOp BSubs = UBSub
 untypeBinOp BMul = UBMul
+untypeBinOp BMuls = UBMul
 untypeBinOp BDiv = UBDiv
+untypeBinOp BDivs = UBDiv
 untypeBinOp BAnd = UBAnd
+untypeBinOp BAnds = UBAnd
 untypeBinOp BOr = UBOr
+untypeBinOp BOrs = UBOr
 untypeBinOp BXor = UBXor
+untypeBinOp BXors = UBXor
 {-# INLINE untypeBinOp #-}
 
 --------------------------------------------------------------------------------

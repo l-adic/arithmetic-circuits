@@ -10,8 +10,9 @@ import Data.Field.Galois (Prime, PrimeField (fromP))
 import Data.Finite (Finite)
 import Data.IntMap qualified as IntMap
 import Data.Map qualified as Map
+import Data.Vector.Sized qualified as SV
 import Protolude
-import Test.QuickCheck (Property, (.&&.), (=/=), (===), (==>))
+import Test.QuickCheck (Arbitrary (arbitrary), Property, forAll, vectorOf, (.&&.), (=/=), (===), (==>))
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
@@ -142,4 +143,148 @@ prop_sharingProg x y =
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
    in res === Just expected .&&. computed === expected
 
+boolBinopsProg ::
+  BinOp Fr ('TVec 50 'TBool) ->
+  ExprM Fr (SV.Vector 50 (Var Wire Fr 'TBool))
+boolBinopsProg op = do
+  xs <- SV.generateM $ \i ->
+    var_ <$> boolInput Public ("x" <> showFinite i)
+  ys <- SV.generateM $ \i ->
+    var_ <$> boolInput Public ("y" <> showFinite i)
+  zs <- SV.generateM $ \i ->
+    VarBool <$> freshOutput ("out" <> showFinite i)
+  boolsOutput zs $ binOp_ op (bundle xs) (bundle ys)
+
+propBoolBinopsProg ::
+  BinOp Fr ('TVec 50 'TBool) ->
+  (Bool -> Bool -> Bool) ->
+  Property
+propBoolBinopsProg top op = forAll arbInputs $ \(bs, bs') ->
+  let _xs = zip (map (\i -> "x" <> show @Int i) [0 ..]) bs
+      _ys = zip (map (\i -> "y" <> show @Int i) [0 ..]) bs'
+      (_, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (boolBinopsProg top)
+      inputs =
+        assignInputs bsVars $
+          fmap boolToField $
+            Map.fromList (_xs <> _ys)
+      w = solve bsVars bsCircuit inputs
+      expected = map boolToField $ zipWith op bs bs'
+   in all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
+        zip [0 ..] expected
+  where
+    arbInputs = ((,) <$> vectorOf 50 arbitrary <*> vectorOf 50 arbitrary)
+
+prop_andsProg :: Property
+prop_andsProg = propBoolBinopsProg BAnds (&&)
+
+prop_orsProg :: Property
+prop_orsProg = propBoolBinopsProg BOrs (||)
+
+prop_xorsProg :: Property
+prop_xorsProg = propBoolBinopsProg BXors (/=)
+
+fieldBinopsProg :: BinOp Fr (TVec 50 'TField) -> ExprM Fr (SV.Vector 50 (Var Wire Fr 'TField))
+fieldBinopsProg op = do
+  xs <- SV.generateM $ \i ->
+    var_ <$> fieldInput Public ("x" <> showFinite i)
+  ys <- SV.generateM $ \i ->
+    var_ <$> fieldInput Public ("y" <> showFinite i)
+  zs <- SV.generateM $ \i ->
+    VarField <$> freshOutput ("out" <> showFinite i)
+  fieldsOutput zs $ binOp_ op (bundle xs) (bundle ys)
+
+propFieldBinopsProg ::
+  (BinOp Fr ('TVec 50 'TField)) ->
+  (Fr -> Fr -> Fr) ->
+  Property
+propFieldBinopsProg top op = forAll arbInputs $ \(bs, bs') ->
+  let _xs = zip (map (\i -> "x" <> show @Int i) [0 ..]) bs
+      _ys = zip (map (\i -> "y" <> show @Int i) [0 ..]) bs'
+      (_, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (fieldBinopsProg top)
+      inputs =
+        assignInputs bsVars $
+          Map.fromList (_xs <> _ys)
+      w = solve bsVars bsCircuit inputs
+      expected = zipWith op bs bs'
+   in all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
+        zip [0 ..] expected
+  where
+    arbInputs = ((,) <$> vectorOf 50 arbitrary <*> vectorOf 50 arbitrary)
+
+prop_addsProg :: Property
+prop_addsProg = propFieldBinopsProg BAdds (+)
+
+prop_subsProg :: Property
+prop_subsProg = propFieldBinopsProg BSubs (-)
+
+prop_mulsProg :: Property
+prop_mulsProg = propFieldBinopsProg BMuls (*)
+
+prop_divsProg :: Property
+prop_divsProg = propFieldBinopsProg BDivs (/)
+
+boolUnopsProg ::
+  UnOp Fr ('TVec 50 'TBool) ->
+  ExprM Fr (SV.Vector 50 (Var Wire Fr 'TBool))
+boolUnopsProg op = do
+  xs <- SV.generateM $ \i ->
+    var_ <$> boolInput Public ("x" <> showFinite i)
+  zs <- SV.generateM $ \i ->
+    VarBool <$> freshOutput ("out" <> showFinite i)
+  boolsOutput zs $ unOp_ op (bundle xs)
+
+propBoolUnopsProg ::
+  UnOp Fr ('TVec 50 'TBool) ->
+  (Bool -> Bool) ->
+  Property
+propBoolUnopsProg top op = forAll arbInputs $ \bs ->
+  let _xs = zip (map (\i -> "x" <> show @Int i) [0 ..]) bs
+      (_, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (boolUnopsProg top)
+      inputs =
+        assignInputs bsVars $
+          fmap boolToField $
+            Map.fromList _xs
+      w = solve bsVars bsCircuit inputs
+      expected = map (boolToField . op) bs
+   in all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
+        zip [0 ..] expected
+  where
+    arbInputs = vectorOf 50 arbitrary
+
+prop_notsProg :: Property
+prop_notsProg = propBoolUnopsProg UNots not
+
+fieldUnopsProg ::
+  UnOp Fr ('TVec 50 'TField) ->
+  ExprM Fr (SV.Vector 50 (Var Wire Fr 'TField))
+fieldUnopsProg op = do
+  xs <- SV.generateM $ \i ->
+    var_ <$> fieldInput Public ("x" <> showFinite i)
+  zs <- SV.generateM $ \i ->
+    VarField <$> freshOutput ("out" <> showFinite i)
+  fieldsOutput zs $ unOp_ op (bundle xs)
+
+propFieldUnopsProg ::
+  UnOp Fr ('TVec 50 'TField) ->
+  (Fr -> Fr) ->
+  Property
+propFieldUnopsProg top op = forAll arbInputs $ \bs ->
+  let _xs = zip (map (\i -> "x" <> show @Int i) [0 ..]) bs
+      (_, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (fieldUnopsProg top)
+      inputs =
+        assignInputs bsVars $
+          Map.fromList _xs
+      w = solve bsVars bsCircuit inputs
+      expected = map op bs
+   in all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
+        zip [0 ..] expected
+  where
+    arbInputs = vectorOf 50 arbitrary
+
+prop_negs :: Property
+prop_negs = propFieldUnopsProg UNegs Protolude.negate
+
 --------------------------------------------------------------------------------
+
+showFinite :: (KnownNat n) => Finite n -> Text
+showFinite = show . toInteger
