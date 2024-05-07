@@ -7,15 +7,22 @@ module Circuit.Language.DSL
     Bundle (..),
     cField,
     cBool,
-    add,
-    sub,
-    mul,
+    add_,
+    adds_,
+    sub_,
+    subs_,
+    mul_,
+    muls_,
+    div_,
+    divs_,
     and_,
     ands_,
     or_,
     ors_,
     xor_,
     xors_,
+    neg_,
+    negs_,
     not_,
     nots_,
     eq_,
@@ -71,10 +78,24 @@ cBool b = val_ . ValBool $ if b then 1 else 0
 {-# INLINE cBool #-}
 
 -- | Binary arithmetic operations on expressions
-add, sub, mul :: (Hashable f, Num f) => Signal f 'TField -> Signal f 'TField -> Signal f 'TField
-add = (+)
-sub = (-)
-mul = (*)
+add_, sub_, mul_, div_ :: (Hashable f) => Signal f 'TField -> Signal f 'TField -> Signal f 'TField
+add_ = binOp_ BAdd
+sub_ = binOp_ BSub
+mul_ = binOp_ BMul
+div_ = binOp_ BDiv
+
+adds_,
+  subs_,
+  muls_,
+  divs_ ::
+    (Hashable f) =>
+    Signal f ('TVec n 'TField) ->
+    Signal f ('TVec n 'TField) ->
+    Signal f ('TVec n 'TField)
+adds_ = binOp_ BAdds
+subs_ = binOp_ BSubs
+muls_ = binOp_ BMuls
+divs_ = binOp_ BDivs
 
 -- | Binary logic operations on expressions
 -- Have to use underscore or similar to avoid shadowing @and@ and @or@
@@ -84,11 +105,13 @@ and_ = binOp_ BAnd
 or_ = binOp_ BOr
 xor_ = binOp_ BXor
 
-ands_, ors_, xors_ ::
-  (Hashable f) =>
-  Signal f ('TVec n 'TBool) ->
-  Signal f ('TVec n 'TBool) ->
-  Signal f ('TVec n 'TBool)
+ands_,
+  ors_,
+  xors_ ::
+    (Hashable f) =>
+    Signal f ('TVec n 'TBool) ->
+    Signal f ('TVec n 'TBool) ->
+    Signal f ('TVec n 'TBool)
 ands_ = binOp_ BAnds
 ors_ = binOp_ BOrs
 xors_ = binOp_ BXors
@@ -99,6 +122,12 @@ not_ = unOp_ UNot
 
 nots_ :: (Hashable f) => Signal f ('TVec n 'TBool) -> Signal f ('TVec n 'TBool)
 nots_ = unOp_ UNots
+
+neg_ :: (Hashable f) => Signal f 'TField -> Signal f 'TField
+neg_ = unOp_ UNeg
+
+negs_ :: (Hashable f) => Signal f ('TVec n 'TField) -> Signal f ('TVec n 'TField)
+negs_ = unOp_ UNegs
 
 fieldInput :: InputType -> Text -> ExprM f (Var Wire f 'TField)
 fieldInput it label =
@@ -188,7 +217,7 @@ instance (Eq f, Num f, Hashable f) => Monoid (Any_ f) where
 newtype Add_ f = Add_ {unAdd_ :: Signal f 'TField}
 
 instance (Hashable f, Num f) => Semigroup (Add_ f) where
-  Add_ a <> Add_ b = Add_ $ add a b
+  Add_ a <> Add_ b = Add_ $ add_ a b
 
 instance (Hashable f, Num f) => Monoid (Add_ f) where
   mempty = Add_ $ cField 0

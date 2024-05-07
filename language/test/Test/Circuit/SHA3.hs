@@ -16,9 +16,10 @@ import Crypto.Hash as CH
 import Data.ByteArray qualified as BA
 import Data.ByteString qualified as BS
 import Data.Distributive (Distributive (distribute))
-import Data.Field.Galois (Prime, GaloisField)
+import Data.Field.Galois (GaloisField, Prime)
 import Data.Finite (Finite)
 import Data.IntMap qualified as IntMap
+import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
 import Data.Vector qualified as V
@@ -26,7 +27,6 @@ import Data.Vector.Sized (BuildVector (..), Vector, pattern Build)
 import Data.Vector.Sized qualified as SV
 import GHC.TypeNats (type (*), type (+))
 import Lens.Micro
-import qualified Data.IntSet as IntSet
 import Protolude
 import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (===))
 import Test.QuickCheck.Monadic (monadicIO, run)
@@ -46,7 +46,7 @@ zeroBits_ :: (Hashable f) => (Num f) => BitVector f 64
 zeroBits_ = SV.replicate (cBool False)
 
 xors :: (Hashable f, GaloisField f) => BitVector f 64 -> BitVector f 64 -> ExprM f (BitVector f 64)
-xors as bs =  unbundle $ xors_ (bundle as) (bundle bs)
+xors as bs = unbundle $ xors_ (bundle as) (bundle bs)
 
 ands :: (Hashable f, GaloisField f) => BitVector f 64 -> BitVector f 64 -> ExprM f (BitVector f 64)
 ands as bs = unbundle $ ands_ (bundle as) (bundle bs)
@@ -61,7 +61,7 @@ theta :: forall f. (Hashable f, GaloisField f) => SHA3State f -> ExprM f (SHA3St
 theta rows = do
   as <- toXor
   os <- SV.zipWithM (traverse . xors) as $ (distribute rows)
- -- os <- SV.zipWithM (map . xors as) $ (distribute rows)
+  -- os <- SV.zipWithM (map . xors as) $ (distribute rows)
   pure $ distribute $ os
   where
     paritys :: ExprM f (Vector 5 (BitVector f 64))
@@ -150,8 +150,8 @@ pi_ rows =
 -- | Chi block permutation step
 chi :: forall f. (Hashable f, GaloisField f) => SHA3State f -> ExprM f (SHA3State f)
 chi rows = do
-  distribute <$> 
-    zipWith3M (zipWith3M func) cols (rotateLeft cols (1 :: Finite 5)) (rotateLeft cols (2 :: Finite 5))
+  distribute
+    <$> zipWith3M (zipWith3M func) cols (rotateLeft cols (1 :: Finite 5)) (rotateLeft cols (2 :: Finite 5))
   where
     cols = distribute rows
     func :: BitVector f 64 -> BitVector f 64 -> BitVector f 64 -> ExprM f (BitVector f 64)
@@ -178,9 +178,9 @@ iota i rows =
       x = SV.head row1
       rest0 = SV.tail row1
       rest1 = SV.tail rows
-   in do 
-    res <- x `xors` (consts ^. SV.ix i) 
-    pure $ res `SV.cons` rest0 `SV.cons` rest1
+   in do
+        res <- x `xors` (consts ^. SV.ix i)
+        pure $ res `SV.cons` rest0 `SV.cons` rest1
   where
     consts :: Vector 24 (BitVector f 64)
     consts =
@@ -261,7 +261,7 @@ sha3Packed ::
   (KnownNat outputSize) =>
   Vector inputSize (BitVector f 64) ->
   ExprM f (BitVector f outputSize)
-sha3Packed dat = do 
+sha3Packed dat = do
   res <- sha3 dat
   pure $ SV.reverse . SV.take . SV.reverse . concatVec . map (swapEndian @8) . concatVec $ res
 
