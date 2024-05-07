@@ -17,6 +17,7 @@ module R1CS.Circom
   )
 where
 
+import Circuit (CircuitVars (..))
 import Data.Binary (Binary (..), Get, Put)
 import Data.Binary.Get (getInt32le, getInt64le, getWord32le, getWord64le, lookAhead, skip)
 import Data.Binary.Put (putInt32le, putLazyByteString, putWord32le, putWord64le, runPut)
@@ -27,7 +28,6 @@ import Data.IntSet qualified as IntSet
 import Data.Vector (Vector)
 import Data.Vector qualified as V
 import Protolude
-import Circuit (CircuitVars(..))
 import R1CS (LinearPoly (..), R1C (..), R1CS (..), Witness (..))
 import Prelude (fail)
 

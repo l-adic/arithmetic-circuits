@@ -22,6 +22,7 @@ module Circuit.Arithmetic
     InputBidings (..),
     insertInputBinding,
     Reindexable (..),
+    restrictVars,
   )
 where
 
@@ -316,6 +317,7 @@ instance (Ord label) => Monoid (CircuitVars label) where
         cvOutputs = mempty,
         cvInputsLabels = mempty
       }
+
 instance Reindexable (CircuitVars label) where
   reindex f CircuitVars {..} =
     CircuitVars
@@ -354,6 +356,16 @@ collectCircuitVars (ArithCircuit gates) =
           cvOutputs = os,
           cvInputsLabels = inputBindingsFromList ls
         }
+
+restrictVars :: CircuitVars label -> IntSet -> CircuitVars label
+restrictVars CircuitVars {..} vars =
+  CircuitVars
+    { cvVars = IntSet.intersection cvVars vars,
+      cvPrivateInputs = IntSet.intersection cvPrivateInputs vars,
+      cvPublicInputs = IntSet.intersection cvPublicInputs vars,
+      cvOutputs = IntSet.intersection cvOutputs vars,
+      cvInputsLabels = cvInputsLabels
+    }
 
 assignInputs :: (Ord label) => CircuitVars label -> Map label f -> IntMap f
 assignInputs CircuitVars {..} inputs =
@@ -394,10 +406,9 @@ instance Reindexable (InputBidings label) where
       { labelToVar = Map.mapMaybe (flip IntMap.lookup f) labelToVar,
         varToLabel = IntMap.compose varToLabel (reverseMap f)
       }
-      where
+    where
       reverseMap :: IntMap Int -> IntMap Int
       reverseMap = IntMap.foldlWithKey' (\acc k v -> IntMap.insert v k acc) mempty
-
 
 instance (Ord label) => Semigroup (InputBidings label) where
   a <> b =

@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PatternSynonyms #-}
 
 module Circuit.Language.Compile
@@ -174,17 +175,20 @@ mulToImm l r = do
   o <- imm
   emit $ Mul (addVar l) (addVar r) o
   pure o
+{-# INLINE mulToImm #-}
 
 -- | Add a Mul and its output to the ArithCircuit
 emit :: (MonadState (BuilderState f) m) => Gate f Wire -> m ()
 emit c = modify $ \s@(BuilderState {bsCircuit = ArithCircuit cs}) ->
   s {bsCircuit = ArithCircuit (c : cs)}
+{-# INLINE emit #-}
 
 -- | Turn a wire into an affine circuit, or leave it be
 addVar :: SignalSource f -> AffineCircuit f Wire
 addVar s = case s of
   WireSource w -> Var w
   AffineSource c -> c
+{-# INLINE addVar #-}
 
 -- | Turn an affine circuit into a wire, or leave it be
 addWire :: (MonadState (BuilderState f) m, Num f) => SignalSource f -> m Wire
@@ -194,17 +198,16 @@ addWire x = case x of
     mulOut <- imm
     emit $ Mul (ConstGate 1) c mulOut
     pure mulOut
+{-# INLINE addWire #-}
 
 --------------------------------------------------------------------------------
 
 compileWithWire ::
   (Hashable f) =>
   (GaloisField f) =>
-  (MonadState (BuilderState f) m) =>
-  (MonadError (CircuitBuilderError f) m) =>
-  Var Wire f f ->
-  Expr Wire f f ->
-  m (Var Wire f f)
+  Var Wire f 'TField ->
+  Expr Wire f 'TField ->
+  ExprM f (Var Wire f 'TField)
 compileWithWire freshWire e = do
   res <- compileWithWires (V.singleton freshWire) e
   pure . V.head $ res
@@ -212,11 +215,9 @@ compileWithWire freshWire e = do
 compileWithWires ::
   (Hashable f) =>
   (GaloisField f) =>
-  (MonadState (BuilderState f) m) =>
-  (MonadError (CircuitBuilderError f) m) =>
-  V.Vector (Var Wire f f) ->
+  V.Vector (Var Wire f 'TField) ->
   Expr Wire f ty ->
-  m (V.Vector (Var Wire f f))
+  ExprM f (V.Vector (Var Wire f 'TField))
 compileWithWires ws expr = do
   compileOut <- compile expr
   for (V.zip compileOut ws) $ \(o, freshWire) -> do
@@ -233,25 +234,20 @@ compileWithWires ws expr = do
 {-# SCC compile #-}
 compile ::
   (Hashable f, GaloisField f) =>
-  (MonadState (BuilderState f) m) =>
-  (MonadError (CircuitBuilderError f) m) =>
   Expr Wire f ty ->
-  m (V.Vector (SignalSource f))
+  ExprM f (V.Vector (SignalSource f))
 compile e = do
-  let g = reifyGraph e
-  res <- traverse _compile g
-  case res of
-    (_ :|> x) -> pure x
+  case reifyGraph e of
+    (xs :|> x) ->
+      traverse_ _compile xs >> _compile x
     _ -> panic "empty graph"
 
 {-# SCC _compile #-}
 _compile ::
-  forall f m.
+  forall f.
   (Hashable f, GaloisField f) =>
-  (MonadState (BuilderState f) m) =>
-  (MonadError (CircuitBuilderError f) m) =>
   (Hash, Node Wire f) ->
-  m (V.Vector (SignalSource f))
+  ExprM f (V.Vector (SignalSource f))
 _compile (h, expr) = case expr of
   NVal f -> do
     let source = V.singleton $ AffineSource $ ConstGate f
@@ -398,8 +394,8 @@ exprToArithCircuit expr output = do
 
 fieldToBool ::
   (Hashable f, GaloisField f) =>
-  Expr Wire f f ->
-  ExprM f (Expr Wire f Bool)
+  Expr Wire f 'TField ->
+  ExprM f (Expr Wire f 'TBool)
 fieldToBool e = do
   -- let eOut = unType e
   a <- compile e >>= assertSingleSource >>= addWire
@@ -411,8 +407,8 @@ _unBundle ::
   (KnownNat n) =>
   (GaloisField f) =>
   (Hashable f) =>
-  Expr Wire f (SV.Vector n ty) ->
-  ExprM f (SV.Vector n (Expr Wire f f))
+  Expr Wire f (TVec n ty) ->
+  ExprM f (SV.Vector n (Expr Wire f 'TField))
 _unBundle b = do
   bis <- compile b
   ws <- traverse addWire bis

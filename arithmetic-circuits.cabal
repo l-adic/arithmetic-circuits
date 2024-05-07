@@ -242,7 +242,7 @@ benchmark circuit-benchmarks
 
   hs-source-dirs:     bench
 
-  ghc-options:        -freverse-errors -O2 -Wall -main-is Main
+  ghc-options:        -freverse-errors -O4 -Wall -main-is Main
   build-depends:
       arithmetic-circuits
     , arithmetic-circuits:language
