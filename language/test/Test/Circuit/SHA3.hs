@@ -16,7 +16,7 @@ import Crypto.Hash as CH
 import Data.ByteArray qualified as BA
 import Data.ByteString qualified as BS
 import Data.Distributive (Distributive (distribute))
-import Data.Field.Galois (Prime)
+import Data.Field.Galois (Prime, GaloisField)
 import Data.Finite (Finite)
 import Data.IntMap qualified as IntMap
 import Data.Map qualified as Map
@@ -26,6 +26,7 @@ import Data.Vector.Sized (BuildVector (..), Vector, pattern Build)
 import Data.Vector.Sized qualified as SV
 import GHC.TypeNats (type (*), type (+))
 import Lens.Micro
+import qualified Data.IntSet as IntSet
 import Protolude
 import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (===))
 import Test.QuickCheck.Monadic (monadicIO, run)
@@ -44,30 +45,35 @@ type BitVector f n = Vector n (Signal f 'TBool)
 zeroBits_ :: (Hashable f) => (Num f) => BitVector f 64
 zeroBits_ = SV.replicate (cBool False)
 
-xors :: (Hashable f) => BitVector f 64 -> BitVector f 64 -> BitVector f 64
-xors = SV.zipWith xor_
+xors :: (Hashable f, GaloisField f) => BitVector f 64 -> BitVector f 64 -> ExprM f (BitVector f 64)
+xors as bs =  unbundle $ xors_ (bundle as) (bundle bs)
 
-ands :: (Hashable f) => BitVector f 64 -> BitVector f 64 -> BitVector f 64
-ands = SV.zipWith and_
+ands :: (Hashable f, GaloisField f) => BitVector f 64 -> BitVector f 64 -> ExprM f (BitVector f 64)
+ands as bs = unbundle $ ands_ (bundle as) (bundle bs)
 
-complement_ :: (Hashable f) => BitVector f 64 -> BitVector f 64
-complement_ = SV.map not_
+complement_ :: (Hashable f, GaloisField f) => BitVector f 64 -> ExprM f (BitVector f 64)
+complement_ as = unbundle $ nots_ (bundle as)
 
 --------------------------------------------------------------------------------
 
 -- | Theta block permutation step
-theta :: forall f. (Hashable f) => SHA3State f -> SHA3State f
-theta rows = distribute $ SV.zipWith (map . xors) toXor $ distribute rows
+theta :: forall f. (Hashable f, GaloisField f) => SHA3State f -> ExprM f (SHA3State f)
+theta rows = do
+  as <- toXor
+  os <- SV.zipWithM (traverse . xors) as $ (distribute rows)
+ -- os <- SV.zipWithM (map . xors as) $ (distribute rows)
+  pure $ distribute $ os
   where
-    paritys :: Vector 5 (BitVector f 64)
-    paritys = map (SV.foldl1 xors) (distribute rows)
+    paritys :: ExprM f (Vector 5 (BitVector f 64))
+    paritys = traverse (SV.fold1M xors) (distribute rows)
 
-    toXor :: Vector 5 (BitVector f 64)
-    toXor =
-      SV.zipWith
+    toXor :: ExprM f (Vector 5 (BitVector f 64))
+    toXor = do
+      ps <- paritys
+      SV.zipWithM
         xors
-        (rotateRight paritys (1 :: Finite 5))
-        (map (flip rotateLeft (1 :: Finite 64)) $ rotateLeft paritys (1 :: Finite 5))
+        (rotateRight ps (1 :: Finite 5))
+        (map (flip rotateLeft (1 :: Finite 64)) $ rotateLeft ps (1 :: Finite 5))
 
 -- | Rho block permutation step
 rho :: SHA3State f -> SHA3State f
@@ -142,14 +148,19 @@ pi_ rows =
         )
 
 -- | Chi block permutation step
-chi :: forall f. (Hashable f) => SHA3State f -> SHA3State f
-chi rows =
-  distribute $
-    SV.zipWith3 (SV.zipWith3 func) cols (rotateLeft cols (1 :: Finite 5)) (rotateLeft cols (2 :: Finite 5))
+chi :: forall f. (Hashable f, GaloisField f) => SHA3State f -> ExprM f (SHA3State f)
+chi rows = do
+  distribute <$> 
+    zipWith3M (zipWith3M func) cols (rotateLeft cols (1 :: Finite 5)) (rotateLeft cols (2 :: Finite 5))
   where
     cols = distribute rows
-    func :: BitVector f 64 -> BitVector f 64 -> BitVector f 64 -> BitVector f 64
-    func x y z = x `xors` (complement_ y `ands` z)
+    func :: BitVector f 64 -> BitVector f 64 -> BitVector f 64 -> ExprM f (BitVector f 64)
+    func x y z = do
+      notYs <- complement_ y
+      as <- notYs `ands` z
+      xors x as
+    zipWith3M :: (a -> b -> c -> ExprM f d) -> Vector n a -> Vector n b -> Vector n c -> ExprM f (Vector n d)
+    zipWith3M f as bs cs = SV.zipWithM (\x c -> x c) (SV.zipWith f as bs) cs
 
 mkBitVector :: forall a. (Bits a) => a -> Vector 64 Bool
 mkBitVector a = SV.generate $ \_i ->
@@ -158,16 +169,18 @@ mkBitVector a = SV.generate $ \_i ->
 -- \| Iota block permutation step
 iota ::
   forall f.
-  (Hashable f, Num f) =>
+  (Hashable f, GaloisField f) =>
   Finite 24 ->
   SHA3State f ->
-  SHA3State f
+  ExprM f (SHA3State f)
 iota i rows =
   let row1 = SV.head rows
       x = SV.head row1
       rest0 = SV.tail row1
       rest1 = SV.tail rows
-   in (x `xors` (consts ^. SV.ix i)) `SV.cons` rest0 `SV.cons` rest1
+   in do 
+    res <- x `xors` (consts ^. SV.ix i) 
+    pure $ res `SV.cons` rest0 `SV.cons` rest1
   where
     consts :: Vector 24 (BitVector f 64)
     consts =
@@ -201,36 +214,36 @@ iota i rows =
           )
 
 -- | Block permutation round
-round_ :: (Hashable f, Num f) => Finite 24 -> SHA3State f -> SHA3State f
-round_ i = iota i . chi . pi_ . rho . theta
+round_ :: (Hashable f, GaloisField f) => Finite 24 -> SHA3State f -> ExprM f (SHA3State f)
+round_ i st = iota i =<< chi . pi_ . rho =<< theta st
 
-rounds :: Vector 4 (Finite 24)
-rounds = fromJust $ SV.fromList [0 .. 3]
+rounds :: Vector 24 (Finite 24)
+rounds = fromJust $ SV.fromList [0 .. 23]
 
 -- | Xor the data to be hashed into the block
 updateState ::
   forall n n0 f.
   ((n + n0) ~ 25) =>
   (Hashable f) =>
-  (Num f) =>
+  (GaloisField f) =>
   (KnownNat n0) =>
   Vector n (BitVector f 64) ->
   SHA3State f ->
-  SHA3State f
+  ExprM f (SHA3State f)
 updateState dat st =
-  chunk $ SV.zipWith xors (concatVec st) (dat SV.++ SV.replicate zeroBits_)
+  chunk <$> SV.zipWithM xors (concatVec st) (dat SV.++ SV.replicate zeroBits_)
 
 -- | SHA3
 sha3 ::
   forall f n n0.
   (Hashable f) =>
-  (Num f) =>
+  (GaloisField f) =>
   ((n + n0) ~ 25) =>
   (KnownNat n0) =>
   Vector n (BitVector f 64) ->
-  SHA3State f
+  ExprM f (SHA3State f)
 sha3 dat =
-  foldl (\st i -> round_ i (updateState dat st)) emptyState rounds
+  foldlM (\st i -> round_ i =<< updateState dat st) emptyState rounds
 
 {-
 len_bytes = md_size / 8. So for 256 it's 32
@@ -241,15 +254,16 @@ num_words = rate / 64
 sha3Packed ::
   forall inputSize outputSize rate drop f.
   (Hashable f) =>
-  (Num f) =>
+  (GaloisField f) =>
   (1600 ~ (outputSize + drop)) =>
   (25 ~ (inputSize + rate)) =>
   (KnownNat rate) =>
   (KnownNat outputSize) =>
   Vector inputSize (BitVector f 64) ->
-  BitVector f outputSize
-sha3Packed dat =
-  SV.reverse . SV.take . SV.reverse . concatVec . map (swapEndian @8) . concatVec $ sha3 dat
+  ExprM f (BitVector f outputSize)
+sha3Packed dat = do 
+  res <- sha3 dat
+  pure $ SV.reverse . SV.take . SV.reverse . concatVec . map (swapEndian @8) . concatVec $ res
 
 sha3_224 = sha3Packed @18 @224
 
@@ -288,7 +302,7 @@ sha3Program :: (KnownNat n) => Proxy n -> ExprM Fr (Vector 256 (Var Wire Fr 'TBo
 sha3Program _ = do
   bits <- SV.generateM $ \i ->
     var_ <$> boolInput Public ("b_" <> show (toInteger i))
-  let res = sha3_256 $ chunk bits
+  res <- sha3_256 $ chunk bits
   outs <- SV.generateM $ \i -> do
     let label = "out_" <> show (toInteger i)
     VarBool <$> freshPublicInput label
@@ -316,6 +330,8 @@ prop hashFunc mdlen vec = withMaxSuccess 1 $ monadicIO $ run $ do
   let resStr = take mdlen $ mkOutput res
   let testIn = mkOutput $ toList inputVec
   let expect = hashFunc testIn
+  print $ ("NVars" :: Text) <> show (IntSet.size (cvVars shaVars))
+  print $ ("NGates" :: Text) <> show (nGates shaCircuit)
   pure $ resStr === expect
 
 mkOutput :: [Bool] -> [Word8]

@@ -35,7 +35,7 @@ module Circuit.Language.Expr
   )
 where
 
-import Data.Field.Galois (Prime, PrimeField (fromP))
+import Data.Field.Galois (Prime, PrimeField (fromP), GaloisField)
 import Data.Semiring (Ring (..), Semiring (..))
 import Data.Sequence ((|>))
 import Data.Set qualified as Set
@@ -91,6 +91,7 @@ rawWire (VarBool i) = i
 data UnOp f (ty :: Ty) where
   UNeg :: UnOp f 'TField
   UNot :: UnOp f 'TBool
+  UNots :: UnOp f ('TVec n 'TBool)
 
 deriving instance (Show f) => Show (UnOp f a)
 
@@ -100,6 +101,7 @@ instance Pretty (UnOp f a) where
   pretty op = case op of
     UNeg -> text "neg"
     UNot -> text "!"
+    UNots -> text "nots"
 
 data BinOp f (a :: Ty) where
   BAdd :: BinOp f 'TField
@@ -107,8 +109,11 @@ data BinOp f (a :: Ty) where
   BMul :: BinOp f 'TField
   BDiv :: BinOp f 'TField
   BAnd :: BinOp f 'TBool
+  BAnds :: BinOp f (TVec n 'TBool)
   BOr :: BinOp f 'TBool
+  BOrs :: BinOp f (TVec n 'TBool)
   BXor :: BinOp f 'TBool
+  BXors :: BinOp f (TVec n 'TBool)
 
 deriving instance (Show f) => Show (BinOp f a)
 
@@ -121,13 +126,19 @@ instance Pretty (BinOp f a) where
     BMul -> text "*"
     BDiv -> text "/"
     BAnd -> text "&&"
+    BAnds -> text ".&&."
     BOr -> text "||"
+    BOrs -> text ".||."
     BXor -> text "xor"
+    BXors -> text "xors"
 
 opPrecedence :: BinOp f a -> Int
 opPrecedence BOr = 5
+opPrecedence BOrs = 5
 opPrecedence BXor = 5
+opPrecedence BXors = 5
 opPrecedence BAnd = 5
+opPrecedence BAnds = 5
 opPrecedence BSub = 6
 opPrecedence BAdd = 6
 opPrecedence BMul = 7
@@ -246,6 +257,8 @@ evalExpr lookupVar vars expr = case expr of
     Protolude.negate $ evalExpr lookupVar vars e1
   EUnOp _ UNot e1 ->
     not $ evalExpr lookupVar vars e1
+  EUnOp _ UNots e1 ->
+    SV.map not $ evalExpr lookupVar vars e1
   EBinOp _ op e1 e2 ->
     let e1' = evalExpr lookupVar vars e1
         e2' = evalExpr lookupVar vars e2
@@ -257,8 +270,11 @@ evalExpr lookupVar vars expr = case expr of
         BMul -> (*)
         BDiv -> (/)
         BAnd -> (&&)
+        BAnds -> SV.zipWith (&&)
         BOr -> (||)
+        BOrs -> SV.zipWith (||)
         BXor -> \x y -> (x || y) && not (x && y)
+        BXors -> SV.zipWith (\x y -> (x || y) && not (x && y))
   EIf _ b true false ->
     let cond = evalExpr lookupVar vars b
      in if cond
@@ -401,8 +417,11 @@ bundle_ b =
    in EBundle h b
 {-# INLINE bundle_ #-}
 
-class BoolToField b f | b -> f where
+class BoolToField b f where
   boolToField :: b -> f
+
+instance GaloisField f => BoolToField Bool f where
+  boolToField b = fromInteger $ if b then 1 else 0
 
 instance BoolToField (Val f 'TBool) (Val f 'TField) where
   boolToField (ValBool b) = ValField b
@@ -418,7 +437,14 @@ instance BoolToField (Expr i f ('TVec n 'TBool)) (Expr i f ('TVec n 'TField)) wh
 
 -------------------------------------------------------------------------------
 
-data UBinOp = UBAdd | UBSub | UBMul | UBDiv | UBAnd | UBOr | UBXor deriving (Show, Eq, Generic)
+data UBinOp = 
+  UBAdd | 
+  UBSub | 
+  UBMul | 
+  UBDiv | 
+  UBAnd | 
+  UBOr | 
+  UBXor deriving (Show, Eq, Generic)
 
 instance Hashable UBinOp
 
@@ -481,6 +507,7 @@ instance (Hashable i, Hashable f) => Hashable (Node i f) where
 untypeUnOp :: UnOp f a -> UUnOp
 untypeUnOp UNeg = UUNeg
 untypeUnOp UNot = UUNot
+untypeUnOp UNots = UUNot
 {-# INLINE untypeUnOp #-}
 
 untypeBinOp :: BinOp f a -> UBinOp
@@ -489,8 +516,11 @@ untypeBinOp BSub = UBSub
 untypeBinOp BMul = UBMul
 untypeBinOp BDiv = UBDiv
 untypeBinOp BAnd = UBAnd
+untypeBinOp BAnds = UBAnd
 untypeBinOp BOr = UBOr
+untypeBinOp BOrs = UBOr
 untypeBinOp BXor = UBXor
+untypeBinOp BXors = UBXor
 {-# INLINE untypeBinOp #-}
 
 --------------------------------------------------------------------------------
