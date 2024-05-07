@@ -20,7 +20,7 @@ import Prelude (Show (..))
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-arbExprBool :: (GaloisField f, Hashable f) => Int -> Int -> Gen (Signal f Bool)
+arbExprBool :: (GaloisField f, Hashable f) => Int -> Int -> Gen (Signal f 'TBool)
 arbExprBool numVars size
   | size <= 0 =
       oneof $
@@ -46,7 +46,7 @@ arbExprBool numVars size
             <*> arbExpr numVars (size - 1)
         ]
 
-arbExpr :: (GaloisField f, Hashable f) => Int -> Int -> Gen (Signal f f)
+arbExpr :: (GaloisField f, Hashable f) => Int -> Int -> Gen (Signal f 'TField)
 arbExpr numVars size
   | size <= 0 =
       oneof $
@@ -66,7 +66,7 @@ arbExpr numVars size
             <*> arbExpr numVars (size - 1)
         ]
 
-data ExprWithInputs f = ExprWithInputs (Signal f f) [Map Int f]
+data ExprWithInputs f = ExprWithInputs (Signal f 'TField) [Map Int f]
 
 instance (GaloisField f, Hashable f) => Arbitrary (ExprWithInputs f) where
   arbitrary = do
@@ -96,7 +96,7 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) =
    in all (testInput circuit) inputs
   where
     testInput circuit input =
-      let a = evalExpr (Map.mapKeys (InputWire "" Public) input) expr
+      let a = evalExpr Map.lookup (Map.mapKeys (InputWire "" Public) input) expr
           b = arithOutput input circuit Map.! (OutputWire 1)
        in a == b
     arithOutput input circuit =

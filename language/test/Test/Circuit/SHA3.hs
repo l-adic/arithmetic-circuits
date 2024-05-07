@@ -39,7 +39,7 @@ type SHA3State f = Vector 5 (Vector 5 (BitVector f 64))
 emptyState :: forall f. (Hashable f) => (Num f) => SHA3State f
 emptyState = SV.replicate (SV.replicate zeroBits_)
 
-type BitVector f n = Vector n (Signal f Bool)
+type BitVector f n = Vector n (Signal f 'TBool)
 
 zeroBits_ :: (Hashable f) => (Num f) => BitVector f 64
 zeroBits_ = SV.replicate (cBool False)
@@ -284,7 +284,7 @@ chunk v =
 
 --------------------------------------------------------------------------------
 
-sha3Program :: (KnownNat n) => Proxy n -> ExprM Fr (Vector 256 (Var Wire Fr Bool))
+sha3Program :: (KnownNat n) => Proxy n -> ExprM Fr (Vector 256 (Var Wire Fr 'TBool))
 sha3Program _ = do
   bits <- SV.generateM $ \i ->
     var_ <$> boolInput Public ("b_" <> show (toInteger i))

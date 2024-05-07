@@ -4,8 +4,7 @@
 -- | Surface language
 module Circuit.Language.DSL
   ( Signal,
-    Bundled (..),
-    type Unbundled,
+    Bundle (..),
     cField,
     cBool,
     add,
@@ -45,7 +44,7 @@ where
 import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
 import Circuit.Language.Compile
 import Circuit.Language.Expr
-import Data.Field.Galois (GaloisField, Prime)
+import Data.Field.Galois (GaloisField)
 import Data.Finite (Finite)
 import Data.Maybe (fromJust)
 import Data.Vector.Sized (Vector, ix)
@@ -59,16 +58,16 @@ import Unsafe.Coerce (unsafeCoerce)
 type Signal f = Expr Wire f
 
 -- | Convert constant to expression
-cField :: (Hashable f) => f -> Signal f f
+cField :: (Hashable f) => f -> Signal f 'TField
 cField = val_ . ValField
 {-# INLINE cField #-}
 
-cBool :: (Hashable f, Num f) => Bool -> Signal f Bool
+cBool :: (Hashable f, Num f) => Bool -> Signal f 'TBool
 cBool b = val_ . ValBool $ if b then 1 else 0
 {-# INLINE cBool #-}
 
 -- | Binary arithmetic operations on expressions
-add, sub, mul :: (Hashable f, Num f) => Signal f f -> Signal f f -> Signal f f
+add, sub, mul :: (Hashable f, Num f) => Signal f 'TField -> Signal f 'TField -> Signal f 'TField
 add = (+)
 sub = (-)
 mul = (*)
@@ -76,59 +75,63 @@ mul = (*)
 -- | Binary logic operations on expressions
 -- Have to use underscore or similar to avoid shadowing @and@ and @or@
 -- from Prelude/Protolude.
-and_, or_, xor_ :: (Hashable f) => Signal f Bool -> Signal f Bool -> Signal f Bool
+and_, or_, xor_ :: (Hashable f) => Signal f 'TBool -> Signal f 'TBool -> Signal f 'TBool
 and_ = binOp_ BAnd
 or_ = binOp_ BOr
 xor_ = binOp_ BXor
 
 -- | Negate expression
-not_ :: (Hashable f) => Signal f Bool -> Signal f Bool
+not_ :: (Hashable f) => Signal f 'TBool -> Signal f 'TBool
 not_ = unOp_ UNot
 
-fieldInput :: InputType -> Text -> ExprM f (Var Wire f f)
+fieldInput :: InputType -> Text -> ExprM f (Var Wire f 'TField)
 fieldInput it label =
   case it of
     Public -> VarField <$> freshPublicInput label
     Private -> VarField <$> freshPrivateInput label
 {-# INLINE fieldInput #-}
 
-boolInput :: InputType -> Text -> ExprM f (Var Wire f Bool)
+boolInput :: InputType -> Text -> ExprM f (Var Wire f 'TBool)
 boolInput it label = case it of
   Public -> VarBool <$> freshPublicInput label
   Private -> VarBool <$> freshPrivateInput label
 {-# INLINE boolInput #-}
 
-fieldOutput :: (Hashable f, GaloisField f) => Text -> Signal f f -> ExprM f (Var Wire f f)
+fieldOutput :: (Hashable f, GaloisField f) => Text -> Signal f 'TField -> ExprM f (Var Wire f 'TField)
 fieldOutput label s = do
   out <- VarField <$> freshOutput label
   compileWithWire out s
+{-# INLINE fieldOutput #-}
 
-fieldsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f f) -> Signal f (Vector n f) -> ExprM f (Vector n (Var Wire f f))
+fieldsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f 'TField) -> Signal f ('TVec n 'TField) -> ExprM f (Vector n (Var Wire f 'TField))
 fieldsOutput vs s = fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
 
-boolOutput :: (Hashable f, GaloisField f) => Text -> Signal f Bool -> ExprM f (Var Wire f Bool)
+boolOutput :: (Hashable f, GaloisField f) => Text -> Signal f 'TBool -> ExprM f (Var Wire f 'TBool)
 boolOutput label s = do
   out <- VarBool <$> freshOutput label
   unsafeCoerce <$> compileWithWire (boolToField out) (boolToField s)
+{-# INLINE boolOutput #-}
 
-boolsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f Bool) -> Signal f (Vector n Bool) -> ExprM f (Vector n (Var Wire f Bool))
+boolsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f 'TBool) -> Signal f ('TVec n 'TBool) -> ExprM f (Vector n (Var Wire f 'TBool))
 boolsOutput vs s = unsafeCoerce <$> fieldsOutput (boolToField <$> vs) (boolToField s)
 
 atIndex ::
-  (Bundled f (Vector n ty)) =>
+  (Bundle f ('TVec n ty)) =>
+  (Unbundled f (TVec n ty) ~ Vector n (Signal f ty)) =>
   Finite n ->
-  Signal f (Vector n ty) ->
+  Signal f ('TVec n ty) ->
   ExprM f (Signal f ty)
 atIndex i b = do
   bs <- unbundle b
   return $ bs ^. ix i
 
 updateIndex_ ::
-  (Bundled f (Vector n ty)) =>
+  (Bundle f ('TVec n ty)) =>
+  (Unbundled f (TVec n ty) ~ Vector n (Signal f ty)) =>
   Finite n ->
   Signal f ty ->
-  Signal f (Vector n ty) ->
-  ExprM f (Signal f (Vector n ty))
+  Signal f ('TVec n ty) ->
+  ExprM f (Signal f ('TVec n ty))
 updateIndex_ p s v = do
   bs <- unbundle v
   let bs' = bs & ix p .~ s
@@ -136,19 +139,21 @@ updateIndex_ p s v = do
 
 truncate_ ::
   forall f ty n m.
-  (Bundled f (Vector (m + n) ty)) =>
-  (Bundled f (Vector m ty)) =>
+  (Bundle f ('TVec (m + n) ty)) =>
+  (Bundle f ('TVec m ty)) =>
+  (Unbundled f (TVec (m + n) ty) ~ Vector (m + n) (Signal f ty)) =>
+  (Unbundled f (TVec m ty) ~ Vector m (Signal f ty)) =>
   (KnownNat m) =>
-  Signal f (Vector (m + n) ty) ->
-  ExprM f (Signal f (Vector m ty))
+  Signal f ('TVec (m + n) ty) ->
+  ExprM f (Signal f ('TVec m ty))
 truncate_ v = do
   as <- unbundle v
-  let bs = SV.take as
+  let bs = SV.take @m as
   return $ bundle bs
 
 --------------------------------------------------------------------------------
 
-newtype And_ f = And_ {unAnd_ :: Signal f Bool}
+newtype And_ f = And_ {unAnd_ :: Signal f 'TBool}
 
 instance (Hashable f) => Semigroup (And_ f) where
   And_ a <> And_ b = And_ $ binOp_ BAnd a b
@@ -156,7 +161,7 @@ instance (Hashable f) => Semigroup (And_ f) where
 instance (Num f, Hashable f) => Monoid (And_ f) where
   mempty = And_ $ cBool True
 
-newtype Any_ f = Any_ {unAny_ :: Signal f Bool}
+newtype Any_ f = Any_ {unAny_ :: Signal f 'TBool}
 
 instance (Num f, Hashable f) => Semigroup (Any_ f) where
   Any_ a <> Any_ b = Any_ $ or_ a b
@@ -164,7 +169,7 @@ instance (Num f, Hashable f) => Semigroup (Any_ f) where
 instance (Eq f, Num f, Hashable f) => Monoid (Any_ f) where
   mempty = Any_ $ cBool False
 
-newtype Add_ f = Add_ {unAdd_ :: Signal f f}
+newtype Add_ f = Add_ {unAdd_ :: Signal f 'TField}
 
 instance (Hashable f, Num f) => Semigroup (Add_ f) where
   Add_ a <> Add_ b = Add_ $ add a b
@@ -172,7 +177,7 @@ instance (Hashable f, Num f) => Semigroup (Add_ f) where
 instance (Hashable f, Num f) => Monoid (Add_ f) where
   mempty = Add_ $ cField 0
 
-newtype XOr_ f = XOr_ {unXOr_ :: Signal f Bool}
+newtype XOr_ f = XOr_ {unXOr_ :: Signal f 'TBool}
 
 instance (Hashable f, Num f) => Semigroup (XOr_ f) where
   XOr_ a <> XOr_ b = XOr_ $ xor_ a b
@@ -184,41 +189,41 @@ instance (Eq f, Num f, Hashable f) => Monoid (XOr_ f) where
 
 elem_ ::
   (Num f, Foldable t, Hashable f) =>
-  Signal f f ->
-  t (Signal f f) ->
-  Signal f Bool
+  Signal f 'TField ->
+  t (Signal f 'TField) ->
+  Signal f 'TBool
 elem_ a as =
   let f b = eq_ a b
    in any_ f as
 
 all_ ::
   (Num f, Foldable t, Hashable f) =>
-  (a -> Signal f Bool) ->
+  (a -> Signal f 'TBool) ->
   t a ->
-  Signal f Bool
+  Signal f 'TBool
 all_ f = unAnd_ . foldMap (And_ . f)
 
 any_ ::
   (Num f, Foldable t, Hashable f) =>
-  (a -> Signal f Bool) ->
+  (a -> Signal f 'TBool) ->
   t a ->
-  Signal f Bool
+  Signal f 'TBool
 any_ f = unAny_ . foldMap (Any_ . f)
 
 --------------------------------------------------------------------------------
 
-type family Unbundled f a = res | res -> a where
-  Unbundled f (Vector n ty) = Vector n (Signal f ty)
-
-class Bundled f a where
+class Bundle f a where
+  type Unbundled f a
   bundle :: Unbundled f a -> Signal f a
   unbundle :: Signal f a -> ExprM f (Unbundled f a)
 
-instance (KnownNat p, KnownNat n) => Bundled (Prime p) (Vector n (Prime p)) where
+instance (Hashable f, GaloisField f, KnownNat n) => Bundle f ('TVec n 'TField) where
+  type Unbundled f ('TVec n 'TField) = Vector n (Signal f 'TField)
   bundle = bundle_
   unbundle = _unBundle
 
-instance (Hashable f, GaloisField f, KnownNat n) => Bundled f (Vector n Bool) where
+instance (Hashable f, GaloisField f, KnownNat n) => Bundle f ('TVec n 'TBool) where
+  type Unbundled f ('TVec n 'TBool) = Vector n (Signal f 'TBool)
   bundle = bundle_
   unbundle = fmap unsafeCoerce . _unBundle
 
