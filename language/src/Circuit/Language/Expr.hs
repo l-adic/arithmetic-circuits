@@ -29,6 +29,7 @@ module Circuit.Language.Expr
     shift_,
     atIndex_,
     updateAtIndex_,
+    reverse_,
     zeroBits_,
     Hash (..),
     Node (..),
@@ -106,6 +107,7 @@ data UnOp f (ty :: Ty) where
   UNots :: UnOp f ('TVec n 'TBool)
   URot :: KnownNat n => Int -> UnOp f ('TVec n ty)
   UShift :: KnownNat n => Int -> UnOp f ('TVec n 'TBool)
+  UReverse :: KnownNat n => UnOp f ('TVec n ty)
 
 deriving instance (Show f) => Show (UnOp f a)
 
@@ -119,6 +121,7 @@ instance Pretty (UnOp f a) where
     UNots -> text "nots"
     URot n -> text "rotate" <+> pretty n
     UShift n -> text "shift" <+> pretty n
+    UReverse -> text "reverse"
 
 data BinOp f (a :: Ty) where
   BAdd :: BinOp f 'TField
@@ -305,6 +308,7 @@ evalExpr lookupVar vars expr = case expr of
         UNots -> map not
         URot n -> fromJust . SV.fromList . rotateList n . SV.toList
         UShift n -> fromJust . SV.fromList . shiftList False n . SV.toList
+        UReverse -> SV.reverse
   EBinOp _ op e1 e2 ->
     let e1' = evalExpr lookupVar vars e1
         e2' = evalExpr lookupVar vars e2
@@ -521,6 +525,15 @@ atIndex_ e i =
    in EAtIndex h e i
 {-# INLINE atIndex_ #-}
 
+reverse_ :: 
+  forall i f n.
+  (Hashable f) =>
+  (Hashable i) =>
+  (KnownNat n) =>
+  Expr i f ('TVec n 'TBool) ->
+  Expr i f ('TVec n 'TBool)
+reverse_ = unOp_ UReverse
+
 updateAtIndex_ :: 
   forall i f n ty.
   (Hashable f) =>
@@ -555,6 +568,7 @@ instance BoolToField (Expr i f ('TVec n 'TBool)) (Expr i f ('TVec n 'TField)) wh
 
 zeroBits_ :: forall n i f. (KnownNat n, Hashable i, Hashable f, GaloisField f) => Expr i f ('TVec n 'TBool)
 zeroBits_ = bundle_ $ SV.replicate @n (val_ $ ValBool 0)
+
 
 instance (KnownNat n, Hashable i, Hashable f, GaloisField f) => Bits (Expr i f ('TVec n 'TBool)) where
   (.&.) = binOp_ BAnds
@@ -605,7 +619,7 @@ instance Pretty UBinOp where
     UBOr -> text "||"
     UBXor -> text "xor"
 
-data UUnOp = UUNeg | UUNot | UURot Int | UUShift Int deriving (Show, Eq, Generic)
+data UUnOp = UUNeg | UUNot | UURot Int | UUShift Int | UUReverse deriving (Show, Eq, Generic)
 
 instance Hashable UUnOp
 
@@ -615,6 +629,7 @@ instance Pretty UUnOp where
     UUNot -> text "!"
     UURot n -> text "rotate" <+> pretty n
     UUShift n -> text "shift" <+> pretty n
+    UUReverse -> text "reverse"
 
 data Node i f where
   NVal :: f -> Node i f
@@ -666,6 +681,7 @@ untypeUnOp UNot = UUNot
 untypeUnOp UNots = UUNot
 untypeUnOp (URot n) = UURot n
 untypeUnOp (UShift n) = UUShift n
+untypeUnOp UReverse = UUReverse
 
 {-# INLINE untypeUnOp #-}
 

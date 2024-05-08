@@ -16,10 +16,9 @@ import Crypto.Hash as CH
 import Data.ByteArray qualified as BA
 import Data.ByteString qualified as BS
 import Data.Distributive (Distributive (distribute))
-import Data.Field.Galois (GaloisField, Prime)
+import Data.Field.Galois (Prime, GaloisField)
 import Data.Finite (Finite)
 import Data.IntMap qualified as IntMap
-import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
 import Data.Maybe (fromJust)
 import Data.Vector qualified as V
@@ -32,53 +31,44 @@ import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (===))
 import Test.QuickCheck.Monadic (monadicIO, run)
 import Prelude qualified
 
-{-
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
+
+type BitVector f n = Signal f ('TVec n 'TBool)
 
 -- | Row major 5x5 matrix of 64 bit values
 type SHA3State f = Vector 5 (Vector 5 (BitVector f 64))
 
-emptyState :: forall f. (Hashable f) => (Num f) => SHA3State f
+emptyState :: forall f. (Hashable f) => (GaloisField f) => SHA3State f
 emptyState = SV.replicate (SV.replicate zeroBits_)
 
-type BitVector f n = Vector n (Signal f 'TBool)
+xors :: (Hashable f) => BitVector f 64 -> BitVector f 64 -> BitVector f 64
+xors = xors_
 
-zeroBits_ :: (Hashable f) => (Num f) => BitVector f 64
-zeroBits_ = SV.replicate (cBool False)
+ands :: (Hashable f) => BitVector f 64 -> BitVector f 64 -> BitVector f 64
+ands = ands_
 
-xors :: (Hashable f, GaloisField f) => BitVector f 64 -> BitVector f 64 -> ExprM f (BitVector f 64)
-xors as bs = unbundle $ xors_ (bundle as) (bundle bs)
-
-ands :: (Hashable f, GaloisField f) => BitVector f 64 -> BitVector f 64 -> ExprM f (BitVector f 64)
-ands as bs = unbundle $ ands_ (bundle as) (bundle bs)
-
-complement_ :: (Hashable f, GaloisField f) => BitVector f 64 -> ExprM f (BitVector f 64)
-complement_ as = unbundle $ nots_ (bundle as)
+complement_ :: (Hashable f) => BitVector f 64 -> BitVector f 64
+complement_ = nots_
 
 --------------------------------------------------------------------------------
 
 -- | Theta block permutation step
-theta :: forall f. (Hashable f, GaloisField f) => SHA3State f -> ExprM f (SHA3State f)
-theta rows = do
-  as <- toXor
-  os <- SV.zipWithM (traverse . xors) as $ (distribute rows)
-  -- os <- SV.zipWithM (map . xors as) $ (distribute rows)
-  pure $ distribute $ os
+theta :: forall f. (Hashable f, GaloisField f) => SHA3State f -> SHA3State f
+theta rows = distribute $ SV.zipWith (map . xors) toXor $ distribute rows
   where
-    paritys :: ExprM f (Vector 5 (BitVector f 64))
-    paritys = traverse (SV.fold1M xors) (distribute rows)
+    paritys :: Vector 5 (BitVector f 64)
+    paritys = map (SV.foldl1 xors) (distribute rows)
 
-    toXor :: ExprM f (Vector 5 (BitVector f 64))
-    toXor = do
-      ps <- paritys
-      SV.zipWithM
+    toXor :: Vector 5 (BitVector f 64)
+    toXor =
+      SV.zipWith
         xors
-        (rotate ps (-1))
-        (map (flip rotate (-1)) $ rotate ps (-1))
+        (rotateRight @Int paritys 1)
+        (map (flip rotateL 1) $ rotateLeft @Int paritys 1)
 
 -- | Rho block permutation step
-rho :: SHA3State f -> SHA3State f
-rho = chunk . SV.zipWith (\i n -> rotate_ (-n) i) rots . concatVec
+rho :: GaloisField f => Hashable f => SHA3State f -> SHA3State f
+rho = chunk . SV.zipWith (flip rotateL) rots . concatVec
   where
     rots :: Vector 25 Int
     rots =
@@ -149,23 +139,20 @@ pi_ rows =
         )
 
 -- | Chi block permutation step
-chi :: forall f. (Hashable f, GaloisField f) => SHA3State f -> ExprM f (SHA3State f)
-chi rows = do
-  distribute
-    <$> zipWith3M (zipWith3M func) cols (rotate cols 1) (rotate cols (-2))
+chi :: forall f. (Hashable f) => SHA3State f -> SHA3State f
+chi rows =
+  distribute $
+    SV.zipWith3 (SV.zipWith3 func) cols (rotateLeft @Int cols 1) (rotateLeft @Int cols 2)
   where
     cols = distribute rows
-    func :: BitVector f 64 -> BitVector f 64 -> BitVector f 64 -> ExprM f (BitVector f 64)
-    func x y z = do
-      notYs <- complement_ y
-      as <- notYs `ands` z
-      xors x as
-    zipWith3M :: (a -> b -> c -> ExprM f d) -> Vector n a -> Vector n b -> Vector n c -> ExprM f (Vector n d)
-    zipWith3M f as bs cs = SV.zipWithM (\x c -> x c) (SV.zipWith f as bs) cs
+    func :: BitVector f 64 -> BitVector f 64 -> BitVector f 64 -> BitVector f 64
+    func x y z = x `xors` (complement_ y `ands` z)
 
-mkBitVector :: forall a. (Bits a) => a -> Vector 64 Bool
-mkBitVector a = SV.generate $ \_i ->
-  testBit a (fromIntegral _i)
+mkBitVector :: forall a f. Hashable f => GaloisField f => (Bits a) => a -> BitVector f 64
+mkBitVector = bundle . map cBool . mkBitVector'
+
+mkBitVector' :: forall a. (Bits a) => a -> Vector 64 Bool
+mkBitVector' a = SV.generate $ \_i -> testBit a (fromIntegral _i)
 
 -- \| Iota block permutation step
 iota ::
@@ -173,19 +160,17 @@ iota ::
   (Hashable f, GaloisField f) =>
   Finite 24 ->
   SHA3State f ->
-  ExprM f (SHA3State f)
+  SHA3State f
 iota i rows =
   let row1 = SV.head rows
       x = SV.head row1
       rest0 = SV.tail row1
       rest1 = SV.tail rows
-   in do
-        res <- x `xors` (consts ^. SV.ix i)
-        pure $ res `SV.cons` rest0 `SV.cons` rest1
+   in (x `xors` (consts ^. SV.ix i)) `SV.cons` rest0 `SV.cons` rest1
   where
     consts :: Vector 24 (BitVector f 64)
     consts =
-      map (map cBool . mkBitVector @Integer) $
+      map (mkBitVector @Integer) $
         Build
           ( 0x0000000000000001
               :< 0x0000000000008082
@@ -215,11 +200,8 @@ iota i rows =
           )
 
 -- | Block permutation round
-round_ :: (Hashable f, GaloisField f) => Finite 24 -> SHA3State f -> ExprM f (SHA3State f)
-round_ i st = iota i =<< chi . pi_ . rho =<< theta st
-
-rounds :: Vector 24 (Finite 24)
-rounds = fromJust $ SV.fromList [0 .. 23]
+round_ :: (Hashable f, GaloisField f) => Finite 24 -> SHA3State f -> SHA3State f
+round_ i = iota i . chi . pi_ . rho . theta
 
 -- | Xor the data to be hashed into the block
 updateState ::
@@ -230,9 +212,9 @@ updateState ::
   (KnownNat n0) =>
   Vector n (BitVector f 64) ->
   SHA3State f ->
-  ExprM f (SHA3State f)
+  SHA3State f
 updateState dat st =
-  chunk <$> SV.zipWithM xors (concatVec st) (dat SV.++ SV.replicate zeroBits_)
+  chunk $ SV.zipWith xors (concatVec st) (dat SV.++ SV.replicate zeroBits_)
 
 -- | SHA3
 sha3 ::
@@ -242,9 +224,12 @@ sha3 ::
   ((n + n0) ~ 25) =>
   (KnownNat n0) =>
   Vector n (BitVector f 64) ->
-  ExprM f (SHA3State f)
+  SHA3State f
 sha3 dat =
-  foldlM (\st i -> round_ i =<< updateState dat st) emptyState rounds
+  foldl (\st i -> round_ i (updateState dat st)) emptyState rounds
+  where
+  rounds :: Vector 4 (Finite 24)
+  rounds = fromJust $ SV.fromList [0 .. 3]
 
 {-
 len_bytes = md_size / 8. So for 256 it's 32
@@ -260,11 +245,24 @@ sha3Packed ::
   (25 ~ (inputSize + rate)) =>
   (KnownNat rate) =>
   (KnownNat outputSize) =>
+ -- Unbundled f (Vector 25 (BitVector f 64)) ~ Vector 25 (Vector 64 (Signal f TBool)) =>
   Vector inputSize (BitVector f 64) ->
   ExprM f (BitVector f outputSize)
 sha3Packed dat = do
-  res <- sha3 dat
-  pure $ SV.reverse . SV.take . SV.reverse . concatVec . map (swapEndian @8) . concatVec $ res
+  bs :: Vector 25 (Vector 64 (Signal f 'TBool)) <- traverse unbundle $ concatVec $ sha3 dat
+  ds <- truncate_ $ bundle $ SV.reverse $ concatVec $ map (swapEndian @8) bs
+  pure $ reverse_ ds
+  where
+
+    swapEndian ::
+      forall n.
+      (KnownNat n) =>
+      Vector (8 * n) (Signal f 'TBool) ->
+      Vector (8 * n) (Signal f 'TBool)
+    swapEndian = concatVec . SV.reverse . chunk @8
+
+concatVec :: forall n m a. Vector n (Vector m a) -> Vector (n * m) a
+concatVec = SV.concatMap identity
 
 sha3_224 = sha3Packed @18 @224
 
@@ -274,18 +272,7 @@ sha3_384 = sha3Packed @13 @384
 
 sha3_512 = sha3Packed @9 @512
 
-swapEndian ::
-  forall n f.
-  (KnownNat n) =>
-  BitVector f (8 * n) ->
-  BitVector f (8 * n)
-swapEndian = concatVec . SV.reverse . chunk @8
 
-revBV :: forall n f. BitVector f n -> BitVector f n
-revBV = SV.reverse
-
-concatVec :: forall n m a. Vector n (Vector m a) -> Vector (n * m) a
-concatVec = SV.concatMap identity
 
 chunk :: forall n m a. (KnownNat n) => (KnownNat m) => Vector (n * m) a -> Vector n (Vector m a)
 chunk v =
@@ -297,28 +284,47 @@ chunk v =
               Just x -> x
               Nothing -> panic ("chunk: impossible " <> show (start) <> show (length s))
 
+rotateLeft :: (Enum i, KnownNat n)
+           => SV.Vector n a
+           -> i
+           -> SV.Vector n a
+rotateLeft xs i = map ((\idx -> xs ^. SV.ix idx) . (\idx -> fromIntegral $ idx `mod` len)) (fromJust $ SV.fromList $ take len $ iterate (+1) i')
+  where
+    i'  = fromEnum i
+    len = length xs
+{-# INLINE rotateLeft #-}
+
+rotateRight :: (Enum i, KnownNat n)
+            => SV.Vector n a
+            -> i
+            -> SV.Vector n a
+rotateRight xs i = map ((\idx -> xs ^. SV.ix idx) . (\idx -> fromIntegral $ idx `mod` len)) (fromJust $ SV.fromList $ take len $ iterate (+1) i')
+  where
+    i'  = negate (fromEnum i)
+    len = length xs
+{-# INLINE rotateRight #-}
+
 --------------------------------------------------------------------------------
 
 sha3Program :: (KnownNat n) => Proxy n -> ExprM Fr (Vector 256 (Var Wire Fr 'TBool))
 sha3Program _ = do
-  bits <- SV.generateM $ \i ->
+  bits :: Vector n (Signal f 'TBool) <- SV.generateM $ \i ->
     var_ <$> boolInput Public ("b_" <> show (toInteger i))
-  res <- sha3_256 $ chunk bits
+  res <- sha3_256 $ map bundle $ chunk bits
   outs <- SV.generateM $ \i -> do
     let label = "out_" <> show (toInteger i)
     VarBool <$> freshPublicInput label
-  boolsOutput outs $ bundle res
+  boolsOutput outs res
 
 prop :: forall n n0. (((n + 1) + n0) ~ 25, KnownNat n0, KnownNat ((n + 1) * 64)) => ([Word8] -> [Word8]) -> Int -> Vector n (Vector 64 Bool) -> Property
 prop hashFunc mdlen vec = withMaxSuccess 1 $ monadicIO $ run $ do
   let BuilderState {bsVars = shaVars, bsCircuit = shaCircuit} = snd $ runCircuitBuilder $ sha3Program (Proxy :: Proxy ((n + 1) * 64))
-      inputVec :: Vector ((n + 1) * 64) Bool
-      inputVec = concatVec (vec `SV.snoc` mkBitVector @Integer 0x8000000000000006)
+      inputVec = vec `SV.snoc` mkBitVector' @Integer 0x8000000000000006
       inIndices :: [Finite ((n + 1) * 64)]
       inIndices = [minBound .. maxBound]
       assignments =
         Map.fromList $
-          map (\i -> ("b_" <> show @Int (fromIntegral i), boolToField_ $ inputVec `SV.index` i)) inIndices
+          map (\i -> ("b_" <> show @Int (fromIntegral i), boolToField_ $ concatVec inputVec `SV.index` i)) inIndices
   let input =
         assignInputs shaVars $
           assignments
@@ -329,18 +335,16 @@ prop hashFunc mdlen vec = withMaxSuccess 1 $ monadicIO $ run $ do
       res = map (\i -> _fieldToBool $ fromJust $ lookupVar shaVars ("out_" <> show (fromIntegral @_ @Int i)) w) outIndices
   -- let str = reverse $ map unpack $ chunkList 8 $ toList inputVec
   let resStr = take mdlen $ mkOutput res
-  let testIn = mkOutput $ toList inputVec
+  let testIn = mkOutput $ toList (concatVec inputVec)
   let expect = hashFunc testIn
-  print $ ("NVars" :: Text) <> show (IntSet.size (cvVars shaVars))
-  print $ ("NGates" :: Text) <> show (nGates shaCircuit)
   pure $ resStr === expect
 
 mkOutput :: [Bool] -> [Word8]
 mkOutput = map unpack . chunkList 8
 
 --
-propsha256 :: ArbVec -> Property
-propsha256 (ArbVec v) =
+prop_sha256 :: ArbVec -> Property
+prop_sha256 (ArbVec v) =
   withMaxSuccess 1 $
     prop (\x -> BA.unpack (CH.hash (BS.pack x) :: Digest SHA3_256)) 32 v
 
@@ -377,4 +381,3 @@ _fieldToBool x = x /= 0
 boolToField_ :: Bool -> Fr
 boolToField_ True = 1
 boolToField_ False = 0
--}

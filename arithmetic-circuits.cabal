@@ -131,7 +131,7 @@ test-suite language-tests
 
   hs-source-dirs:     language/test
 
-  ghc-options:        -freverse-errors  -O2 -Wall -main-is Main
+  ghc-options:        -fprof-auto -freverse-errors  -O2 -Wall -main-is Main
   build-depends:
       arithmetic-circuits
     , arithmetic-circuits:language

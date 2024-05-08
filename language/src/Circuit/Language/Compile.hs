@@ -266,6 +266,7 @@ _compile (h, expr) = case expr of
             let f = NVal 0 :: Node Wire f
             _f <- _compile (Hash $ hash f, f) >>= assertSingleSource
             pure $ V.fromList $ shiftList _f n (toList eOuts)
+          UUReverse -> pure $ V.reverse eOuts
           _ -> let f eOut = case op of
                      UUNeg -> AffineSource $ ScalarMul (-1) (addVar eOut)
                      UUNot -> AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar eOut))

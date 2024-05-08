@@ -1,5 +1,6 @@
 tests: True
 benchmarks: True
+profiling: True
 
 packages: .
 
