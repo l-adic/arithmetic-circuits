@@ -13,6 +13,7 @@ import Data.Map qualified as Map
 import Data.Vector.Sized qualified as SV
 import Protolude
 import Test.QuickCheck (Arbitrary (arbitrary), Property, forAll, vectorOf, (.&&.), (=/=), (===), (==>))
+import Data.Maybe (fromJust)
 
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
@@ -143,6 +144,8 @@ prop_sharingProg x y =
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
    in res === Just expected .&&. computed === expected
 
+--------------------------------------------------------------------------------
+
 boolBinopsProg ::
   BinOp Fr ('TVec 50 'TBool) ->
   ExprM Fr (SV.Vector 50 (Var Wire Fr 'TBool))
@@ -182,6 +185,8 @@ prop_orsProg = propBoolBinopsProg BOrs (||)
 
 prop_xorsProg :: Property
 prop_xorsProg = propBoolBinopsProg BXors (/=)
+
+--------------------------------------------------------------------------------
 
 fieldBinopsProg :: BinOp Fr (TVec 50 'TField) -> ExprM Fr (SV.Vector 50 (Var Wire Fr 'TField))
 fieldBinopsProg op = do
@@ -223,9 +228,11 @@ prop_mulsProg = propFieldBinopsProg BMuls (*)
 prop_divsProg :: Property
 prop_divsProg = propFieldBinopsProg BDivs (/)
 
+--------------------------------------------------------------------------------
+
 boolUnopsProg ::
-  UnOp Fr ('TVec 50 'TBool) ->
-  ExprM Fr (SV.Vector 50 (Var Wire Fr 'TBool))
+  UnOp Fr ('TVec 32 'TBool) ->
+  ExprM Fr (SV.Vector 32 (Var Wire Fr 'TBool))
 boolUnopsProg op = do
   xs <- SV.generateM $ \i ->
     var_ <$> boolInput Public ("x" <> showFinite i)
@@ -233,26 +240,37 @@ boolUnopsProg op = do
     VarBool <$> freshOutput ("out" <> showFinite i)
   boolsOutput zs $ unOp_ op (bundle xs)
 
-propBoolUnopsProg ::
-  UnOp Fr ('TVec 50 'TBool) ->
-  (Bool -> Bool) ->
+
+propBitVecUnopsProg ::
+  UnOp Fr ('TVec 32 'TBool) ->
+  ([Bool] -> [Bool]) ->
   Property
-propBoolUnopsProg top op = forAll arbInputs $ \bs ->
+propBitVecUnopsProg top op = forAll arbInputs $ \bs ->
   let _xs = zip (map (\i -> "x" <> show @Int i) [0 ..]) bs
       (_, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (boolUnopsProg top)
-      inputs =
-        assignInputs bsVars $
-          fmap boolToField $
-            Map.fromList _xs
+      inputs = assignInputs bsVars $ fmap boolToField $ Map.fromList _xs
       w = solve bsVars bsCircuit inputs
-      expected = map (boolToField . op) bs
-   in all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
-        zip [0 ..] expected
+      expected = op bs
+      a = intToBitVec $ bitOp $ bitVecToInt bs
+      out = fromJust $ sequence $ map (\i -> lookupVar bsVars ("out" <> show @Int i) w) [0 .. 31]
+   in map boolToField expected === out .&&. map _fieldToBool out === a
   where
-    arbInputs = vectorOf 50 arbitrary
+    arbInputs = vectorOf 32 arbitrary
+    bitOp = case top of
+      URot n -> flip rotate n
+      UNots -> complement
+      UShift n -> flip shift n
 
 prop_notsProg :: Property
-prop_notsProg = propBoolUnopsProg UNots not
+prop_notsProg = propBitVecUnopsProg UNots (map not)
+
+prop_rotateProg :: Int -> Property
+prop_rotateProg n = propBitVecUnopsProg (URot n) (rotateList n)
+
+prop_shiftProg :: Int -> Property
+prop_shiftProg n = abs n <= 32 ==> propBitVecUnopsProg (UShift n) (shiftList False n)
+
+--------------------------------------------------------------------------------
 
 fieldUnopsProg ::
   UnOp Fr ('TVec 50 'TField) ->
@@ -288,3 +306,25 @@ prop_negs = propFieldUnopsProg UNegs Protolude.negate
 
 showFinite :: (KnownNat n) => Finite n -> Text
 showFinite = show . toInteger
+
+
+intToBitVec :: Word32 -> [Bool]
+intToBitVec n = map (testBit n) [0 .. 31]
+
+bitVecToInt :: [Bool] -> Word32
+bitVecToInt bs = foldl (\acc (b, i) -> if b then setBit acc i else acc) zeroBits (zip bs [0 ..])
+
+prop_bitVecIntInverse :: Word32 -> Property
+prop_bitVecIntInverse n = bitVecToInt (intToBitVec n) === n
+
+prop_intBitVecInverse :: Property
+prop_intBitVecInverse = forAll (vectorOf 32 arbitrary) $ \bs ->   
+  intToBitVec (bitVecToInt bs) === bs
+
+_fieldToBool :: Fr -> Bool
+_fieldToBool x = x /= 0
+
+{-
+
+
+-}

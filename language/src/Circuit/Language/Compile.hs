@@ -259,10 +259,17 @@ _compile (h, expr) = case expr of
     pure source
   NUnOp op e -> do
     eOuts <- assertFromCache e
-    let f eOut = case op of
-          UUNeg -> AffineSource $ ScalarMul (-1) (addVar eOut)
-          UUNot -> AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar eOut))
-        source = map f eOuts
+    source <- case op of
+          UURot n ->
+            pure $ V.fromList $ rotateList n (toList eOuts)
+          UUShift n -> do
+            let f = NVal 0 :: Node Wire f
+            _f <- _compile (Hash $ hash f, f) >>= assertSingleSource
+            pure $ V.fromList $ shiftList _f n (toList eOuts)
+          _ -> let f eOut = case op of
+                     UUNeg -> AffineSource $ ScalarMul (-1) (addVar eOut)
+                     UUNot -> AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar eOut))
+                in pure $ map f eOuts
     cachResult h source
     pure source
   NBinOp op e1 e2 -> do

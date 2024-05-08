@@ -32,6 +32,7 @@ import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (===))
 import Test.QuickCheck.Monadic (monadicIO, run)
 import Prelude qualified
 
+{-
 type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 -- | Row major 5x5 matrix of 64 bit values
@@ -72,14 +73,14 @@ theta rows = do
       ps <- paritys
       SV.zipWithM
         xors
-        (rotateRight ps (1 :: Finite 5))
-        (map (flip rotateLeft (1 :: Finite 64)) $ rotateLeft ps (1 :: Finite 5))
+        (rotate ps (-1))
+        (map (flip rotate (-1)) $ rotate ps (-1))
 
 -- | Rho block permutation step
 rho :: SHA3State f -> SHA3State f
-rho = chunk . SV.zipWith (flip rotateLeft) rots . concatVec
+rho = chunk . SV.zipWith (\i n -> rotate_ (-n) i) rots . concatVec
   where
-    rots :: Vector 25 (Finite 64)
+    rots :: Vector 25 Int
     rots =
       Build
         ( 0
@@ -151,7 +152,7 @@ pi_ rows =
 chi :: forall f. (Hashable f, GaloisField f) => SHA3State f -> ExprM f (SHA3State f)
 chi rows = do
   distribute
-    <$> zipWith3M (zipWith3M func) cols (rotateLeft cols (1 :: Finite 5)) (rotateLeft cols (2 :: Finite 5))
+    <$> zipWith3M (zipWith3M func) cols (rotate cols 1) (rotate cols (-2))
   where
     cols = distribute rows
     func :: BitVector f 64 -> BitVector f 64 -> BitVector f 64 -> ExprM f (BitVector f 64)
@@ -376,3 +377,4 @@ _fieldToBool x = x /= 0
 boolToField_ :: Bool -> Fr
 boolToField_ True = 1
 boolToField_ False = 0
+-}

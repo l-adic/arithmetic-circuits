@@ -25,6 +25,8 @@ module Circuit.Language.Expr
     split_,
     join_,
     bundle_,
+    rotate_,
+    shift_,
     Hash (..),
     Node (..),
     UBinOp (..),
@@ -32,6 +34,8 @@ module Circuit.Language.Expr
     reifyGraph,
     BoolToField (..),
     relabelExpr,
+    rotateList,
+    shiftList
   )
 where
 
@@ -46,6 +50,7 @@ import Numeric (showHex)
 import Protolude hiding (Semiring (..))
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
+import Data.Maybe (fromJust)
 
 data Ty = TField | TBool | TVec Nat Ty
 
@@ -93,6 +98,8 @@ data UnOp f (ty :: Ty) where
   UNegs :: UnOp f ('TVec n 'TField)
   UNot :: UnOp f 'TBool
   UNots :: UnOp f ('TVec n 'TBool)
+  URot :: KnownNat n => Int -> UnOp f ('TVec n ty)
+  UShift :: KnownNat n => Int -> UnOp f ('TVec n 'TBool)
 
 deriving instance (Show f) => Show (UnOp f a)
 
@@ -104,6 +111,8 @@ instance Pretty (UnOp f a) where
     UNegs -> text "negs"
     UNot -> text "!"
     UNots -> text "nots"
+    URot n -> text "rotate" <+> pretty n
+    UShift n -> text "shift" <+> pretty n
 
 data BinOp f (a :: Ty) where
   BAdd :: BinOp f 'TField
@@ -182,6 +191,7 @@ data Expr i f (ty :: Ty) where
   ESplit :: (KnownNat (NBits f)) => Hash -> Expr i f 'TField -> Expr i f ('TVec (NBits f) 'TBool)
   EJoin :: (KnownNat n) => Hash -> Expr i f ('TVec n 'TBool) -> Expr i f 'TField
   EBundle :: Hash -> SV.Vector n (Expr i f ty) -> Expr i f ('TVec n ty)
+  -- EShift 
 
 relabelExpr :: (i -> j) -> Expr i f ty -> Expr j f ty
 relabelExpr _ (EVal h v) = EVal h v
@@ -209,6 +219,9 @@ getId (ESplit i _) = i
 getId (EJoin i _) = i
 getId (EBundle i _) = i
 {-# INLINE getId #-}
+
+instance Eq (Expr i f ty) where
+  a == b = getId a == getId b
 
 instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
   pretty = prettyPrec 0
@@ -276,6 +289,8 @@ evalExpr lookupVar vars expr = case expr of
         UNegs -> map Protolude.negate
         UNot -> not
         UNots -> map not
+        URot n -> fromJust . SV.fromList . rotateList n . SV.toList
+        UShift n -> fromJust . SV.fromList . shiftList False n . SV.toList
   EBinOp _ op e1 e2 ->
     let e1' = evalExpr lookupVar vars e1
         e2' = evalExpr lookupVar vars e2
@@ -312,6 +327,23 @@ evalExpr lookupVar vars expr = case expr of
   EJoin _ i ->
     let bits = evalExpr lookupVar vars i
      in SV.ifoldl (\acc _ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer _ix) else 0) 0 bits
+       
+
+rotateList :: Int -> [a] -> [a]
+rotateList steps x 
+  | steps == 0 = x
+  | otherwise = take l $ drop n $ cycle x
+  where
+    l = length x
+    n =  l - (steps `mod` l)
+
+shiftList :: a -> Int -> [a] -> [a]
+shiftList def n xs
+  | n == 0 = xs
+  | n < 0 = drop (abs n) xs <> replicate (abs n) def
+  | otherwise = 
+      let (as, _) = splitAt (length xs - n) xs
+      in replicate (abs n) def <> as
 
 instance (Hashable f, Hashable i, Num f) => Semiring (Expr i f 'TField) where
   plus = binOp_ BAdd
@@ -438,6 +470,27 @@ bundle_ b =
    in EBundle h b
 {-# INLINE bundle_ #-}
 
+rotate_ :: 
+  forall i f n ty.
+  (Hashable f) =>
+  (Hashable i) =>
+  (KnownNat n) =>
+  Expr i f ('TVec n ty) ->
+  Int ->
+  Expr i f ('TVec n ty)
+rotate_ e n = unOp_ (URot n) e
+{-# INLINE rotate_ #-}
+
+shift_ ::
+  forall i f n.
+  (Hashable f) =>
+  (Hashable i) =>
+  (KnownNat n) =>
+  Expr i f ('TVec n 'TBool) ->
+  Int ->
+  Expr i f ('TVec n 'TBool)
+shift_ e n = unOp_ (UShift n) e
+
 class BoolToField b f where
   boolToField :: b -> f
 
@@ -480,7 +533,7 @@ instance Pretty UBinOp where
     UBOr -> text "||"
     UBXor -> text "xor"
 
-data UUnOp = UUNeg | UUNot deriving (Show, Eq, Generic)
+data UUnOp = UUNeg | UUNot | UURot Int | UUShift Int deriving (Show, Eq, Generic)
 
 instance Hashable UUnOp
 
@@ -488,6 +541,8 @@ instance Pretty UUnOp where
   pretty op = case op of
     UUNeg -> text "neg"
     UUNot -> text "!"
+    UURot n -> text "rotate" <+> pretty n
+    UUShift n -> text "shift" <+> pretty n
 
 data Node i f where
   NVal :: f -> Node i f
@@ -531,6 +586,9 @@ untypeUnOp UNeg = UUNeg
 untypeUnOp UNegs = UUNeg
 untypeUnOp UNot = UUNot
 untypeUnOp UNots = UUNot
+untypeUnOp (URot n) = UURot n
+untypeUnOp (UShift n) = UUShift n
+
 {-# INLINE untypeUnOp #-}
 
 untypeBinOp :: BinOp f a -> UBinOp
@@ -550,6 +608,13 @@ untypeBinOp BXor = UBXor
 untypeBinOp BXors = UBXor
 {-# INLINE untypeBinOp #-}
 
+--instance (Hashable i, Hashable f) => Bits (Expr i f ('TVec n 'TBool)) where
+--  (.&.) = binOp_ BAnds
+--  (.|.) = binOp_ BOrs
+--  xor = binOp_ BXors
+--  complement = unOp_ UNots
+
+  
 --------------------------------------------------------------------------------
 
 reifyGraph :: Expr i f ty -> Seq (Hash, Node i f)

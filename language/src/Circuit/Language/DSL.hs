@@ -38,8 +38,8 @@ module Circuit.Language.DSL
     atIndex,
     updateIndex_,
     truncate_,
-    rotateRight,
-    rotateLeft,
+    rotate_,
+    shift_,
 
     -- * Monoids
     Any_ (..),
@@ -230,6 +230,7 @@ instance (Hashable f, Num f) => Semigroup (XOr_ f) where
 instance (Eq f, Num f, Hashable f) => Monoid (XOr_ f) where
   mempty = XOr_ $ cBool False
 
+
 --------------------------------------------------------------------------------
 
 elem_ ::
@@ -271,30 +272,3 @@ instance (Hashable f, GaloisField f, KnownNat n) => Bundle f ('TVec n 'TBool) wh
   type Unbundled f ('TVec n 'TBool) = Vector n (Signal f 'TBool)
   bundle = bundle_
   unbundle = fmap unsafeCoerce . _unBundle
-
---------------------------------------------------------------------------------
-
-rotateRight ::
-  forall n d a.
-  (KnownNat d) =>
-  (KnownNat n) =>
-  Vector n a ->
-  Finite d ->
-  Vector n a
-rotateRight xs d =
-  fromJust $ SV.fromList $ rotateList (fromIntegral d) $ SV.toList xs
-
-rotateLeft ::
-  forall n d a.
-  (KnownNat d) =>
-  (KnownNat n) =>
-  Vector n a ->
-  Finite d ->
-  Vector n a
-rotateLeft xs d =
-  fromJust $ SV.fromList $ rotateList (negate $ fromIntegral d) $ SV.toList xs
-
-rotateList :: Int -> [a] -> [a]
-rotateList steps x =
-  let n = length x
-   in take n $ drop (steps `mod` n) $ cycle x
