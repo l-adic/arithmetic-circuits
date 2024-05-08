@@ -72,7 +72,7 @@ bitIndex :: Finite (NBits Fr) -> ExprM Fr (Expr Wire Fr 'TBool)
 bitIndex i = do
   x <- var_ <$> fieldInput Public "x"
   let bits = split_ x
-  bi <- atIndex i bits
+  let bi = atIndex_  bits i
   void $ boolOutput "out" bi
   pure bi
 
@@ -90,8 +90,8 @@ setAtIndex :: Finite (NBits Fr) -> Bool -> ExprM Fr (Expr Wire Fr 'TField)
 setAtIndex i b = do
   x <- var_ <$> fieldInput Public "x"
   let bits = split_ x
-  bits' <- updateIndex_ i (cBool b) bits
-  let res = join_ bits'
+      bits' = updateAtIndex_ bits i (cBool b) 
+      res = join_ bits'
   void $ fieldOutput "out" res
   pure res
 

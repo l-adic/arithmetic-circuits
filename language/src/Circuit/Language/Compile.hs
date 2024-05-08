@@ -32,7 +32,7 @@ import Data.Vector.Sized qualified as SV
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
-
+import Lens.Micro ((.~), ix)
 -------------------------------------------------------------------------------
 -- Circuit Builder
 -------------------------------------------------------------------------------
@@ -361,6 +361,18 @@ _compile (h, expr) = case expr of
     bs <- toList <$> assertFromCache bits
     ws <- traverse addWire bs
     pure . V.singleton . AffineSource $ unsplit ws
+  NAtIndex a idx -> do
+    bs <- assertFromCache a
+    o <- addWire $ bs V.! idx
+    let source = V.singleton . WireSource $ o
+    cachResult h source
+    pure source
+  NUpdateAtIndex a idx v -> do
+    bs <- assertFromCache a
+    v' <- assertFromCache v >>= assertSingleSource
+    let source = V.fromList $ (toList bs) & ix idx .~ v'
+    cachResult h source
+    pure source
   where
     cachResult i ws = modify $ \s ->
       s {bsMemoMap = Map.insert i ws (bsMemoMap s)}

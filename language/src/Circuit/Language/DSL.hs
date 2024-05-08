@@ -35,8 +35,6 @@ module Circuit.Language.DSL
     compileWithWire,
     split_,
     join_,
-    atIndex,
-    updateIndex_,
     truncate_,
     rotate_,
     shift_,
@@ -56,12 +54,10 @@ import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
 import Circuit.Language.Compile
 import Circuit.Language.Expr
 import Data.Field.Galois (GaloisField)
-import Data.Finite (Finite)
 import Data.Maybe (fromJust)
-import Data.Vector.Sized (Vector, ix)
+import Data.Vector.Sized (Vector)
 import Data.Vector.Sized qualified as SV
 import GHC.TypeNats (type (+))
-import Lens.Micro ((.~), (^.))
 import Protolude
 import Unsafe.Coerce (unsafeCoerce)
 
@@ -159,28 +155,6 @@ boolOutput label s = do
 
 boolsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f 'TBool) -> Signal f ('TVec n 'TBool) -> ExprM f (Vector n (Var Wire f 'TBool))
 boolsOutput vs s = unsafeCoerce <$> fieldsOutput (boolToField <$> vs) (boolToField s)
-
-atIndex ::
-  (Bundle f ('TVec n ty)) =>
-  (Unbundled f (TVec n ty) ~ Vector n (Signal f ty)) =>
-  Finite n ->
-  Signal f ('TVec n ty) ->
-  ExprM f (Signal f ty)
-atIndex i b = do
-  bs <- unbundle b
-  return $ bs ^. ix i
-
-updateIndex_ ::
-  (Bundle f ('TVec n ty)) =>
-  (Unbundled f (TVec n ty) ~ Vector n (Signal f ty)) =>
-  Finite n ->
-  Signal f ty ->
-  Signal f ('TVec n ty) ->
-  ExprM f (Signal f ('TVec n ty))
-updateIndex_ p s v = do
-  bs <- unbundle v
-  let bs' = bs & ix p .~ s
-  return $ bundle bs'
 
 truncate_ ::
   forall f ty n m.

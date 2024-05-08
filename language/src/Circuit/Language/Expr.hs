@@ -27,6 +27,9 @@ module Circuit.Language.Expr
     bundle_,
     rotate_,
     shift_,
+    atIndex_,
+    updateAtIndex_,
+    zeroBits_,
     Hash (..),
     Node (..),
     UBinOp (..),
@@ -51,6 +54,9 @@ import Protolude hiding (Semiring (..))
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
 import Data.Maybe (fromJust)
+import Lens.Micro
+import Data.Finite (Finite)
+import Control.Exception (throw)
 
 data Ty = TField | TBool | TVec Nat Ty
 
@@ -191,7 +197,9 @@ data Expr i f (ty :: Ty) where
   ESplit :: (KnownNat (NBits f)) => Hash -> Expr i f 'TField -> Expr i f ('TVec (NBits f) 'TBool)
   EJoin :: (KnownNat n) => Hash -> Expr i f ('TVec n 'TBool) -> Expr i f 'TField
   EBundle :: Hash -> SV.Vector n (Expr i f ty) -> Expr i f ('TVec n ty)
-  -- EShift 
+  EAtIndex :: KnownNat n => Hash -> Expr i f ('TVec n ty) -> Finite n -> Expr i f ty
+  EUpdateAtIndex :: KnownNat n => Hash -> Expr i f ('TVec n ty) -> Finite n -> Expr i f ty -> Expr i f ('TVec n ty)
+
 
 relabelExpr :: (i -> j) -> Expr i f ty -> Expr j f ty
 relabelExpr _ (EVal h v) = EVal h v
@@ -205,6 +213,8 @@ relabelExpr f (EEq h l r) = EEq h (relabelExpr f l) (relabelExpr f r)
 relabelExpr f (ESplit h i) = ESplit h $ relabelExpr f i
 relabelExpr f (EJoin h i) = EJoin h $ relabelExpr f i
 relabelExpr f (EBundle h b) = EBundle h $ relabelExpr f <$> b
+relabelExpr f (EAtIndex h e i) = EAtIndex h (relabelExpr f e) i
+relabelExpr f (EUpdateAtIndex h e i v) = EUpdateAtIndex h (relabelExpr f e) i (relabelExpr f v)
 
 deriving instance (Show i, Show f) => Show (Expr i f ty)
 
@@ -218,6 +228,8 @@ getId (EEq i _ _) = i
 getId (ESplit i _) = i
 getId (EJoin i _) = i
 getId (EBundle i _) = i
+getId (EAtIndex i _ _) = i
+getId (EUpdateAtIndex i _ _ _) = i
 {-# INLINE getId #-}
 
 instance Eq (Expr i f ty) where
@@ -248,6 +260,8 @@ instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
           ESplit _ i -> text "split" <+> parens (pretty i)
           EBundle _ b -> text "bundle" <+> parens (pretty (SV.toList b))
           EJoin _ i -> text "join" <+> parens (pretty i)
+          EAtIndex _ a i -> pretty a <+> text "!" <> pretty (toInteger i)
+          EUpdateAtIndex _ a i v -> pretty a <+> text "!" <> pretty (toInteger i) <+> text ":=" <+> pretty v
 
 parensPrec :: Int -> Int -> Doc -> Doc
 parensPrec opPrec p = if p > opPrec then parens else identity
@@ -327,6 +341,8 @@ evalExpr lookupVar vars expr = case expr of
   EJoin _ i ->
     let bits = evalExpr lookupVar vars i
      in SV.ifoldl (\acc _ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer _ix) else 0) 0 bits
+  EAtIndex _ e i -> SV.index (evalExpr lookupVar vars e) i
+  EUpdateAtIndex _ e i v -> evalExpr lookupVar vars e & SV.ix i .~ (evalExpr lookupVar vars v)
        
 
 rotateList :: Int -> [a] -> [a]
@@ -340,6 +356,7 @@ rotateList steps x
 shiftList :: a -> Int -> [a] -> [a]
 shiftList def n xs
   | n == 0 = xs
+  | abs n >= length xs = replicate (length xs) def
   | n < 0 = drop (abs n) xs <> replicate (abs n) def
   | otherwise = 
       let (as, _) = splitAt (length xs - n) xs
@@ -491,6 +508,33 @@ shift_ ::
   Expr i f ('TVec n 'TBool)
 shift_ e n = unOp_ (UShift n) e
 
+atIndex_ :: 
+  forall i f n ty.
+  (Hashable f) =>
+  (Hashable i) =>
+  (KnownNat n) =>
+  Expr i f ('TVec n ty) ->
+  Finite n ->
+  Expr i f ty
+atIndex_ e i = 
+  let h = Hash $ hash (NAtIndex (getId e) (fromIntegral i) :: Node i f)
+   in EAtIndex h e i
+{-# INLINE atIndex_ #-}
+
+updateAtIndex_ :: 
+  forall i f n ty.
+  (Hashable f) =>
+  (Hashable i) =>
+  (KnownNat n) =>
+  Expr i f ('TVec n ty) ->
+  Finite n ->
+  Expr i f ty ->
+  Expr i f ('TVec n ty)
+updateAtIndex_ e i v =
+  let h = Hash $ hash (NUpdateAtIndex (getId e) (fromIntegral i) (getId v) :: Node i f)
+   in EUpdateAtIndex h e i v
+{-# INLINE updateAtIndex_ #-}
+
 class BoolToField b f where
   boolToField :: b -> f
 
@@ -508,6 +552,34 @@ instance BoolToField (Expr i f 'TBool) (Expr i f 'TField) where
 
 instance BoolToField (Expr i f ('TVec n 'TBool)) (Expr i f ('TVec n 'TField)) where
   boolToField = unsafeCoerce
+
+zeroBits_ :: forall n i f. (KnownNat n, Hashable i, Hashable f, GaloisField f) => Expr i f ('TVec n 'TBool)
+zeroBits_ = bundle_ $ SV.replicate @n (val_ $ ValBool 0)
+
+instance (KnownNat n, Hashable i, Hashable f, GaloisField f) => Bits (Expr i f ('TVec n 'TBool)) where
+  (.&.) = binOp_ BAnds
+  (.|.) = binOp_ BOrs
+  xor = binOp_ BXors
+  complement = unOp_ UNots
+  shift e n = shift_ e n
+  rotate e n = rotate_ e n
+  bitSizeMaybe _ = Just $ fromIntegral $ natVal (Proxy @n)
+  bitSize _ = fromIntegral $ natVal (Proxy @n)
+  isSigned _ = False
+  bit i 
+    | i < 0 || i >= fromIntegral (natVal (Proxy @n)) = throw Overflow
+    | otherwise = updateAtIndex_ zeroBits_ (fromIntegral i) (val_ $ ValBool 1)
+  setBit a i 
+    | i < 0 || i >= fromIntegral (natVal (Proxy @n)) = throw Overflow
+    | otherwise = updateAtIndex_ a (fromIntegral i) (val_ $ ValBool 1)
+  clearBit a i 
+    | i < 0 || i >= fromIntegral (natVal (Proxy @n)) = throw Overflow
+    | otherwise = updateAtIndex_ a (fromIntegral i) (val_ $ ValBool 0)
+  testBit _ _ = panic "testBit not implemented"
+  popCount = panic "popCount not implemented"
+
+instance (KnownNat n, Hashable i, Hashable f, GaloisField f) => FiniteBits (Expr i f ('TVec n 'TBool)) where
+  finiteBitSize _ = fromIntegral $ natVal (Proxy @n)
 
 -------------------------------------------------------------------------------
 
@@ -554,6 +626,8 @@ data Node i f where
   NSplit :: Hash -> Int -> Node i f
   NJoin :: Hash -> Node i f
   NBundle :: V.Vector Hash -> Node i f
+  NAtIndex ::Hash -> Int -> Node i f
+  NUpdateAtIndex :: Hash -> Int -> Hash -> Node i f
 
 instance (Pretty f, Pretty i) => Pretty (Node i f) where
   pretty (NVal f) = pretty f
@@ -565,6 +639,8 @@ instance (Pretty f, Pretty i) => Pretty (Node i f) where
   pretty (NSplit e n) = "split" <+> pretty e <+> pretty n
   pretty (NJoin e) = "join" <+> pretty e
   pretty (NBundle es) = "bundle" <+> pretty (toList es)
+  pretty (NAtIndex e idx) = pretty e <+> "!" <> pretty idx
+  pretty (NUpdateAtIndex e idx v) = pretty e <+> "!" <> pretty idx <+> ":=" <+> pretty v
 
 deriving instance (Show i, Show f) => Show (Node i f)
 
@@ -580,6 +656,8 @@ instance (Hashable i, Hashable f) => Hashable (Node i f) where
   hashWithSalt s (NSplit e n) = s `hashWithSalt` ("NSplit" :: Text) `hashWithSalt` e `hashWithSalt` n
   hashWithSalt s (NJoin e) = s `hashWithSalt` ("NJoin" :: Text) `hashWithSalt` e
   hashWithSalt s (NBundle es) = s `hashWithSalt` ("NBundle" :: Text) `hashWithSalt` toList es
+  hashWithSalt s (NAtIndex e idx) = s `hashWithSalt` ("NAtIndex" :: Text) `hashWithSalt` e `hashWithSalt` idx
+  hashWithSalt s (NUpdateAtIndex e idx v) = s `hashWithSalt` ("NUpdateAtIndex" :: Text) `hashWithSalt` e `hashWithSalt` idx `hashWithSalt` v
 
 untypeUnOp :: UnOp f a -> UUnOp
 untypeUnOp UNeg = UUNeg
@@ -607,12 +685,6 @@ untypeBinOp BOrs = UBOr
 untypeBinOp BXor = UBXor
 untypeBinOp BXors = UBXor
 {-# INLINE untypeBinOp #-}
-
---instance (Hashable i, Hashable f) => Bits (Expr i f ('TVec n 'TBool)) where
---  (.&.) = binOp_ BAnds
---  (.|.) = binOp_ BOrs
---  xor = binOp_ BXors
---  complement = unOp_ UNots
 
   
 --------------------------------------------------------------------------------
@@ -739,6 +811,33 @@ buildGraph_ expr =
             }
         b' <- SV.fromSized <$> traverse buildGraph_ b
         let n = NBundle b'
+        modify $ \s ->
+          s
+            { gbsEdges = gbsEdges s |> (h, n)
+            }
+    EAtIndex h e i -> do
+      ns <- gets gbsSharedNodes
+      unless (h `Set.member` ns) $ do
+        modify $ \s ->
+          s
+            { gbsSharedNodes = Set.insert h ns
+            }
+        e' <- buildGraph_ e
+        let n = NAtIndex e' (fromIntegral i)
+        modify $ \s ->
+          s
+            { gbsEdges = gbsEdges s |> (h, n)
+            }
+    EUpdateAtIndex h e i v -> do
+      ns <- gets gbsSharedNodes
+      unless (h `Set.member` ns) $ do
+        modify $ \s ->
+          s
+            { gbsSharedNodes = Set.insert h ns
+            }
+        e' <- buildGraph_ e
+        v' <- buildGraph_ v
+        let n = NUpdateAtIndex e' (fromIntegral i) v'
         modify $ \s ->
           s
             { gbsEdges = gbsEdges s |> (h, n)
