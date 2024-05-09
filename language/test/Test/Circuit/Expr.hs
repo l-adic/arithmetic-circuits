@@ -99,7 +99,7 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) =
     testInput circuit input =
       let a = evalExpr Map.lookup (Map.mapKeys (InputWire "" Public) input) expr
           b = arithOutput input circuit Map.! (OutputWire 1)
-       in a == V.singleton b
+       in a == Right (V.singleton b)
     arithOutput input circuit =
       evalArithCircuit
         (Map.lookup)

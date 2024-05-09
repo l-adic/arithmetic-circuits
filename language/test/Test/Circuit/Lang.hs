@@ -34,7 +34,7 @@ prop_bitsSplitJoin x =
       input = assignInputs bsVars $ Map.singleton "x" x
       w = solve bsVars bsCircuit input
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in lookupVar bsVars "out" w === Just x .&&. computed === V.singleton x
+   in lookupVar bsVars "out" w === Just x .&&. computed === Right (V.singleton x)
 
 prop_bitsSplitJoinContra :: Fr -> Fr -> Property
 prop_bitsSplitJoinContra x y =
@@ -59,7 +59,7 @@ prop_factorization x y =
       inputs = assignInputs bsVars $ Map.fromList [("n", x * y), ("a", x), ("b", y)]
       w = solve bsVars bsCircuit inputs
       computed = evalExpr IntMap.lookup inputs (relabelExpr wireName prog)
-   in lookupVar bsVars "out" w === Just 1 .&&. computed === V.singleton 1
+   in lookupVar bsVars "out" w === Just 1 .&&. computed === Right (V.singleton 1)
 
 prop_factorizationContra :: Fr -> Fr -> Fr -> Property
 prop_factorizationContra x y z =
@@ -68,7 +68,7 @@ prop_factorizationContra x y z =
         inputs = assignInputs bsVars $ Map.fromList [("n", z), ("a", x), ("b", y)]
         w = solve bsVars bsCircuit inputs
         computed = evalExpr IntMap.lookup inputs (relabelExpr wireName prog)
-     in lookupVar bsVars "out" w == Just 0 .&&. computed == V.singleton 0
+     in lookupVar bsVars "out" w == Just 0 .&&. computed == Right (V.singleton 0)
 
 bitIndex :: Finite (NBits Fr) -> ExprM Fr (Expr Wire Fr 'TBool)
 bitIndex i = do
@@ -87,7 +87,7 @@ prop_bitIndex i x =
       w = solve bsVars bsCircuit input
       expected = if testBit _x _i then 1 else 0
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in lookupVar bsVars "out" w === Just expected .&&. computed === V.singleton expected
+   in lookupVar bsVars "out" w === Just expected .&&. computed === Right (V.singleton expected)
 
 setAtIndex :: Finite (NBits Fr) -> Bool -> ExprM Fr (Expr Wire Fr 'TField)
 setAtIndex i b = do
@@ -108,7 +108,7 @@ prop_setAtIndex i x b =
       res = lookupVar bsVars "out" w
       expected = fromInteger (if b then setBit _x _i else clearBit _x _i)
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in res === Just expected .&&. computed === V.singleton expected
+   in res === Just expected .&&. computed === Right (V.singleton expected)
 
 -- TODO: investigate why this one is SCARY SLOW
 bundleUnbundle :: ExprM Fr (Expr Wire Fr 'TField)
@@ -129,7 +129,7 @@ prop_bundleUnbundle x =
       res = lookupVar bsVars "out" w
       expected = foldl (\acc i -> acc + if testBit _x i then 0 else 1) 0 [0 .. nBits - 1]
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in res === Just expected .&&. computed === V.singleton expected
+   in res === Just expected .&&. computed === Right (V.singleton expected)
 
 sharingProg :: ExprM Fr (Expr Wire Fr 'TField)
 sharingProg = do
@@ -147,7 +147,7 @@ prop_sharingProg x y =
       res = lookupVar bsVars "out" w
       expected = sum $ replicate 10 (x * y)
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in res === Just expected .&&. computed === V.singleton expected
+   in res === Just expected .&&. computed === Right (V.singleton expected)
 
 --------------------------------------------------------------------------------
 
@@ -183,7 +183,7 @@ propBoolBinopsProg top op = forAll arbInputs $ \(bs, bs') ->
    in ( all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
           zip [0 ..] expected
       )
-        .&&. computed === (V.fromList expected)
+        .&&. computed === Right (V.fromList expected)
   where
     arbInputs = ((,) <$> vectorOf 50 arbitrary <*> vectorOf 50 arbitrary)
 
@@ -227,7 +227,7 @@ propFieldBinopsProg top op = forAll arbInputs $ \(bs, bs') ->
    in ( all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
           zip [0 ..] expected
       )
-        .&&. computed === V.fromList expected
+        .&&. computed === Right (V.fromList expected)
   where
     arbInputs = ((,) <$> vectorOf 50 arbitrary <*> vectorOf 50 arbitrary)
 
@@ -270,7 +270,7 @@ propBitVecUnopsProg top op = forAll arbInputs $ \bs ->
       a = intToBitVec $ bitOp $ bitVecToInt bs
       out = fromJust $ sequence $ map (\i -> lookupVar bsVars ("out" <> show @Int i) w) [0 .. 31]
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in map boolToField expected === out .&&. map _fieldToBool out === a .&&. computed === V.fromList (map boolToField expected)
+   in map boolToField expected === out .&&. map _fieldToBool out === a .&&. computed === Right (V.fromList (map boolToField expected))
   where
     arbInputs = vectorOf 32 arbitrary
     bitOp = case top of
@@ -318,7 +318,7 @@ propFieldUnopsProg top op = forAll arbInputs $ \bs ->
    in ( all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
           zip [0 ..] expected
       )
-        .&&. computed == V.fromList expected
+        .&&. computed == Right (V.fromList expected)
   where
     arbInputs = vectorOf 50 arbitrary
 

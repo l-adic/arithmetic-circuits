@@ -274,7 +274,6 @@ parensPrec opPrec p = if p > opPrec then parens else identity
 -- | Evaluate arithmetic expressions directly, given an environment
 evalExpr ::
   forall i f vars ty.
-  (Show i) =>
   (PrimeField f) =>
   -- | lookup function for variable mapping
   (i -> vars -> Maybe f) ->
@@ -282,11 +281,9 @@ evalExpr ::
   vars ->
   -- | circuit to evaluate
   Expr i f ty ->
-  V.Vector f
+  Either (EvalError i) (V.Vector f)
 evalExpr lookupVar vars expr =
-  case evalState (runExceptT (evalGraph lookupVar vars (reifyGraph expr))) mempty of
-    Left e -> panic $ "evalExpr: " <> show e
-    Right v -> v
+  evalState (runExceptT (evalGraph lookupVar vars (reifyGraph expr))) mempty
 
 rotateList :: Int -> [a] -> [a]
 rotateList steps x
@@ -813,7 +810,7 @@ evalGraph ::
   vars ->
   -- | circuit to evaluate
   Seq (Hash, Node i f) ->
-  ExceptT (EvalError i) (State (Map Hash (V.Vector f))) (V.Vector f)
+  EvalM i f (V.Vector f)
 evalGraph lookupVar vars graph = case graph of
   Empty -> panic "empty graph"
   ns :|> n -> traverse evalNodeWithCache ns >> evalNodeWithCache n

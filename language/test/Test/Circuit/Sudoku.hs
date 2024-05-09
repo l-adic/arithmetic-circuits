@@ -122,7 +122,7 @@ spec_sudokuSolver = do
             computed = evalExpr IntMap.lookup (pubInputs `IntMap.union` privInputs) (relabelExpr wireName prog)
         verifier (map snd sol) `shouldBe` True
         (i, out) `shouldBe` (i, Just 1)
-        (i, computed) `shouldBe` (i, V.singleton 1)
+        (i, computed) `shouldBe` (i, Right $ V.singleton 1)
 
 verifier :: [Int] -> Bool
 verifier _input =
