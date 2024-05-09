@@ -15,7 +15,8 @@ module Circuit.Language.Compile
     compileWithWire,
     compileWithWires,
     exprToArithCircuit,
-    _unBundle,
+    compile,
+    addWire,
   )
 where
 
@@ -25,14 +26,13 @@ import Circuit.Language.Expr
 import Data.Field.Galois (GaloisField)
 import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
-import Data.Maybe (fromJust)
 import Data.Sequence (pattern (:|>))
 import Data.Vector qualified as V
-import Data.Vector.Sized qualified as SV
+import Lens.Micro (ix, (.~))
 import Protolude hiding (Semiring)
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
 import Unsafe.Coerce (unsafeCoerce)
-import Lens.Micro ((.~), ix)
+
 -------------------------------------------------------------------------------
 -- Circuit Builder
 -------------------------------------------------------------------------------
@@ -43,6 +43,7 @@ data BuilderState f = BuilderState
     bsVars :: CircuitVars Text,
     bsMemoMap :: Map Hash (V.Vector (SignalSource f))
   }
+  deriving (Show)
 
 defaultBuilderState :: BuilderState f
 defaultBuilderState =
@@ -238,9 +239,16 @@ compile ::
   ExprM f (V.Vector (SignalSource f))
 compile e = do
   case reifyGraph e of
-    (xs :|> x) ->
-      traverse_ _compile xs >> _compile x
+    (xs :|> x) -> do
+      traverse_ compileWithCache xs >> compileWithCache x
     _ -> panic "empty graph"
+  where
+    compileWithCache (h, x) = do
+      m <- gets bsMemoMap
+      case Map.lookup h m of
+        Just ws -> pure ws
+        Nothing -> _compile (h, x)
+    {-# INLINE compileWithCache #-}
 
 {-# SCC _compile #-}
 _compile ::
@@ -248,135 +256,132 @@ _compile ::
   (Hashable f, GaloisField f) =>
   (Hash, Node Wire f) ->
   ExprM f (V.Vector (SignalSource f))
-_compile (h, expr) = case expr of
-  NVal f -> do
-    let source = V.singleton $ AffineSource $ ConstGate f
-    cachResult h source
-    pure source
-  NVar v -> do
-    let source = V.singleton $ WireSource v
-    cachResult h source
-    pure source
-  NUnOp op e -> do
-    eOuts <- assertFromCache e
-    source <- case op of
-          UURot n ->
-            pure $ V.fromList $ rotateList n (toList eOuts)
-          UUShift n -> do
-            let f = NVal 0 :: Node Wire f
-            _f <- _compile (Hash $ hash f, f) >>= assertSingleSource
-            pure $ V.fromList $ shiftList _f n (toList eOuts)
-          UUReverse -> pure $ V.reverse eOuts
-          _ -> let f eOut = case op of
-                     UUNeg -> AffineSource $ ScalarMul (-1) (addVar eOut)
-                     UUNot -> AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar eOut))
-                in pure $ map f eOuts
-    cachResult h source
-    pure source
-  NBinOp op e1 e2 -> do
-    e1Outs <- assertFromCache e1
-    e2Outs <- assertFromCache e2
-    assertSameSourceSize e1Outs e2Outs
-    source <- for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
-      case op of
-        UBAdd -> pure . AffineSource $ Add e1Out e2Out
-        UBMul -> do
-          tmp1 <- mulToImm (AffineSource e1Out) (AffineSource e2Out)
-          pure . WireSource $ tmp1
-        UBDiv -> do
-          _recip <- imm
-          _one <- addWire $ AffineSource $ ConstGate 1
-          emit $ Mul e2Out (Var _recip) _one
-          out <- imm
-          emit $ Mul e1Out (Var _recip) out
-          pure $ WireSource out
-        -- SUB(x, y) = x + (-y)
-        UBSub -> pure . AffineSource $ Add e1Out (ScalarMul (-1) e2Out)
-        UBAnd -> do
-          tmp1 <- mulToImm (AffineSource e1Out) (AffineSource e2Out)
-          pure . WireSource $ tmp1
-        UBOr -> do
-          -- OR(input1, input2) = (input1 + input2) - (input1 * input2)
-          tmp1 <- imm
-          emit $ Mul e1Out e2Out tmp1
-          pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-1) (Var tmp1))
-        UBXor -> do
-          -- XOR(input1, input2) = (input1 + input2) - 2 * (input1 * input2)
-          tmp1 <- imm
-          emit $ Mul e1Out e2Out tmp1
-          pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
-    cachResult h source
-    pure source
-  NIf cond true false -> do
-    condOut <- addVar <$> (assertFromCache cond >>= assertSingleSource)
-    trueOuts <- assertFromCache true
-    falseOuts <- assertFromCache false
-    assertSameSourceSize trueOuts falseOuts
-    tmp1 <- imm
-    for_ (addVar <$> trueOuts) $ \trueOut ->
-      emit $ Mul condOut trueOut tmp1
-    tmp2 <- imm
-    for_ (addVar <$> falseOuts) $ \falseOut ->
-      emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
-    let source = V.singleton . AffineSource $ Add (Var tmp1) (Var tmp2)
-    cachResult h source
-    pure source
-  NEq lhs rhs -> do
-    let e = NBinOp UBSub lhs rhs
-    eqInWire <- do
-      eOut <- _compile (Hash $ hash e, e)
-      assertSingleSource eOut >>= addWire
-    eqFreeWire <- imm
-    eqOutWire <- imm
-    emit $ Equal eqInWire eqFreeWire eqOutWire
-    emit $ Boolean eqOutWire
-    -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
-    -- neqOutWire instead.
-    let source = V.singleton . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
-    cachResult h source
-    pure source
-  NSplit input n -> do
-    i <- assertFromCache input >>= assertSingleSource >>= addWire
-    outputs <- V.generateM n $ \_ -> do
-      w <- imm
-      emit $ Boolean w
-      pure w
-    emit $ Split i (V.toList outputs)
-    source <-
-      fold
-        <$> for
-          outputs
-          ( \o -> do
-              -- TODO this is kind of a hack
-              let e = NVar o
-              res <- _compile (Hash $ hash e, e)
-              pure res
-          )
-    cachResult h source
-    pure source
-  NBundle as -> do
-    source <- fold <$> traverse assertFromCache as
-    cachResult h source
-    pure source
-  NJoin bits -> do
-    bs <- toList <$> assertFromCache bits
-    ws <- traverse addWire bs
-    pure . V.singleton . AffineSource $ unsplit ws
-  NAtIndex a idx -> do
-    bs <- assertFromCache a
-    o <- addWire $ bs V.! idx
-    let source = V.singleton . WireSource $ o
-    cachResult h source
-    pure source
-  NUpdateAtIndex a idx v -> do
-    bs <- assertFromCache a
-    v' <- assertFromCache v >>= assertSingleSource
-    let source = V.fromList $ (toList bs) & ix idx .~ v'
-    cachResult h source
-    pure source
+_compile (h, expr) =
+  case expr of
+    NVal f -> do
+      let source = V.singleton $ AffineSource $ ConstGate f
+      cacheResult h source
+    NVar v -> do
+      let source = V.singleton $ WireSource v
+      cacheResult h source
+    NUnOp op e -> do
+      eOuts <- assertFromCache e
+      source <- case op of
+        UURot n ->
+          pure $ V.fromList $ rotateList n (toList eOuts)
+        UUShift n -> do
+          let f = NVal 0 :: Node Wire f
+          _f <- _compile (Hash $ hash f, f) >>= assertSingleSource
+          pure $ V.fromList $ shiftList _f n (toList eOuts)
+        UUReverse -> pure $ V.reverse eOuts
+        _ ->
+          let f eOut = case op of
+                UUNeg -> AffineSource $ ScalarMul (-1) (addVar eOut)
+                UUNot -> AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (addVar eOut))
+           in pure $ map f eOuts
+      cacheResult h source
+    NBinOp op e1 e2 -> do
+      e1Outs <- assertFromCache e1
+      e2Outs <- assertFromCache e2
+      assertSameSourceSize e1Outs e2Outs
+      source <- for (V.zip (addVar <$> e1Outs) (addVar <$> e2Outs)) $ \(e1Out, e2Out) ->
+        case op of
+          UBAdd -> pure . AffineSource $ Add e1Out e2Out
+          UBMul -> do
+            tmp1 <- mulToImm (AffineSource e1Out) (AffineSource e2Out)
+            pure . WireSource $ tmp1
+          UBDiv -> do
+            _recip <- imm
+            _one <- addWire $ AffineSource $ ConstGate 1
+            emit $ Mul e2Out (Var _recip) _one
+            out <- imm
+            emit $ Mul e1Out (Var _recip) out
+            pure $ WireSource out
+          -- SUB(x, y) = x + (-y)
+          UBSub -> pure . AffineSource $ Add e1Out (ScalarMul (-1) e2Out)
+          UBAnd -> do
+            tmp1 <- mulToImm (AffineSource e1Out) (AffineSource e2Out)
+            pure . WireSource $ tmp1
+          UBOr -> do
+            -- OR(input1, input2) = (input1 + input2) - (input1 * input2)
+            tmp1 <- imm
+            emit $ Mul e1Out e2Out tmp1
+            pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-1) (Var tmp1))
+          UBXor -> do
+            -- XOR(input1, input2) = (input1 + input2) - 2 * (input1 * input2)
+            tmp1 <- imm
+            emit $ Mul e1Out e2Out tmp1
+            pure . AffineSource $ Add (Add e1Out e2Out) (ScalarMul (-2) (Var tmp1))
+      cacheResult h source
+    NIf cond true false -> do
+      condOut <- addVar <$> (assertFromCache cond >>= assertSingleSource)
+      trueOuts <- assertFromCache true
+      falseOuts <- assertFromCache false
+      assertSameSourceSize trueOuts falseOuts
+      tmp1 <- imm
+      for_ (addVar <$> trueOuts) $ \trueOut ->
+        emit $ Mul condOut trueOut tmp1
+      tmp2 <- imm
+      for_ (addVar <$> falseOuts) $ \falseOut ->
+        emit $ Mul (Add (ConstGate 1) (ScalarMul (-1) condOut)) falseOut tmp2
+      let source = V.singleton . AffineSource $ Add (Var tmp1) (Var tmp2)
+      cacheResult h source
+    NEq lhs rhs -> do
+      let e = NBinOp UBSub lhs rhs
+      eqInWire <- do
+        eOut <- _compile (Hash $ hash e, e)
+        assertSingleSource eOut >>= addWire
+      eqFreeWire <- imm
+      eqOutWire <- imm
+      emit $ Equal eqInWire eqFreeWire eqOutWire
+      emit $ Boolean eqOutWire
+      -- eqOutWire == 0 if lhs == rhs, so we need to return 1 -
+      -- neqOutWire instead.
+      let source = V.singleton . AffineSource $ Add (ConstGate 1) (ScalarMul (-1) (Var eqOutWire))
+      cacheResult h source
+    NSplit input n -> do
+      i <- assertFromCache input >>= assertSingleSource >>= addWire
+      outputs <- V.generateM n $ \_ -> do
+        w <- imm
+        emit $ Boolean w
+        pure w
+      emit $ Split i (V.toList outputs)
+      source <-
+        fold
+          <$> for
+            outputs
+            ( \o -> do
+                -- TODO this is kind of a hack
+                let e = NVar o
+                res <- _compile (Hash $ hash e, e)
+                pure res
+            )
+      cacheResult h source
+    NBundle as -> do
+      source <- fold <$> traverse assertFromCache as
+      cacheResult h source
+    NJoin bits -> do
+      bs <- toList <$> assertFromCache bits
+      ws <- traverse addWire bs
+      let res = V.singleton . AffineSource $ unsplit ws
+      cacheResult h res
+    NAtIndex a idx -> do
+      bs <- assertFromCache a
+      o <- addWire $ bs V.! idx
+      let source = V.singleton . WireSource $ o
+      cacheResult h source
+    NUpdateAtIndex a idx v -> do
+      bs <- assertFromCache a
+      v' <- assertFromCache v >>= assertSingleSource
+      let source = V.fromList $ (toList bs) & ix idx .~ v'
+      cacheResult h source
   where
-    cachResult i ws = modify $ \s ->
-      s {bsMemoMap = Map.insert i ws (bsMemoMap s)}
+    cacheResult i ws =
+      ws
+        <$ ( modify $ \s ->
+               s {bsMemoMap = Map.insert i ws (bsMemoMap s)}
+           )
+    {-# INLINE cacheResult #-}
 
     assertFromCache i = do
       m <- gets bsMemoMap
@@ -421,15 +426,3 @@ fieldToBool e = do
   a <- compile e >>= assertSingleSource >>= addWire
   emit $ Boolean a
   pure $ unsafeCoerce e
-
-_unBundle ::
-  forall n f ty.
-  (KnownNat n) =>
-  (GaloisField f) =>
-  (Hashable f) =>
-  Expr Wire f (TVec n ty) ->
-  ExprM f (SV.Vector n (Expr Wire f 'TField))
-_unBundle b = do
-  bis <- compile b
-  ws <- traverse addWire bis
-  pure $ fromJust $ SV.toSized (var_ . VarField <$> ws)

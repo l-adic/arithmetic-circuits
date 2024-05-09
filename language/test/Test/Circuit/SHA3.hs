@@ -16,7 +16,7 @@ import Crypto.Hash as CH
 import Data.ByteArray qualified as BA
 import Data.ByteString qualified as BS
 import Data.Distributive (Distributive (distribute))
-import Data.Field.Galois (Prime, GaloisField)
+import Data.Field.Galois (GaloisField, Prime)
 import Data.Finite (Finite)
 import Data.IntMap qualified as IntMap
 import Data.Map qualified as Map
@@ -67,7 +67,7 @@ theta rows = distribute $ SV.zipWith (map . xors) toXor $ distribute rows
         (map (flip rotateL 1) $ rotateLeft @Int paritys 1)
 
 -- | Rho block permutation step
-rho :: GaloisField f => Hashable f => SHA3State f -> SHA3State f
+rho :: (GaloisField f) => (Hashable f) => SHA3State f -> SHA3State f
 rho = chunk . SV.zipWith (flip rotateL) rots . concatVec
   where
     rots :: Vector 25 Int
@@ -148,8 +148,8 @@ chi rows =
     func :: BitVector f 64 -> BitVector f 64 -> BitVector f 64 -> BitVector f 64
     func x y z = x `xors` (complement_ y `ands` z)
 
-mkBitVector :: forall a f. Hashable f => GaloisField f => (Bits a) => a -> BitVector f 64
-mkBitVector = bundle . map cBool . mkBitVector'
+mkBitVector :: forall a f. (Hashable f) => (GaloisField f) => (Bits a) => a -> BitVector f 64
+mkBitVector = bundle_ . map cBool . mkBitVector'
 
 mkBitVector' :: forall a. (Bits a) => a -> Vector 64 Bool
 mkBitVector' a = SV.generate $ \_i -> testBit a (fromIntegral _i)
@@ -228,8 +228,8 @@ sha3 ::
 sha3 dat =
   foldl (\st i -> round_ i (updateState dat st)) emptyState rounds
   where
-  rounds :: Vector 4 (Finite 24)
-  rounds = fromJust $ SV.fromList [0 .. 3]
+    rounds :: Vector 4 (Finite 24)
+    rounds = fromJust $ SV.fromList [0 .. 3]
 
 {-
 len_bytes = md_size / 8. So for 256 it's 32
@@ -245,15 +245,15 @@ sha3Packed ::
   (25 ~ (inputSize + rate)) =>
   (KnownNat rate) =>
   (KnownNat outputSize) =>
- -- Unbundled f (Vector 25 (BitVector f 64)) ~ Vector 25 (Vector 64 (Signal f TBool)) =>
+  -- Unbundled f (Vector 25 (BitVector f 64)) ~ Vector 25 (Vector 64 (Signal f TBool)) =>
   Vector inputSize (BitVector f 64) ->
-  ExprM f (BitVector f outputSize)
-sha3Packed dat = do
-  bs :: Vector 25 (Vector 64 (Signal f 'TBool)) <- traverse unbundle $ concatVec $ sha3 dat
-  ds <- truncate_ $ bundle $ SV.reverse $ concatVec $ map (swapEndian @8) bs
-  pure $ reverse_ ds
+  BitVector f outputSize
+sha3Packed dat =
+  let bs :: Vector 25 (Vector 64 (Signal f 'TBool))
+      bs = map unbundle_ $ concatVec $ sha3 dat
+      ds = truncate_ $ bundle_ $ SV.reverse $ concatVec $ map (swapEndian @8) bs
+   in reverse_ ds
   where
-
     swapEndian ::
       forall n.
       (KnownNat n) =>
@@ -272,8 +272,6 @@ sha3_384 = sha3Packed @13 @384
 
 sha3_512 = sha3Packed @9 @512
 
-
-
 chunk :: forall n m a. (KnownNat n) => (KnownNat m) => Vector (n * m) a -> Vector n (Vector m a)
 chunk v =
   let v' = SV.fromSized v
@@ -284,23 +282,25 @@ chunk v =
               Just x -> x
               Nothing -> panic ("chunk: impossible " <> show (start) <> show (length s))
 
-rotateLeft :: (Enum i, KnownNat n)
-           => SV.Vector n a
-           -> i
-           -> SV.Vector n a
-rotateLeft xs i = map ((\idx -> xs ^. SV.ix idx) . (\idx -> fromIntegral $ idx `mod` len)) (fromJust $ SV.fromList $ take len $ iterate (+1) i')
+rotateLeft ::
+  (Enum i, KnownNat n) =>
+  SV.Vector n a ->
+  i ->
+  SV.Vector n a
+rotateLeft xs i = map ((\idx -> xs ^. SV.ix idx) . (\idx -> fromIntegral $ idx `mod` len)) (fromJust $ SV.fromList $ take len $ iterate (+ 1) i')
   where
-    i'  = fromEnum i
+    i' = fromEnum i
     len = length xs
 {-# INLINE rotateLeft #-}
 
-rotateRight :: (Enum i, KnownNat n)
-            => SV.Vector n a
-            -> i
-            -> SV.Vector n a
-rotateRight xs i = map ((\idx -> xs ^. SV.ix idx) . (\idx -> fromIntegral $ idx `mod` len)) (fromJust $ SV.fromList $ take len $ iterate (+1) i')
+rotateRight ::
+  (Enum i, KnownNat n) =>
+  SV.Vector n a ->
+  i ->
+  SV.Vector n a
+rotateRight xs i = map ((\idx -> xs ^. SV.ix idx) . (\idx -> fromIntegral $ idx `mod` len)) (fromJust $ SV.fromList $ take len $ iterate (+ 1) i')
   where
-    i'  = negate (fromEnum i)
+    i' = negate (fromEnum i)
     len = length xs
 {-# INLINE rotateRight #-}
 
@@ -310,7 +310,7 @@ sha3Program :: (KnownNat n) => Proxy n -> ExprM Fr (Vector 256 (Var Wire Fr 'TBo
 sha3Program _ = do
   bits :: Vector n (Signal f 'TBool) <- SV.generateM $ \i ->
     var_ <$> boolInput Public ("b_" <> show (toInteger i))
-  res <- sha3_256 $ map bundle $ chunk bits
+  let res = sha3_256 $ map bundle_ $ chunk bits
   outs <- SV.generateM $ \i -> do
     let label = "out_" <> show (toInteger i)
     VarBool <$> freshPublicInput label
@@ -343,8 +343,8 @@ mkOutput :: [Bool] -> [Word8]
 mkOutput = map unpack . chunkList 8
 
 --
-prop_sha256 :: ArbVec -> Property
-prop_sha256 (ArbVec v) =
+propsha256 :: ArbVec -> Property
+propsha256 (ArbVec v) =
   withMaxSuccess 1 $
     prop (\x -> BA.unpack (CH.hash (BS.pack x) :: Digest SHA3_256)) 32 v
 

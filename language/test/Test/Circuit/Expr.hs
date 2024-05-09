@@ -9,6 +9,7 @@ import Circuit
 import Circuit.Language
 import Data.Field.Galois (GaloisField, Prime)
 import Data.Map qualified as Map
+import Data.Vector qualified as V
 import Protolude hiding (Show, show)
 import Test.Tasty.QuickCheck
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
@@ -98,7 +99,7 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) =
     testInput circuit input =
       let a = evalExpr Map.lookup (Map.mapKeys (InputWire "" Public) input) expr
           b = arithOutput input circuit Map.! (OutputWire 1)
-       in a == b
+       in a == V.singleton b
     arithOutput input circuit =
       evalArithCircuit
         (Map.lookup)

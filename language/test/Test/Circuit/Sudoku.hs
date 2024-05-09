@@ -16,6 +16,7 @@ import Data.Type.Nat (Nat3, Nat9)
 import Data.Type.Nat qualified as Nat
 import Data.Vec.Lazy (Vec, universe)
 import Data.Vec.Lazy qualified as Vec
+import Data.Vector qualified as V
 import Protolude hiding (head)
 import Test.Hspec (Spec, describe, it, shouldBe)
 
@@ -121,7 +122,7 @@ spec_sudokuSolver = do
             computed = evalExpr IntMap.lookup (pubInputs `IntMap.union` privInputs) (relabelExpr wireName prog)
         verifier (map snd sol) `shouldBe` True
         (i, out) `shouldBe` (i, Just 1)
-        (i, computed) `shouldBe` (i, True)
+        (i, computed) `shouldBe` (i, V.singleton 1)
 
 verifier :: [Int] -> Bool
 verifier _input =

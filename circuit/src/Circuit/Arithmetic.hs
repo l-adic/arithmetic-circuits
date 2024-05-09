@@ -82,6 +82,7 @@ wireName :: Wire -> Int
 wireName (InputWire _ _ v) = v
 wireName (IntermediateWire v) = v
 wireName (OutputWire v) = v
+{-# INLINE wireName #-}
 
 -- | An arithmetic circuit with a single multiplication gate.
 data Gate f i

@@ -4,7 +4,6 @@
 -- | Surface language
 module Circuit.Language.DSL
   ( Signal,
-    Bundle (..),
     cField,
     cBool,
     add_,
@@ -38,6 +37,7 @@ module Circuit.Language.DSL
     truncate_,
     rotate_,
     shift_,
+    unbundle_,
 
     -- * Monoids
     Any_ (..),
@@ -158,17 +158,13 @@ boolsOutput vs s = unsafeCoerce <$> fieldsOutput (boolToField <$> vs) (boolToFie
 
 truncate_ ::
   forall f ty n m.
-  (Bundle f ('TVec (m + n) ty)) =>
-  (Bundle f ('TVec m ty)) =>
-  (Unbundled f (TVec (m + n) ty) ~ Vector (m + n) (Signal f ty)) =>
-  (Unbundled f (TVec m ty) ~ Vector m (Signal f ty)) =>
   (KnownNat m) =>
+  (KnownNat (m + n)) =>
+  (Hashable f) =>
   Signal f ('TVec (m + n) ty) ->
-  ExprM f (Signal f ('TVec m ty))
+  Signal f ('TVec m ty)
 truncate_ v = do
-  as <- unbundle v
-  let bs = SV.take @m as
-  return $ bundle bs
+  bundle_ $ SV.take @m $ unbundle_ v
 
 --------------------------------------------------------------------------------
 
@@ -204,7 +200,6 @@ instance (Hashable f, Num f) => Semigroup (XOr_ f) where
 instance (Eq f, Num f, Hashable f) => Monoid (XOr_ f) where
   mempty = XOr_ $ cBool False
 
-
 --------------------------------------------------------------------------------
 
 elem_ ::
@@ -232,17 +227,10 @@ any_ f = unAny_ . foldMap (Any_ . f)
 
 --------------------------------------------------------------------------------
 
-class Bundle f a where
-  type Unbundled f a = r | r -> a
-  bundle :: Unbundled f a -> Signal f a
-  unbundle :: Signal f a -> ExprM f (Unbundled f a)
-
-instance (Hashable f, GaloisField f, KnownNat n) => Bundle f ('TVec n 'TField) where
-  type Unbundled f ('TVec n 'TField) = Vector n (Signal f 'TField)
-  bundle = bundle_
-  unbundle = _unBundle
-
-instance (Hashable f, GaloisField f, KnownNat n) => Bundle f ('TVec n 'TBool) where
-  type Unbundled f ('TVec n 'TBool) = Vector n (Signal f 'TBool)
-  bundle = bundle_
-  unbundle = fmap unsafeCoerce . _unBundle
+unbundle_ ::
+  forall n f ty.
+  (KnownNat n) =>
+  (Hashable f) =>
+  Expr Wire f (TVec n ty) ->
+  SV.Vector n (Expr Wire f ty)
+unbundle_ b = SV.generate $ atIndex_ b
