@@ -1,4 +1,3 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PatternSynonyms #-}
 
 module Circuit.Language.Compile
@@ -15,8 +14,6 @@ module Circuit.Language.Compile
     compileWithWire,
     compileWithWires,
     exprToArithCircuit,
-    compile,
-    addWire,
   )
 where
 

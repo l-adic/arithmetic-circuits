@@ -1,5 +1,3 @@
-{-# LANGUAGE DataKinds #-}
-
 module Circuit.Bench where
 
 import Circuit

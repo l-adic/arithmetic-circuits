@@ -1,5 +1,3 @@
-{-# LANGUAGE DataKinds #-}
-
 module Test.Circuit.Sudoku where
 
 import Circuit

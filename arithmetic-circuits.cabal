@@ -31,12 +31,13 @@ common extensions
     GADTs
     LambdaCase
     OverloadedStrings
+    DataKinds
     DeriveAnyClass
     DerivingVia
     RecordWildCards
 
 common warnings
-  ghc-options: -Wall -Wredundant-constraints
+  ghc-options: -Wall -Wredundant-constraints -Werror
 
 
 common deps

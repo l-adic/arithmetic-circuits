@@ -1,5 +1,3 @@
-{-# LANGUAGE DataKinds #-}
-
 module Test.R1CS.Circom where
 
 import Data.Binary (decode, decodeFileOrFail, encode)

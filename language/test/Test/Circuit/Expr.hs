@@ -1,8 +1,3 @@
-{-# LANGUAGE DataKinds #-}
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-
-{-# HLINT ignore "Use <$>" #-}
-
 module Test.Circuit.Expr where
 
 import Circuit
