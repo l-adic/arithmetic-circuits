@@ -1,6 +1,3 @@
-{-# LANGUAGE DataKinds #-}
-{-# OPTIONS_GHC -fno-warn-orphans #-}
-
 module Main where
 
 import Circuit

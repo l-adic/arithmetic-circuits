@@ -1,10 +1,8 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeFamilyDependencies #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | Surface language
 module Circuit.Language.DSL
   ( Signal,
-    Bundle (..),
     cField,
     cBool,
     add_,
@@ -35,11 +33,10 @@ module Circuit.Language.DSL
     compileWithWire,
     split_,
     join_,
-    atIndex,
-    updateIndex_,
     truncate_,
-    rotateRight,
-    rotateLeft,
+    rotate_,
+    shift_,
+    unbundle_,
 
     -- * Monoids
     Any_ (..),
@@ -56,12 +53,10 @@ import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
 import Circuit.Language.Compile
 import Circuit.Language.Expr
 import Data.Field.Galois (GaloisField)
-import Data.Finite (Finite)
 import Data.Maybe (fromJust)
-import Data.Vector.Sized (Vector, ix)
+import Data.Vector.Sized (Vector)
 import Data.Vector.Sized qualified as SV
 import GHC.TypeNats (type (+))
-import Lens.Micro ((.~), (^.))
 import Protolude
 import Unsafe.Coerce (unsafeCoerce)
 
@@ -160,41 +155,15 @@ boolOutput label s = do
 boolsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f 'TBool) -> Signal f ('TVec n 'TBool) -> ExprM f (Vector n (Var Wire f 'TBool))
 boolsOutput vs s = unsafeCoerce <$> fieldsOutput (boolToField <$> vs) (boolToField s)
 
-atIndex ::
-  (Bundle f ('TVec n ty)) =>
-  (Unbundled f (TVec n ty) ~ Vector n (Signal f ty)) =>
-  Finite n ->
-  Signal f ('TVec n ty) ->
-  ExprM f (Signal f ty)
-atIndex i b = do
-  bs <- unbundle b
-  return $ bs ^. ix i
-
-updateIndex_ ::
-  (Bundle f ('TVec n ty)) =>
-  (Unbundled f (TVec n ty) ~ Vector n (Signal f ty)) =>
-  Finite n ->
-  Signal f ty ->
-  Signal f ('TVec n ty) ->
-  ExprM f (Signal f ('TVec n ty))
-updateIndex_ p s v = do
-  bs <- unbundle v
-  let bs' = bs & ix p .~ s
-  return $ bundle bs'
-
 truncate_ ::
   forall f ty n m.
-  (Bundle f ('TVec (m + n) ty)) =>
-  (Bundle f ('TVec m ty)) =>
-  (Unbundled f (TVec (m + n) ty) ~ Vector (m + n) (Signal f ty)) =>
-  (Unbundled f (TVec m ty) ~ Vector m (Signal f ty)) =>
   (KnownNat m) =>
+  (KnownNat (m + n)) =>
+  (Hashable f) =>
   Signal f ('TVec (m + n) ty) ->
-  ExprM f (Signal f ('TVec m ty))
+  Signal f ('TVec m ty)
 truncate_ v = do
-  as <- unbundle v
-  let bs = SV.take @m as
-  return $ bundle bs
+  bundle_ $ SV.take @m $ unbundle_ v
 
 --------------------------------------------------------------------------------
 
@@ -257,44 +226,10 @@ any_ f = unAny_ . foldMap (Any_ . f)
 
 --------------------------------------------------------------------------------
 
-class Bundle f a where
-  type Unbundled f a = r | r -> a
-  bundle :: Unbundled f a -> Signal f a
-  unbundle :: Signal f a -> ExprM f (Unbundled f a)
-
-instance (Hashable f, GaloisField f, KnownNat n) => Bundle f ('TVec n 'TField) where
-  type Unbundled f ('TVec n 'TField) = Vector n (Signal f 'TField)
-  bundle = bundle_
-  unbundle = _unBundle
-
-instance (Hashable f, GaloisField f, KnownNat n) => Bundle f ('TVec n 'TBool) where
-  type Unbundled f ('TVec n 'TBool) = Vector n (Signal f 'TBool)
-  bundle = bundle_
-  unbundle = fmap unsafeCoerce . _unBundle
-
---------------------------------------------------------------------------------
-
-rotateRight ::
-  forall n d a.
-  (KnownNat d) =>
+unbundle_ ::
+  forall n f ty.
   (KnownNat n) =>
-  Vector n a ->
-  Finite d ->
-  Vector n a
-rotateRight xs d =
-  fromJust $ SV.fromList $ rotateList (fromIntegral d) $ SV.toList xs
-
-rotateLeft ::
-  forall n d a.
-  (KnownNat d) =>
-  (KnownNat n) =>
-  Vector n a ->
-  Finite d ->
-  Vector n a
-rotateLeft xs d =
-  fromJust $ SV.fromList $ rotateList (negate $ fromIntegral d) $ SV.toList xs
-
-rotateList :: Int -> [a] -> [a]
-rotateList steps x =
-  let n = length x
-   in take n $ drop (steps `mod` n) $ cycle x
+  (Hashable f) =>
+  Expr Wire f (TVec n ty) ->
+  SV.Vector n (Expr Wire f ty)
+unbundle_ b = SV.generate $ atIndex_ b

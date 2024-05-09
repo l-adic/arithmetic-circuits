@@ -1,8 +1,6 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Circuit.Language.Expr
   ( Val (..),
@@ -25,6 +23,12 @@ module Circuit.Language.Expr
     split_,
     join_,
     bundle_,
+    rotate_,
+    shift_,
+    atIndex_,
+    updateAtIndex_,
+    reverse_,
+    zeroBits_,
     Hash (..),
     Node (..),
     UBinOp (..),
@@ -32,16 +36,22 @@ module Circuit.Language.Expr
     reifyGraph,
     BoolToField (..),
     relabelExpr,
+    rotateList,
+    shiftList,
   )
 where
 
+import Control.Exception (throw)
 import Data.Field.Galois (GaloisField, Prime, PrimeField (fromP))
+import Data.Finite (Finite)
+import Data.Map qualified as Map
 import Data.Semiring (Ring (..), Semiring (..))
-import Data.Sequence ((|>))
+import Data.Sequence ((|>), pattern Empty, pattern (:|>))
 import Data.Set qualified as Set
 import Data.Vector qualified as V
 import Data.Vector.Sized qualified as SV
 import GHC.TypeNats (Log2, type (+))
+import Lens.Micro (ix, (.~))
 import Numeric (showHex)
 import Protolude hiding (Semiring (..))
 import Text.PrettyPrint.Leijen.Text hiding ((<$>))
@@ -93,6 +103,9 @@ data UnOp f (ty :: Ty) where
   UNegs :: UnOp f ('TVec n 'TField)
   UNot :: UnOp f 'TBool
   UNots :: UnOp f ('TVec n 'TBool)
+  URot :: (KnownNat n) => Int -> UnOp f ('TVec n ty)
+  UShift :: (KnownNat n) => Int -> UnOp f ('TVec n 'TBool)
+  UReverse :: (KnownNat n) => UnOp f ('TVec n ty)
 
 deriving instance (Show f) => Show (UnOp f a)
 
@@ -104,6 +117,9 @@ instance Pretty (UnOp f a) where
     UNegs -> text "negs"
     UNot -> text "!"
     UNots -> text "nots"
+    URot n -> text "rotate" <+> pretty n
+    UShift n -> text "shift" <+> pretty n
+    UReverse -> text "reverse"
 
 data BinOp f (a :: Ty) where
   BAdd :: BinOp f 'TField
@@ -182,6 +198,8 @@ data Expr i f (ty :: Ty) where
   ESplit :: (KnownNat (NBits f)) => Hash -> Expr i f 'TField -> Expr i f ('TVec (NBits f) 'TBool)
   EJoin :: (KnownNat n) => Hash -> Expr i f ('TVec n 'TBool) -> Expr i f 'TField
   EBundle :: Hash -> SV.Vector n (Expr i f ty) -> Expr i f ('TVec n ty)
+  EAtIndex :: (KnownNat n) => Hash -> Expr i f ('TVec n ty) -> Finite n -> Expr i f ty
+  EUpdateAtIndex :: (KnownNat n) => Hash -> Expr i f ('TVec n ty) -> Finite n -> Expr i f ty -> Expr i f ('TVec n ty)
 
 relabelExpr :: (i -> j) -> Expr i f ty -> Expr j f ty
 relabelExpr _ (EVal h v) = EVal h v
@@ -195,6 +213,8 @@ relabelExpr f (EEq h l r) = EEq h (relabelExpr f l) (relabelExpr f r)
 relabelExpr f (ESplit h i) = ESplit h $ relabelExpr f i
 relabelExpr f (EJoin h i) = EJoin h $ relabelExpr f i
 relabelExpr f (EBundle h b) = EBundle h $ relabelExpr f <$> b
+relabelExpr f (EAtIndex h e i) = EAtIndex h (relabelExpr f e) i
+relabelExpr f (EUpdateAtIndex h e i v) = EUpdateAtIndex h (relabelExpr f e) i (relabelExpr f v)
 
 deriving instance (Show i, Show f) => Show (Expr i f ty)
 
@@ -208,7 +228,12 @@ getId (EEq i _ _) = i
 getId (ESplit i _) = i
 getId (EJoin i _) = i
 getId (EBundle i _) = i
+getId (EAtIndex i _ _) = i
+getId (EUpdateAtIndex i _ _ _) = i
 {-# INLINE getId #-}
+
+instance Eq (Expr i f ty) where
+  a == b = getId a == getId b
 
 instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
   pretty = prettyPrec 0
@@ -235,6 +260,8 @@ instance (Pretty f, Pretty i) => Pretty (Expr i f ty) where
           ESplit _ i -> text "split" <+> parens (pretty i)
           EBundle _ b -> text "bundle" <+> parens (pretty (SV.toList b))
           EJoin _ i -> text "join" <+> parens (pretty i)
+          EAtIndex _ a i -> pretty a <+> text "!" <> pretty (toInteger i)
+          EUpdateAtIndex _ a i v -> pretty a <+> text "!" <> pretty (toInteger i) <+> text ":=" <+> pretty v
 
 parensPrec :: Int -> Int -> Doc -> Doc
 parensPrec opPrec p = if p > opPrec then parens else identity
@@ -244,7 +271,6 @@ parensPrec opPrec p = if p > opPrec then parens else identity
 -- | Evaluate arithmetic expressions directly, given an environment
 evalExpr ::
   forall i f vars ty.
-  (Show i) =>
   (PrimeField f) =>
   -- | lookup function for variable mapping
   (i -> vars -> Maybe f) ->
@@ -252,66 +278,26 @@ evalExpr ::
   vars ->
   -- | circuit to evaluate
   Expr i f ty ->
-  HType f ty
-evalExpr lookupVar vars expr = case expr of
-  EVal _ v -> case v of
-    ValBool b -> b == 1
-    ValField f -> f
-  EVar _ _var -> do
-    case _var of
-      VarField i -> do
-        case lookupVar i vars of
-          Just v -> v
-          Nothing -> panic $ "TODO: incorrect field var lookup: " <> Protolude.show i
-      VarBool i ->
-        case lookupVar i vars of
-          Just v -> v == 1
-          Nothing -> panic $ "TODO: incorrect bool var lookup: " <> Protolude.show i
-  EUnOp _ op e1 ->
-    let e1' = evalExpr lookupVar vars e1
-     in apply e1'
-    where
-      apply = case op of
-        UNeg -> Protolude.negate
-        UNegs -> map Protolude.negate
-        UNot -> not
-        UNots -> map not
-  EBinOp _ op e1 e2 ->
-    let e1' = evalExpr lookupVar vars e1
-        e2' = evalExpr lookupVar vars e2
-     in apply e1' e2'
-    where
-      apply = case op of
-        BAdd -> (+)
-        BAdds -> SV.zipWith (+)
-        BSub -> (-)
-        BSubs -> SV.zipWith (-)
-        BMul -> (*)
-        BMuls -> SV.zipWith (*)
-        BDiv -> (/)
-        BDivs -> SV.zipWith (/)
-        BAnd -> (&&)
-        BAnds -> SV.zipWith (&&)
-        BOr -> (||)
-        BOrs -> SV.zipWith (||)
-        BXor -> \x y -> (x || y) && not (x && y)
-        BXors -> SV.zipWith (\x y -> (x || y) && not (x && y))
-  EIf _ b true false ->
-    let cond = evalExpr lookupVar vars b
-     in if cond
-          then evalExpr lookupVar vars true
-          else evalExpr lookupVar vars false
-  EEq _ lhs rhs ->
-    let lhs' = evalExpr lookupVar vars lhs
-        rhs' = evalExpr lookupVar vars rhs
-     in lhs' == rhs'
-  ESplit _ i ->
-    let x = evalExpr lookupVar vars i
-     in SV.generate $ \_ix -> testBit (fromP x) (fromIntegral _ix)
-  EBundle _ as -> map (evalExpr lookupVar vars) as
-  EJoin _ i ->
-    let bits = evalExpr lookupVar vars i
-     in SV.ifoldl (\acc _ix b -> acc + if b then fromInteger (2 ^ fromIntegral @_ @Integer _ix) else 0) 0 bits
+  Either (EvalError i) (V.Vector f)
+evalExpr lookupVar vars expr =
+  evalState (runExceptT (evalGraph lookupVar vars (reifyGraph expr))) mempty
+
+rotateList :: Int -> [a] -> [a]
+rotateList steps x
+  | steps == 0 = x
+  | otherwise = take l $ drop n $ cycle x
+  where
+    l = length x
+    n = l - (steps `mod` l)
+
+shiftList :: a -> Int -> [a] -> [a]
+shiftList def n xs
+  | n == 0 = xs
+  | abs n >= length xs = replicate (length xs) def
+  | n < 0 = drop (abs n) xs <> replicate (abs n) def
+  | otherwise =
+      let (as, _) = splitAt (length xs - n) xs
+       in replicate (abs n) def <> as
 
 instance (Hashable f, Hashable i, Num f) => Semiring (Expr i f 'TField) where
   plus = binOp_ BAdd
@@ -438,6 +424,63 @@ bundle_ b =
    in EBundle h b
 {-# INLINE bundle_ #-}
 
+rotate_ ::
+  forall i f n ty.
+  (Hashable f) =>
+  (Hashable i) =>
+  (KnownNat n) =>
+  Expr i f ('TVec n ty) ->
+  Int ->
+  Expr i f ('TVec n ty)
+rotate_ e n = unOp_ (URot n) e
+{-# INLINE rotate_ #-}
+
+shift_ ::
+  forall i f n.
+  (Hashable f) =>
+  (Hashable i) =>
+  (KnownNat n) =>
+  Expr i f ('TVec n 'TBool) ->
+  Int ->
+  Expr i f ('TVec n 'TBool)
+shift_ e n = unOp_ (UShift n) e
+
+atIndex_ ::
+  forall i f n ty.
+  (Hashable f) =>
+  (Hashable i) =>
+  (KnownNat n) =>
+  Expr i f ('TVec n ty) ->
+  Finite n ->
+  Expr i f ty
+atIndex_ e i =
+  let h = Hash $ hash (NAtIndex (getId e) (fromIntegral i) :: Node i f)
+   in EAtIndex h e i
+{-# INLINE atIndex_ #-}
+
+reverse_ ::
+  forall i f n.
+  (Hashable f) =>
+  (Hashable i) =>
+  (KnownNat n) =>
+  Expr i f ('TVec n 'TBool) ->
+  Expr i f ('TVec n 'TBool)
+reverse_ = unOp_ UReverse
+
+updateAtIndex_ ::
+  forall i f n ty.
+  (Hashable f) =>
+  (Hashable i) =>
+  (KnownNat n) =>
+  Expr i f ('TVec n ty) ->
+  Finite n ->
+  Expr i f ty ->
+  Expr i f ('TVec n ty)
+updateAtIndex_ e i v =
+  let h = Hash $ hash (NUpdateAtIndex (getId e) (fromIntegral i) (getId v) :: Node i f)
+   in EUpdateAtIndex h e i v
+{-# INLINE updateAtIndex_ #-}
+
 class BoolToField b f where
   boolToField :: b -> f
 
@@ -455,6 +498,34 @@ instance BoolToField (Expr i f 'TBool) (Expr i f 'TField) where
 
 instance BoolToField (Expr i f ('TVec n 'TBool)) (Expr i f ('TVec n 'TField)) where
   boolToField = unsafeCoerce
+
+zeroBits_ :: forall n i f. (KnownNat n, Hashable i, Hashable f, GaloisField f) => Expr i f ('TVec n 'TBool)
+zeroBits_ = bundle_ $ SV.replicate @n (val_ $ ValBool 0)
+
+instance (KnownNat n, Hashable i, Hashable f, GaloisField f) => Bits (Expr i f ('TVec n 'TBool)) where
+  (.&.) = binOp_ BAnds
+  (.|.) = binOp_ BOrs
+  xor = binOp_ BXors
+  complement = unOp_ UNots
+  shift e n = shift_ e n
+  rotate e n = rotate_ e n
+  bitSizeMaybe _ = Just $ fromIntegral $ natVal (Proxy @n)
+  bitSize _ = fromIntegral $ natVal (Proxy @n)
+  isSigned _ = False
+  bit i
+    | i < 0 || i >= fromIntegral (natVal (Proxy @n)) = throw Overflow
+    | otherwise = updateAtIndex_ zeroBits_ (fromIntegral i) (val_ $ ValBool 1)
+  setBit a i
+    | i < 0 || i >= fromIntegral (natVal (Proxy @n)) = throw Overflow
+    | otherwise = updateAtIndex_ a (fromIntegral i) (val_ $ ValBool 1)
+  clearBit a i
+    | i < 0 || i >= fromIntegral (natVal (Proxy @n)) = throw Overflow
+    | otherwise = updateAtIndex_ a (fromIntegral i) (val_ $ ValBool 0)
+  testBit _ _ = panic "testBit not implemented"
+  popCount = panic "popCount not implemented"
+
+instance (KnownNat n, Hashable i, Hashable f, GaloisField f) => FiniteBits (Expr i f ('TVec n 'TBool)) where
+  finiteBitSize _ = fromIntegral $ natVal (Proxy @n)
 
 -------------------------------------------------------------------------------
 
@@ -480,7 +551,7 @@ instance Pretty UBinOp where
     UBOr -> text "||"
     UBXor -> text "xor"
 
-data UUnOp = UUNeg | UUNot deriving (Show, Eq, Generic)
+data UUnOp = UUNeg | UUNot | UURot Int | UUShift Int | UUReverse deriving (Show, Eq, Generic)
 
 instance Hashable UUnOp
 
@@ -488,6 +559,9 @@ instance Pretty UUnOp where
   pretty op = case op of
     UUNeg -> text "neg"
     UUNot -> text "!"
+    UURot n -> text "rotate" <+> pretty n
+    UUShift n -> text "shift" <+> pretty n
+    UUReverse -> text "reverse"
 
 data Node i f where
   NVal :: f -> Node i f
@@ -499,6 +573,8 @@ data Node i f where
   NSplit :: Hash -> Int -> Node i f
   NJoin :: Hash -> Node i f
   NBundle :: V.Vector Hash -> Node i f
+  NAtIndex :: Hash -> Int -> Node i f
+  NUpdateAtIndex :: Hash -> Int -> Hash -> Node i f
 
 instance (Pretty f, Pretty i) => Pretty (Node i f) where
   pretty (NVal f) = pretty f
@@ -510,6 +586,8 @@ instance (Pretty f, Pretty i) => Pretty (Node i f) where
   pretty (NSplit e n) = "split" <+> pretty e <+> pretty n
   pretty (NJoin e) = "join" <+> pretty e
   pretty (NBundle es) = "bundle" <+> pretty (toList es)
+  pretty (NAtIndex e idx) = pretty e <+> "!" <> pretty idx
+  pretty (NUpdateAtIndex e idx v) = pretty e <+> "!" <> pretty idx <+> ":=" <+> pretty v
 
 deriving instance (Show i, Show f) => Show (Node i f)
 
@@ -525,12 +603,17 @@ instance (Hashable i, Hashable f) => Hashable (Node i f) where
   hashWithSalt s (NSplit e n) = s `hashWithSalt` ("NSplit" :: Text) `hashWithSalt` e `hashWithSalt` n
   hashWithSalt s (NJoin e) = s `hashWithSalt` ("NJoin" :: Text) `hashWithSalt` e
   hashWithSalt s (NBundle es) = s `hashWithSalt` ("NBundle" :: Text) `hashWithSalt` toList es
+  hashWithSalt s (NAtIndex e idx) = s `hashWithSalt` ("NAtIndex" :: Text) `hashWithSalt` e `hashWithSalt` idx
+  hashWithSalt s (NUpdateAtIndex e idx v) = s `hashWithSalt` ("NUpdateAtIndex" :: Text) `hashWithSalt` e `hashWithSalt` idx `hashWithSalt` v
 
 untypeUnOp :: UnOp f a -> UUnOp
 untypeUnOp UNeg = UUNeg
 untypeUnOp UNegs = UUNeg
 untypeUnOp UNot = UUNot
 untypeUnOp UNots = UUNot
+untypeUnOp (URot n) = UURot n
+untypeUnOp (UShift n) = UUShift n
+untypeUnOp UReverse = UUReverse
 {-# INLINE untypeUnOp #-}
 
 untypeBinOp :: BinOp f a -> UBinOp
@@ -678,3 +761,152 @@ buildGraph_ expr =
           s
             { gbsEdges = gbsEdges s |> (h, n)
             }
+    EAtIndex h e i -> do
+      ns <- gets gbsSharedNodes
+      unless (h `Set.member` ns) $ do
+        modify $ \s ->
+          s
+            { gbsSharedNodes = Set.insert h ns
+            }
+        e' <- buildGraph_ e
+        let n = NAtIndex e' (fromIntegral i)
+        modify $ \s ->
+          s
+            { gbsEdges = gbsEdges s |> (h, n)
+            }
+    EUpdateAtIndex h e i v -> do
+      ns <- gets gbsSharedNodes
+      unless (h `Set.member` ns) $ do
+        modify $ \s ->
+          s
+            { gbsSharedNodes = Set.insert h ns
+            }
+        e' <- buildGraph_ e
+        v' <- buildGraph_ v
+        let n = NUpdateAtIndex e' (fromIntegral i) v'
+        modify $ \s ->
+          s
+            { gbsEdges = gbsEdges s |> (h, n)
+            }
+
+--------------------------------------------------------------------------------
+
+data EvalError i
+  = MissingVar i
+  | TypeErr Text
+  | MissingFromCache Hash
+  deriving (Show, Eq)
+
+type EvalM i f = ExceptT (EvalError i) (State (Map Hash (V.Vector f)))
+
+evalGraph ::
+  forall i f vars.
+  (PrimeField f) =>
+  -- | lookup function for variable mapping
+  (i -> vars -> Maybe f) ->
+  -- | variables
+  vars ->
+  -- | circuit to evaluate
+  Seq (Hash, Node i f) ->
+  EvalM i f (V.Vector f)
+evalGraph lookupVar vars graph = case graph of
+  Empty -> panic "empty graph"
+  ns :|> n -> traverse eval ns >> eval n
+  where
+    eval (h, n) = evalNode lookupVar vars h n
+
+evalNode ::
+  (PrimeField f) =>
+  (i -> vars -> Maybe f) ->
+  -- | variables
+  vars ->
+  -- | circuit to evaluate
+  Hash ->
+  Node i f ->
+  EvalM i f (V.Vector f)
+evalNode lookupVar vars h node =
+  case node of
+    NVal f -> cachResult h (V.singleton f)
+    NVar i -> case lookupVar i vars of
+      Just v -> cachResult h (V.singleton v)
+      Nothing -> throwError $ MissingVar i
+    NUnOp op e -> do
+      e' <- assertFromCache e
+      res <- case op of
+        UUNeg -> pure $ fmap Protolude.negate $ e'
+        UUNot -> pure $ fmap (\x -> 1 - x) $ e'
+        UURot n ->
+          pure $ V.fromList . rotateList n $ V.toList e'
+        UUShift n ->
+          pure $ V.fromList . shiftList 0 n $ V.toList e'
+        UUReverse ->
+          pure $ V.reverse e'
+      cachResult h res
+    NBinOp op e1 e2 -> do
+      e1' <- assertFromCache e1
+      e2' <- assertFromCache e2
+      assertSameLength e1' e2'
+      let apply = case op of
+            UBAdd -> (+)
+            UBSub -> (-)
+            UBMul -> (*)
+            UBDiv -> (/)
+            UBAnd -> \x y -> if x == 1 && y == 1 then 1 else 0
+            UBOr -> \x y -> if x == 1 || y == 1 then 1 else 0
+            UBXor -> \x y -> if x /= y then 1 else 0
+      let res = V.zipWith apply e1' e2'
+      cachResult h res
+    NIf b t f -> do
+      b' <- assertField =<< assertFromCache b
+      t' <- assertFromCache t
+      f' <- assertFromCache f
+      let res = if b' == 1 then t' else f'
+      cachResult h res
+    NEq l r -> do
+      l' <- assertFromCache l
+      r' <- assertFromCache r
+      res <- do
+        isEq <- (==) <$> assertField l' <*> assertField r'
+        pure . V.singleton $ if isEq then 1 else 0
+      cachResult h res
+    NSplit e n -> do
+      e' <- assertField =<< assertFromCache e
+      let res = V.generate n $ \_ix -> boolToField $ testBit (fromP e') (fromIntegral _ix)
+      cachResult h res
+    NJoin e -> do
+      e' <- assertFromCache e
+      let res = V.singleton $ V.ifoldl' (\acc i b -> acc + if b == 1 then 2 ^ i else 0) 0 e'
+      cachResult h res
+    NBundle es -> do
+      res <- for es $ \e ->
+        assertFromCache e >>= assertField
+      cachResult h res
+    NAtIndex e idx -> do
+      e' <- assertFromCache e
+      let res = e' V.! idx
+      cachResult h $ V.singleton res
+    NUpdateAtIndex e idx v -> do
+      e' <- toList <$> assertFromCache e
+      v' <- assertField =<< assertFromCache v
+      let res = V.fromList $ e' & ix idx .~ v'
+      cachResult h res
+  where
+    cachResult i v = v <$ modify (Map.insert i v)
+    {-# INLINE cachResult #-}
+
+    assertSameLength x y = do
+      when (V.length x /= V.length y) $ throwError $ TypeErr "vectors must have the same length"
+    {-# INLINE assertSameLength #-}
+
+    assertField :: V.Vector f -> EvalM i f f
+    assertField x
+      | V.length x == 1 = pure $ V.head x
+      | otherwise = throwError $ TypeErr "expected field, got vector"
+
+    assertFromCache :: Hash -> EvalM i f (V.Vector f)
+    assertFromCache i = do
+      m <- get
+      case Map.lookup i m of
+        Just ws -> pure ws
+        Nothing -> throwError $ MissingFromCache i
+    {-# INLINE assertFromCache #-}
