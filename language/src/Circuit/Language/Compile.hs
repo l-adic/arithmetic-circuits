@@ -237,15 +237,8 @@ compile ::
 compile e = do
   case reifyGraph e of
     (xs :|> x) -> do
-      traverse_ compileWithCache xs >> compileWithCache x
+      traverse_ _compile xs >> _compile x
     _ -> panic "empty graph"
-  where
-    compileWithCache (h, x) = do
-      m <- gets bsMemoMap
-      case Map.lookup h m of
-        Just ws -> pure ws
-        Nothing -> _compile (h, x)
-    {-# INLINE compileWithCache #-}
 
 {-# SCC _compile #-}
 _compile ::

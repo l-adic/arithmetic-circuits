@@ -794,6 +794,7 @@ buildGraph_ expr =
 data EvalError i
   = MissingVar i
   | TypeErr Text
+  | MissingFromCache Hash
   deriving (Show, Eq)
 
 type EvalM i f = ExceptT (EvalError i) (State (Map Hash (V.Vector f)))
@@ -810,14 +811,9 @@ evalGraph ::
   EvalM i f (V.Vector f)
 evalGraph lookupVar vars graph = case graph of
   Empty -> panic "empty graph"
-  ns :|> n -> traverse evalNodeWithCache ns >> evalNodeWithCache n
+  ns :|> n -> traverse eval ns >> eval n
   where
-    evalNodeWithCache (h, n) = do
-      m <- get
-      case Map.lookup h m of
-        Just ws -> pure ws
-        Nothing -> evalNode lookupVar vars h n
-    {-# INLINE evalNodeWithCache #-}
+    eval (h, n) = evalNode lookupVar vars h n
 
 evalNode ::
   (PrimeField f) =>
@@ -912,5 +908,5 @@ evalNode lookupVar vars h node =
       m <- get
       case Map.lookup i m of
         Just ws -> pure ws
-        Nothing -> panic ""
+        Nothing -> throwError $ MissingFromCache i
     {-# INLINE assertFromCache #-}

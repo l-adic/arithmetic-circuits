@@ -269,7 +269,7 @@ propBitVecUnopsProg top op = forAll arbInputs $ \bs ->
       a = intToBitVec $ bitOp $ bitVecToInt bs
       out = fromJust $ sequence $ map (\i -> lookupVar bsVars ("out" <> show @Int i) w) [0 .. 31]
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in map boolToField expected === out .&&. map _fieldToBool out === a .&&. computed === Right (V.fromList (map boolToField expected))
+   in map boolToField expected === out .&&. map _fieldToBool out === a .&&. computed === Right (V.fromList out)
   where
     arbInputs = vectorOf 32 arbitrary
     bitOp = case top of
