@@ -586,8 +586,8 @@ instance (Pretty f, Pretty i) => Pretty (Node i f) where
   pretty (NSplit e n) = "split" <+> pretty e <+> pretty n
   pretty (NJoin e) = "join" <+> pretty e
   pretty (NBundle es) = "bundle" <+> pretty (toList es)
-  pretty (NAtIndex e idx) = pretty e <+> "!" <> pretty idx
-  pretty (NUpdateAtIndex e idx v) = pretty e <+> "!" <> pretty idx <+> ":=" <+> pretty v
+  pretty (NAtIndex e idx) = pretty e <+> "!!" <+> pretty idx
+  pretty (NUpdateAtIndex e idx v) = pretty e <+> "!!" <+> pretty idx <+> ":=" <+> pretty v
 
 deriving instance (Show i, Show f) => Show (Node i f)
 
@@ -635,7 +635,7 @@ untypeBinOp BXors = UBXor
 
 --------------------------------------------------------------------------------
 
-reifyGraph :: Expr i f ty -> Seq (Hash, Node i f)
+reifyGraph ::  Expr i f ty -> Seq (Hash, Node i f)
 reifyGraph e =
   gbsEdges $ execState (buildGraph_ e) (GraphBuilderState mempty mempty)
 
@@ -645,149 +645,76 @@ data GraphBuilderState i f = GraphBuilderState
   }
 
 {-# SCC buildGraph_ #-}
-buildGraph_ :: forall i f ty. Expr i f ty -> State (GraphBuilderState i f) Hash
+buildGraph_ :: forall i f ty.  Expr i f ty -> State (GraphBuilderState i f) Hash
 buildGraph_ expr =
   getId expr <$ case expr of
-    EVal h v -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
+    EVal h v ->
+      unlessM (hasBeenVisited h) $ do
         let n = NVal (rawVal v)
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns,
-              gbsEdges = gbsEdges s |> (h, n)
-            }
-    EVar h v -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
+        markVisited h n
+    EVar h v ->
+      unlessM (hasBeenVisited h) $ do
         let n = NVar (rawWire v)
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns,
-              gbsEdges = gbsEdges s |> (h, n)
-            }
-    EUnOp h op e -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns
-            }
+        markVisited h n
+    EUnOp h op e -> 
+      unlessM (hasBeenVisited h) $ do
         e' <- buildGraph_ e
         let n = NUnOp (untypeUnOp op) e'
-        modify $ \s ->
-          s
-            { gbsEdges = gbsEdges s |> (h, n)
-            }
-    EBinOp h op e1 e2 -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns
-            }
+        markVisited h n
+    EBinOp h op e1 e2 ->
+      unlessM (hasBeenVisited h) $ do
         e1' <- buildGraph_ e1
         e2' <- buildGraph_ e2
         let n = NBinOp (untypeBinOp op) e1' e2'
-        modify $ \s ->
-          s
-            { gbsEdges = gbsEdges s |> (h, n)
-            }
-    EIf h b t f -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns
-            }
+        markVisited h n
+    EIf h b t f ->
+      unlessM (hasBeenVisited h) $ do
         b' <- buildGraph_ b
         t' <- buildGraph_ t
         f' <- buildGraph_ f
         let n = NIf b' t' f'
-        modify $ \s ->
-          s
-            { gbsEdges = gbsEdges s |> (h, n)
-            }
-    EEq h l r -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns
-            }
+        markVisited h n
+    EEq h l r -> 
+      unlessM (hasBeenVisited h) $ do
         l' <- buildGraph_ l
         r' <- buildGraph_ r
         let n = NEq l' r'
-        modify $ \s ->
-          s
-            { gbsEdges = gbsEdges s |> (h, n)
-            }
-    ESplit h i -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns
-            }
+        markVisited h n
+    ESplit h i ->
+      unlessM (hasBeenVisited h) $ do
         i' <- buildGraph_ i
         let n = NSplit i' (fromIntegral $ natVal (Proxy @(NBits f)))
-        modify $ \s ->
-          s
-            { gbsEdges = gbsEdges s |> (h, n)
-            }
-    EJoin h i -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns
-            }
+        markVisited h n
+    EJoin h i -> 
+      unlessM (hasBeenVisited h) $ do
         i' <- buildGraph_ i
         let n = NJoin i'
-        modify $ \s ->
-          s
-            { gbsEdges = gbsEdges s |> (h, n)
-            }
-    EBundle h b -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns
-            }
+        markVisited h n
+    EBundle h b ->
+      unlessM (hasBeenVisited h) $ do
         b' <- SV.fromSized <$> traverse buildGraph_ b
         let n = NBundle b'
-        modify $ \s ->
-          s
-            { gbsEdges = gbsEdges s |> (h, n)
-            }
-    EAtIndex h e i -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns
-            }
+        markVisited h n
+    EAtIndex h e i ->
+      unlessM (hasBeenVisited h) $ do
         e' <- buildGraph_ e
         let n = NAtIndex e' (fromIntegral i)
-        modify $ \s ->
-          s
-            { gbsEdges = gbsEdges s |> (h, n)
-            }
-    EUpdateAtIndex h e i v -> do
-      ns <- gets gbsSharedNodes
-      unless (h `Set.member` ns) $ do
-        modify $ \s ->
-          s
-            { gbsSharedNodes = Set.insert h ns
-            }
+        markVisited h n
+    EUpdateAtIndex h e i v ->
+      unlessM (hasBeenVisited h) $ do
         e' <- buildGraph_ e
         v' <- buildGraph_ v
         let n = NUpdateAtIndex e' (fromIntegral i) v'
-        modify $ \s ->
-          s
-            { gbsEdges = gbsEdges s |> (h, n)
-            }
+        markVisited h n
+  where
+    hasBeenVisited h = gets $ Set.member h . gbsSharedNodes
+    {-# INLINE hasBeenVisited #-}
+    markVisited h n = modify $ \s -> 
+      s 
+        { gbsSharedNodes = Set.insert h (gbsSharedNodes s)
+        , gbsEdges = gbsEdges s |> (h, n)
+        }
+    {-# INLINE markVisited #-}
 
 --------------------------------------------------------------------------------
 
@@ -902,6 +829,7 @@ evalNode lookupVar vars h node =
     assertField x
       | V.length x == 1 = pure $ V.head x
       | otherwise = throwError $ TypeErr "expected field, got vector"
+    {-# INLINE assertField #-}
 
     assertFromCache :: Hash -> EvalM i f (V.Vector f)
     assertFromCache i = do
