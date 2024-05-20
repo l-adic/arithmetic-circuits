@@ -44,6 +44,7 @@ common deps
   build-depends:
       aeson           >=1.4
     , base            >=4.10  && <5
+    , binary          >=0.8.9 && <0.9
     , containers      >=0.6.0
     , filepath        >=1.4.2
     , finite-typelits >=0.1.0
@@ -111,6 +112,7 @@ library circom-compat
   hs-source-dirs:     circom-compat/src
   build-depends:
       arithmetic-circuits
+    , arithmetic-circuits:language
     , binary
     , bytestring
     , vector

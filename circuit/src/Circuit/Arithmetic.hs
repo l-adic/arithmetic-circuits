@@ -31,6 +31,7 @@ import Circuit.Affine
     evalAffineCircuit,
   )
 import Data.Aeson (FromJSON, ToJSON)
+import Data.Binary (Binary)
 import Data.Field.Galois (PrimeField, fromP)
 import Data.IntMap qualified as IntMap
 import Data.IntSet qualified as IntSet
@@ -54,6 +55,8 @@ instance FromJSON InputType
 
 instance ToJSON InputType
 
+instance Binary InputType
+
 -- | Wires are can be labeled in the ways given in this data type
 data Wire
   = InputWire Text InputType Int
@@ -67,6 +70,8 @@ instance ToJSON Wire
 
 instance Hashable Wire where
   hashWithSalt s w = s `hashWithSalt` (0 :: Int) `hashWithSalt` (wireName w)
+
+instance Binary Wire
 
 instance Pretty Wire where
   pretty (InputWire label t v) =
@@ -108,6 +113,8 @@ deriving instance Functor (Gate f)
 deriving instance Foldable (Gate f)
 
 deriving instance Traversable (Gate f)
+
+instance (Binary i, Binary f) => Binary (Gate f i)
 
 instance Bifunctor Gate where
   bimap f g = \case
@@ -211,6 +218,8 @@ instance (FromJSON f) => FromJSON (ArithCircuit f)
 
 instance (ToJSON f) => ToJSON (ArithCircuit f)
 
+instance (Binary f) => Binary (ArithCircuit f)
+
 instance Functor ArithCircuit where
   fmap f (ArithCircuit gates) = ArithCircuit $ map (first f) gates
 
@@ -287,7 +296,9 @@ data CircuitVars label = CircuitVars
     cvOutputs :: IntSet,
     cvInputsLabels :: InputBidings label
   }
-  deriving (Show)
+  deriving (Show, Generic, NFData)
+
+instance (Binary label) => Binary (CircuitVars label)
 
 instance (Pretty label) => Pretty (CircuitVars label) where
   pretty CircuitVars {cvVars, cvPrivateInputs, cvPublicInputs, cvOutputs, cvInputsLabels} =
@@ -392,7 +403,9 @@ data InputBidings label = InputBidings
   { labelToVar :: Map label Int,
     varToLabel :: IntMap label
   }
-  deriving (Show)
+  deriving (Show, Generic, NFData)
+
+instance (Binary label) => Binary (InputBidings label)
 
 mapLabels :: (Ord l2) => (l1 -> l2) -> InputBidings l1 -> InputBidings l2
 mapLabels f InputBidings {labelToVar, varToLabel} =

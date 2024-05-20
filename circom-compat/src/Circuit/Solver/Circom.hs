@@ -1,5 +1,9 @@
 module Circuit.Solver.Circom
-  ( ProgramEnv (..),
+  ( CircomProgram,
+    cpVars,
+    cpCircuit,
+    mkCircomProgram,
+    ProgramEnv (..),
     mkProgramEnv,
     ProgramState (..),
     mkProgramState,
@@ -15,11 +19,12 @@ module Circuit.Solver.Circom
     _setInputSignal,
     _getWitnessSize,
     _getWitness,
-    standardSolver,
+    nativeGenWitness,
   )
 where
 
 import Circuit
+import Data.Binary (Binary)
 import Data.Field.Galois (GaloisField, PrimeField (fromP), char)
 import Data.IORef (IORef, readIORef, writeIORef)
 import Data.IntMap qualified as IntMap
@@ -31,8 +36,27 @@ import Data.Vector.Mutable qualified as MV
 import FNV (FNVHash (..), hashText, mkFNV)
 import Protolude
 import R1CS (Inputs (..), Witness (..), oneVar)
-import R1CS.Circom (CircomWitness, FieldSize (..), integerFromLittleEndian, integerToLittleEndian, n32, witnessToCircomWitness)
+import R1CS.Circom (CircomWitness, FieldSize (..), circomReindexMap, integerFromLittleEndian, integerToLittleEndian, n32, witnessToCircomWitness)
 import Text.PrettyPrint.Leijen.Text (Pretty (pretty), (<+>))
+
+data CircomProgram f = CircomProgram
+  { cpVars :: CircuitVars Text,
+    cpCircuit :: ArithCircuit f
+  }
+  deriving (Generic)
+
+instance (Binary f) => Binary (CircomProgram f)
+
+mkCircomProgram ::
+  CircuitVars Text ->
+  ArithCircuit f ->
+  CircomProgram f
+mkCircomProgram vars circ =
+  let f = circomReindexMap vars
+   in CircomProgram
+        { cpVars = reindex f vars,
+          cpCircuit = reindex f circ
+        }
 
 -- WASM Solver
 
@@ -49,10 +73,9 @@ data ProgramEnv f = ProgramEnv
 mkProgramEnv ::
   forall f.
   (GaloisField f) =>
-  CircuitVars Text ->
-  ArithCircuit f ->
+  CircomProgram f ->
   ProgramEnv f
-mkProgramEnv vars circ =
+mkProgramEnv CircomProgram {cpVars = vars, cpCircuit = circ} =
   ProgramEnv
     { peFieldSize = FieldSize 32,
       peRawPrime = toInteger $ char (1 :: f),
@@ -163,14 +186,13 @@ _getWitness env stRef i = do
 --------------------------------------------------------------------------------
 -- Standard Solver (to be used as native executable)
 
-standardSolver ::
+nativeGenWitness ::
   forall f.
   (PrimeField f) =>
-  CircuitVars Text ->
-  ArithCircuit f ->
+  CircomProgram f ->
   Map Text f ->
   CircomWitness f
-standardSolver vars circ inputs =
+nativeGenWitness CircomProgram {cpVars = vars, cpCircuit = circ} inputs =
   let initAssignments = assignInputs vars inputs
       wtns =
         evalArithCircuit
@@ -178,7 +200,7 @@ standardSolver vars circ inputs =
           (\w a -> safeAssign (wireName w) a)
           circ
           initAssignments
-   in witnessToCircomWitness $ Witness $ IntMap.insert oneVar 1 wtns
+   in witnessToCircomWitness $ Witness wtns
 
 --------------------------------------------------------------------------------
 

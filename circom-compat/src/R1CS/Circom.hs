@@ -28,7 +28,7 @@ import Data.IntSet qualified as IntSet
 import Data.Vector (Vector)
 import Data.Vector qualified as V
 import Protolude
-import R1CS (LinearPoly (..), R1C (..), R1CS (..), Witness (..))
+import R1CS (LinearPoly (..), R1C (..), R1CS (..), Witness (..), oneVar)
 import Prelude (fail)
 
 --------------------------------------------------------------------------------
@@ -343,22 +343,23 @@ data CircomWitness f = CircomWitness
   deriving (Show, Eq)
 
 witnessToCircomWitness :: forall f. (PrimeField f) => Witness f -> CircomWitness f
-witnessToCircomWitness (Witness m) =
-  CircomWitness
-    { wtnsPreamble =
-        Preamble
-          { magic = 0x736e7477,
-            version = 1,
-            nSections = 2
-          },
-      wtnsHeader =
-        WitnessHeader
-          { whFieldSize = FieldSize 32,
-            whPrime = fromIntegral $ char (1 :: f),
-            whWitnessSize = fromIntegral $ IntMap.size m
-          },
-      wtnsValues = snd <$> IntMap.toAscList m
-    }
+witnessToCircomWitness (Witness _m) =
+  let m = IntMap.insert oneVar 1 _m
+   in CircomWitness
+        { wtnsPreamble =
+            Preamble
+              { magic = 0x736e7477,
+                version = 1,
+                nSections = 2
+              },
+          wtnsHeader =
+            WitnessHeader
+              { whFieldSize = FieldSize 32,
+                whPrime = fromIntegral $ char (1 :: f),
+                whWitnessSize = fromIntegral $ IntMap.size m
+              },
+          wtnsValues = snd <$> IntMap.toAscList m
+        }
 
 witnessFromCircomWitness :: CircomWitness f -> Witness f
 witnessFromCircomWitness (CircomWitness {wtnsValues}) =
