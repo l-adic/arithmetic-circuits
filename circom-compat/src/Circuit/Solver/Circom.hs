@@ -15,6 +15,7 @@ module Circuit.Solver.Circom
     _setInputSignal,
     _getWitnessSize,
     _getWitness,
+    standardSolver,
   )
 where
 
@@ -30,7 +31,10 @@ import Data.Vector.Mutable qualified as MV
 import FNV (FNVHash (..), hashText, mkFNV)
 import Protolude
 import R1CS (Inputs (..), Witness (..), oneVar)
-import R1CS.Circom (FieldSize (..), integerFromLittleEndian, integerToLittleEndian, n32)
+import R1CS.Circom (CircomWitness, FieldSize (..), integerFromLittleEndian, integerToLittleEndian, n32, witnessToCircomWitness)
+import Text.PrettyPrint.Leijen.Text (Pretty (pretty), (<+>))
+
+-- WASM Solver
 
 data ProgramEnv f = ProgramEnv
   { peFieldSize :: FieldSize,
@@ -77,10 +81,8 @@ mkProgramState ProgramEnv {peFieldSize} = do
         psSharedRWMemory = sharedRWMemory
       }
 
--- | The arg is a bool representing 'sanityCheck'. We don't
--- need this at the moment
-_init :: Int -> IO ()
-_init = mempty
+_init :: ProgramEnv f -> IORef (ProgramState f) -> Int -> IO ()
+_init env st _ = writeBuffer env st 0
 
 _getNVars :: ProgramEnv f -> Int
 _getNVars = peWitnessSize
@@ -132,7 +134,12 @@ _setInputSignal env@(ProgramEnv {peCircuit, peInputsSize, peCircuitVars}) stRef 
   writeIORef stRef $
     if IntMap.size newInputs == peInputsSize
       then
-        let wtns = solve peCircuitVars peCircuit newInputs
+        let wtns =
+              evalArithCircuit
+                (\w a -> IntMap.lookup (wireName w) a)
+                (\w a -> safeAssign (wireName w) a)
+                peCircuit
+                newInputs
          in st
               { psInputs = Inputs newInputs,
                 psWitness = Witness $ IntMap.insert oneVar 1 wtns
@@ -154,13 +161,44 @@ _getWitness env stRef i = do
    in writeBuffer env stRef wtn
 
 --------------------------------------------------------------------------------
+-- Standard Solver (to be used as native executable)
 
+standardSolver ::
+  forall f.
+  (PrimeField f) =>
+  CircuitVars Text ->
+  ArithCircuit f ->
+  Map Text f ->
+  CircomWitness f
+standardSolver vars circ inputs =
+  let initAssignments = assignInputs vars inputs
+      wtns =
+        evalArithCircuit
+          (\w a -> IntMap.lookup (wireName w) a)
+          (\w a -> safeAssign (wireName w) a)
+          circ
+          initAssignments
+   in witnessToCircomWitness $ Witness $ IntMap.insert oneVar 1 wtns
+
+--------------------------------------------------------------------------------
+
+{-# INLINE safeAssign #-}
+safeAssign :: (Eq f) => (Pretty f) => Int -> f -> IntMap f -> IntMap f
+safeAssign =
+  let f k new old =
+        if new == old
+          then new
+          else panic $ show $ "Assignment contradiction for var" <+> pretty k <> ":" <> pretty new <+> " /= " <+> pretty old
+   in IntMap.insertWithKey f
+
+{-# INLINE writeBuffer #-}
 writeBuffer :: ProgramEnv f -> IORef (ProgramState f) -> Integer -> IO ()
 writeBuffer (ProgramEnv {peFieldSize}) stRef x = do
   let chunks = integerToLittleEndian peFieldSize x
   forM_ [0 .. n32 peFieldSize - 1] $ \j ->
     _writeSharedRWMemory stRef j (chunks V.! j)
 
+{-# INLINE readBuffer #-}
 readBuffer :: ProgramEnv f -> IORef (ProgramState f) -> IO Integer
 readBuffer (ProgramEnv {peFieldSize}) stRef = do
   v <- V.generateM (n32 peFieldSize) $ \j ->

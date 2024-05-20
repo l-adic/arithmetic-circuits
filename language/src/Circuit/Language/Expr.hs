@@ -635,7 +635,7 @@ untypeBinOp BXors = UBXor
 
 --------------------------------------------------------------------------------
 
-reifyGraph ::  Expr i f ty -> Seq (Hash, Node i f)
+reifyGraph :: Expr i f ty -> Seq (Hash, Node i f)
 reifyGraph e =
   gbsEdges $ execState (buildGraph_ e) (GraphBuilderState mempty mempty)
 
@@ -645,7 +645,7 @@ data GraphBuilderState i f = GraphBuilderState
   }
 
 {-# SCC buildGraph_ #-}
-buildGraph_ :: forall i f ty.  Expr i f ty -> State (GraphBuilderState i f) Hash
+buildGraph_ :: forall i f ty. Expr i f ty -> State (GraphBuilderState i f) Hash
 buildGraph_ expr =
   getId expr <$ case expr of
     EVal h v ->
@@ -656,7 +656,7 @@ buildGraph_ expr =
       unlessM (hasBeenVisited h) $ do
         let n = NVar (rawWire v)
         markVisited h n
-    EUnOp h op e -> 
+    EUnOp h op e ->
       unlessM (hasBeenVisited h) $ do
         e' <- buildGraph_ e
         let n = NUnOp (untypeUnOp op) e'
@@ -674,7 +674,7 @@ buildGraph_ expr =
         f' <- buildGraph_ f
         let n = NIf b' t' f'
         markVisited h n
-    EEq h l r -> 
+    EEq h l r ->
       unlessM (hasBeenVisited h) $ do
         l' <- buildGraph_ l
         r' <- buildGraph_ r
@@ -685,7 +685,7 @@ buildGraph_ expr =
         i' <- buildGraph_ i
         let n = NSplit i' (fromIntegral $ natVal (Proxy @(NBits f)))
         markVisited h n
-    EJoin h i -> 
+    EJoin h i ->
       unlessM (hasBeenVisited h) $ do
         i' <- buildGraph_ i
         let n = NJoin i'
@@ -709,10 +709,10 @@ buildGraph_ expr =
   where
     hasBeenVisited h = gets $ Set.member h . gbsSharedNodes
     {-# INLINE hasBeenVisited #-}
-    markVisited h n = modify $ \s -> 
-      s 
-        { gbsSharedNodes = Set.insert h (gbsSharedNodes s)
-        , gbsEdges = gbsEdges s |> (h, n)
+    markVisited h n = modify $ \s ->
+      s
+        { gbsSharedNodes = Set.insert h (gbsSharedNodes s),
+          gbsEdges = gbsEdges s |> (h, n)
         }
     {-# INLINE markVisited #-}
 
@@ -738,7 +738,7 @@ evalGraph ::
   EvalM i f (V.Vector f)
 evalGraph lookupVar vars graph = case graph of
   Empty -> panic "empty graph"
-  ns :|> n -> traverse eval ns >> eval n
+  ns :|> n -> traverse_ eval ns >> eval n
   where
     eval (h, n) = evalNode lookupVar vars h n
 
@@ -759,15 +759,12 @@ evalNode lookupVar vars h node =
       Nothing -> throwError $ MissingVar i
     NUnOp op e -> do
       e' <- assertFromCache e
-      res <- case op of
-        UUNeg -> pure $ fmap Protolude.negate $ e'
-        UUNot -> pure $ fmap (\x -> 1 - x) $ e'
-        UURot n ->
-          pure $ V.fromList . rotateList n $ V.toList e'
-        UUShift n ->
-          pure $ V.fromList . shiftList 0 n $ V.toList e'
-        UUReverse ->
-          pure $ V.reverse e'
+      let res = case op of
+            UUNeg -> fmap Protolude.negate $ e'
+            UUNot -> fmap (\x -> 1 - x) $ e'
+            UURot n -> V.fromList . rotateList n $ V.toList e'
+            UUShift n -> V.fromList . shiftList 0 n $ V.toList e'
+            UUReverse -> V.reverse e'
       cachResult h res
     NBinOp op e1 e2 -> do
       e1' <- assertFromCache e1
