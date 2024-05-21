@@ -3,7 +3,7 @@ module Main where
 import Circuit
 import Circuit.Language
 import Circuit.Solver.Circom (CircomProgram (..), mkCircomProgram, nativeGenWitness)
-import Data.Binary (encodeFile, decodeFile)
+import Data.Binary (decodeFile, encodeFile)
 import Data.Field.Galois (Prime)
 import Data.Map qualified as Map
 import Protolude
