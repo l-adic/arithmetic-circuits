@@ -18,6 +18,7 @@ module Circom.R1CS
 where
 
 import Circuit (CircuitVars (..))
+import Data.Aeson (ToJSON)
 import Data.Binary (Binary (..), Get, Put)
 import Data.Binary.Get (getInt32le, getInt64le, getWord32le, getWord64le, lookAhead, skip)
 import Data.Binary.Put (putInt32le, putLazyByteString, putWord32le, putWord64le, runPut)
@@ -41,7 +42,13 @@ data CircomR1CS f = CircomR1CS
     crConstraints :: [R1C f],
     crWireMap :: [Word64]
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+instance Functor CircomR1CS where
+  fmap f CircomR1CS {..} =
+    CircomR1CS {crConstraints = fmap (fmap f) crConstraints, ..}
+
+instance (ToJSON f) => ToJSON (CircomR1CS f)
 
 r1csToCircomR1CS :: forall f. (GaloisField f) => R1CS f -> CircomR1CS f
 r1csToCircomR1CS R1CS {..} =
@@ -109,7 +116,9 @@ circomReindexMap CircuitVars {..} =
 newtype CircomR1CSBuilder k = CircomR1CSBuilder (CircomR1CS k -> CircomR1CS k)
 
 -- measured in bytes
-newtype FieldSize = FieldSize Int32 deriving (Show, Eq)
+newtype FieldSize = FieldSize Int32
+  deriving (Show, Eq)
+  deriving newtype (ToJSON)
 
 n32 :: FieldSize -> Int
 n32 (FieldSize n) = fromIntegral n `div` 4
@@ -185,7 +194,9 @@ data Preamble = Preamble
     version :: Word32,
     nSections :: Word32
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+instance ToJSON Preamble
 
 getPreamble :: Word32 -> Get Preamble
 getPreamble typeMagic = do
@@ -216,7 +227,9 @@ data R1CSHeader = R1CSHeader
     rhNLabels :: Word64,
     rhNConstraints :: Word32
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+instance ToJSON R1CSHeader
 
 getR1CSHeader :: Get R1CSHeader
 getR1CSHeader = do
@@ -340,7 +353,16 @@ data CircomWitness f = CircomWitness
     wtnsHeader :: WitnessHeader,
     wtnsValues :: [f]
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+instance Functor CircomWitness where
+  fmap f CircomWitness {..} =
+    CircomWitness
+      { wtnsValues = fmap f wtnsValues,
+        ..
+      }
+
+instance (ToJSON f) => ToJSON (CircomWitness f)
 
 witnessToCircomWitness :: forall f. (PrimeField f) => Witness f -> CircomWitness f
 witnessToCircomWitness (Witness _m) =
@@ -423,7 +445,9 @@ data WitnessHeader = WitnessHeader
     whPrime :: Integer,
     whWitnessSize :: Word32
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
+instance ToJSON WitnessHeader
 
 getWitnessHeader :: Get WitnessHeader
 getWitnessHeader = do

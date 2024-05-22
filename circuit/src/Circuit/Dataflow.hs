@@ -9,6 +9,7 @@ import Circuit.Arithmetic
     Wire (..),
     wireName,
   )
+import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Protolude
@@ -16,10 +17,10 @@ import Protolude
 newtype GateId = GateId Int
   deriving (Eq, Ord)
 
-newtype Roots a = DEnv {dfRoots :: Set Int}
+newtype Roots a = DEnv {dfRoots :: IntSet}
 
 addRoot :: Int -> State (Roots a) ()
-addRoot x = modify (\s -> s {dfRoots = Set.insert x (dfRoots s)})
+addRoot x = modify (\s -> s {dfRoots = IntSet.insert x (dfRoots s)})
 
 data Env a = Env
   { gatesMap :: Map GateId (Gate a Wire),
@@ -44,7 +45,7 @@ removeUnreachable ::
   (Ord a) =>
   [Int] ->
   ArithCircuit a ->
-  (ArithCircuit a, Set Int)
+  (ArithCircuit a, IntSet)
 removeUnreachable outVars cs =
   let gatesMap = numberGates cs
       env =
@@ -59,8 +60,10 @@ removeUnreachable outVars cs =
             -- start searching from the output variables
             exploreVars env outVars
             roots <- gets dfRoots
-            pure $ Set.foldl (\acc root -> acc `Set.union` findGates env root) mempty roots
-   in (ArithCircuit $ Set.toList foundGates, dfRoots usedVars)
+            pure $ IntSet.foldl (\acc root -> acc `Set.union` findGates env root) mempty roots
+   in ( ArithCircuit $ Set.toList foundGates,
+        dfRoots usedVars
+      )
   where
     findGates Env {indexedVars, gatesMap} root =
       Set.fromList $
@@ -77,11 +80,11 @@ exploreVars env@(Env {gatesMap, indexedVars}) (r : rest) =
     Nothing -> exploreVars env rest
     Just gs -> do
       currentRoots <- gets dfRoots
-      let newRoots = Set.toList $ getVars gs Set.\\ currentRoots
+      let newRoots = IntSet.toList $ getVars gs IntSet.\\ currentRoots
       mapM_ addRoot newRoots
       exploreVars env $ newRoots <> rest
   where
-    getVars :: Set GateId -> Set Int
-    getVars gs = Set.fromList $ do
+    getVars :: Set GateId -> IntSet
+    getVars gs = IntSet.fromList $ do
       gate <- mapMaybe (`Map.lookup` gatesMap) $ Set.toList gs
       wireName <$> toList gate

@@ -2,14 +2,16 @@ module Circom.CLI (defaultMain) where
 
 import Circom.R1CS (r1csToCircomR1CS)
 import Circom.Solver (CircomProgram (..), mkCircomProgram, nativeGenWitness)
-import Circuit.Arithmetic (CircuitVars (cvInputsLabels), InputBidings (labelToVar))
+import Circuit.Arithmetic (CircuitVars (cvInputsLabels, cvOutputs), InputBindings (labelToVar), restrictVars)
+import Circuit.Dataflow qualified as DataFlow
 import Circuit.Language.Compile (BuilderState (..), ExprM, runCircuitBuilder)
 import Data.Aeson (decodeFileStrict)
 import Data.Aeson qualified as A
 import Data.Aeson.Encode.Pretty (encodePretty)
 import Data.Binary (decodeFile, encodeFile)
 import Data.ByteString.Lazy qualified as LBS
-import Data.Field.Galois (PrimeField)
+import Data.Field.Galois (PrimeField (fromP))
+import Data.IntSet qualified as IntSet
 import Data.Text qualified as Text
 import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, execParser, fullDesc, header, help, helper, hsubparser, info, long, progDesc, showDefault, strOption, switch, value)
 import Protolude
@@ -49,7 +51,9 @@ optsParser progName =
     solveCommand =
       command "solve" (info (Solve <$> solveOptsParser <**> helper) (progDesc "Generate a witness"))
 
-data Command = Compile CompileOpts | Solve SolveOpts
+data Command
+  = Compile CompileOpts
+  | Solve SolveOpts
 
 data CompileOpts = CompileOpts
   { optimizeOpts :: OptimizeOpts,
@@ -66,18 +70,13 @@ compileOptsParser =
       )
 
 data OptimizeOpts = OptimizeOpts
-  { propogateConstants :: Bool,
-    removeUnreachable :: Bool
+  { removeUnreachable :: Bool
   }
 
 optimizeOptsParser :: Parser OptimizeOpts
 optimizeOptsParser =
   OptimizeOpts
     <$> switch
-      ( long "propogate-constants"
-          <> help "propogate constants through the circuit"
-      )
-    <*> switch
       ( long "remove-unreachable"
           <> help "detect and remove variables not contributing to the output"
       )
@@ -105,12 +104,14 @@ defaultMain ::
 defaultMain progName program = do
   opts <- execParser (optsParser progName)
   case cmd opts of
-    Compile _ -> do
+    Compile compilerOpts -> do
       let BuilderState {..} = snd $ runCircuitBuilder program
-          prog = mkCircomProgram bsVars bsCircuit
+          prog = optimize (optimizeOpts compilerOpts) $ mkCircomProgram bsVars bsCircuit
           r1cs = r1csToCircomR1CS $ toR1CS (cpVars prog) (cpCircuit prog)
       createDirectoryIfMissing True (outputDir opts)
       encodeFile (r1csFilePath $ outputDir opts) r1cs
+      when (includeJson compilerOpts) $ do
+        LBS.writeFile (r1csFilePath (outputDir opts) <> ".json") (encodePretty $ fmap fromP r1cs)
       encodeFile (binFilePath $ outputDir opts) prog
       let inputsTemplate = map (const A.Null) $ labelToVar $ cvInputsLabels $ cpVars prog
       LBS.writeFile (inputsTemplateFilePath $ outputDir opts) (encodePretty $ inputsTemplate)
@@ -128,3 +129,25 @@ defaultMain progName program = do
     binFilePath dir = baseFilePath dir <> ".bin"
     r1csFilePath dir = baseFilePath dir <> ".r1cs"
     witnessFilePath dir = baseFilePath dir <> ".wtns"
+
+optimize ::
+  forall f.
+  (Ord f) =>
+  OptimizeOpts ->
+  CircomProgram f ->
+  CircomProgram f
+optimize opts =
+  appEndo . mconcat $
+    [ performRemoveUnreachable
+    ]
+  where
+    performRemoveUnreachable :: Endo (CircomProgram f)
+    performRemoveUnreachable =
+      if (removeUnreachable opts)
+        then mempty
+        else Endo $ \prog ->
+          let outVars :: [Int]
+              outVars = IntSet.toList $ cvOutputs $ cpVars prog
+              (newCircuit, usedVars) = DataFlow.removeUnreachable outVars (cpCircuit prog)
+              newVars = restrictVars (cpVars prog) usedVars
+           in mkCircomProgram newVars newCircuit

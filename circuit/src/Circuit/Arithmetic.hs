@@ -19,7 +19,7 @@ module Circuit.Arithmetic
     lookupVar,
     booleanWires,
     nGates,
-    InputBidings (..),
+    InputBindings (..),
     insertInputBinding,
     Reindexable (..),
     restrictVars,
@@ -294,7 +294,7 @@ data CircuitVars label = CircuitVars
     cvPrivateInputs :: IntSet,
     cvPublicInputs :: IntSet,
     cvOutputs :: IntSet,
-    cvInputsLabels :: InputBidings label
+    cvInputsLabels :: InputBindings label
   }
   deriving (Show, Generic, NFData)
 
@@ -376,7 +376,7 @@ restrictVars CircuitVars {..} vars =
       cvPrivateInputs = IntSet.intersection cvPrivateInputs vars,
       cvPublicInputs = IntSet.intersection cvPublicInputs vars,
       cvOutputs = IntSet.intersection cvOutputs vars,
-      cvInputsLabels = cvInputsLabels
+      cvInputsLabels = restrictInputBindings vars cvInputsLabels
     }
 
 assignInputs :: (Ord label) => CircuitVars label -> Map label f -> IntMap f
@@ -399,24 +399,24 @@ nGates :: ArithCircuit f -> Int
 nGates (ArithCircuit gates) = length gates
 
 --------------------------------------------------------------------------------
-data InputBidings label = InputBidings
+data InputBindings label = InputBindings
   { labelToVar :: Map label Int,
     varToLabel :: IntMap label
   }
   deriving (Show, Generic, NFData)
 
-instance (Binary label) => Binary (InputBidings label)
+instance (Binary label) => Binary (InputBindings label)
 
-mapLabels :: (Ord l2) => (l1 -> l2) -> InputBidings l1 -> InputBidings l2
-mapLabels f InputBidings {labelToVar, varToLabel} =
-  InputBidings
+mapLabels :: (Ord l2) => (l1 -> l2) -> InputBindings l1 -> InputBindings l2
+mapLabels f InputBindings {labelToVar, varToLabel} =
+  InputBindings
     { labelToVar = Map.mapKeys f labelToVar,
       varToLabel = fmap f varToLabel
     }
 
-instance Reindexable (InputBidings label) where
-  reindex f InputBidings {..} =
-    InputBidings
+instance Reindexable (InputBindings label) where
+  reindex f InputBindings {..} =
+    InputBindings
       { labelToVar = Map.mapMaybe (flip IntMap.lookup f) labelToVar,
         varToLabel = IntMap.compose varToLabel (reverseMap f)
       }
@@ -424,33 +424,40 @@ instance Reindexable (InputBidings label) where
       reverseMap :: IntMap Int -> IntMap Int
       reverseMap = IntMap.foldlWithKey' (\acc k v -> IntMap.insert v k acc) mempty
 
-instance (Ord label) => Semigroup (InputBidings label) where
+instance (Ord label) => Semigroup (InputBindings label) where
   a <> b =
-    InputBidings
+    InputBindings
       { labelToVar = labelToVar a <> labelToVar b,
         varToLabel = varToLabel a <> varToLabel b
       }
 
-instance (Ord label) => Monoid (InputBidings label) where
+instance (Ord label) => Monoid (InputBindings label) where
   mempty =
-    InputBidings
+    InputBindings
       { labelToVar = mempty,
         varToLabel = mempty
       }
 
-instance (Pretty label) => Pretty (InputBidings label) where
-  pretty InputBidings {labelToVar} =
+instance (Pretty label) => Pretty (InputBindings label) where
+  pretty InputBindings {labelToVar} =
     pretty $ Map.toList labelToVar
 
-insertInputBinding :: (Ord label) => label -> Int -> InputBidings label -> InputBidings label
-insertInputBinding label var InputBidings {..} =
-  InputBidings
+insertInputBinding :: (Ord label) => label -> Int -> InputBindings label -> InputBindings label
+insertInputBinding label var InputBindings {..} =
+  InputBindings
     { labelToVar = Map.insert label var labelToVar,
       varToLabel = IntMap.insert var label varToLabel
     }
 
-inputBindingsFromList :: (Ord label) => [(label, Int)] -> InputBidings label
+inputBindingsFromList :: (Ord label) => [(label, Int)] -> InputBindings label
 inputBindingsFromList = foldl' (flip $ uncurry insertInputBinding) mempty
+
+restrictInputBindings :: IntSet -> InputBindings label -> InputBindings label
+restrictInputBindings s InputBindings {..} =
+  InputBindings
+    { labelToVar = Map.filter (\a -> a `IntSet.member` s) labelToVar,
+      varToLabel = IntMap.restrictKeys varToLabel s
+    }
 
 --------------------------------------------------------------------------------
 
