@@ -1,4 +1,4 @@
-module Circuit.Solver.Circom
+module Circom.Solver
   ( CircomProgram,
     cpVars,
     cpCircuit,
@@ -23,6 +23,7 @@ module Circuit.Solver.Circom
   )
 where
 
+import Circom.R1CS (CircomWitness, FieldSize (..), circomReindexMap, integerFromLittleEndian, integerToLittleEndian, n32, witnessToCircomWitness)
 import Circuit
 import Data.Binary (Binary)
 import Data.Field.Galois (GaloisField, PrimeField (fromP), char)
@@ -36,7 +37,6 @@ import Data.Vector.Mutable qualified as MV
 import FNV (FNVHash (..), hashText, mkFNV)
 import Protolude
 import R1CS (Inputs (..), Witness (..), oneVar)
-import R1CS.Circom (CircomWitness, FieldSize (..), circomReindexMap, integerFromLittleEndian, integerToLittleEndian, n32, witnessToCircomWitness)
 import Text.PrettyPrint.Leijen.Text (Pretty (pretty), (<+>))
 
 data CircomProgram f = CircomProgram

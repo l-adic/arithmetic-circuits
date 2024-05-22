@@ -1,12 +1,12 @@
-module Test.R1CS.Circom where
+module Test.Circom.R1CS where
 
+import Circom.R1CS
 import Data.Binary (decode, decodeFileOrFail, encode)
 import Data.Binary.Get (ByteOffset)
 import Data.Field.Galois (Prime)
 import FNV
 import Protolude
 import R1CS (validateWitness)
-import R1CS.Circom
 import Test.Hspec
 import Test.QuickCheck
 import Prelude (String)

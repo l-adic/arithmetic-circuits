@@ -1,4 +1,4 @@
-module R1CS.Circom
+module Circom.R1CS
   ( CircomR1CS (..),
     r1csToCircomR1CS,
     r1csFromCircomR1CS,

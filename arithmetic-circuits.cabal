@@ -37,7 +37,7 @@ common extensions
     RecordWildCards
 
 common warnings
-  ghc-options: -Wall -Wredundant-constraints -Werror
+  ghc-options: -Wall -Wredundant-constraints
 
 
 common deps
@@ -104,17 +104,21 @@ library circom-compat
   import: deps, extensions, warnings
   visibility: public
   exposed-modules:
-    Circuit.Solver.Circom
     FNV
-    R1CS.Circom
+    Circom.CLI
+    Circom.Solver
+    Circom.R1CS
 
   other-modules:      Paths_arithmetic_circuits
   hs-source-dirs:     circom-compat/src
   build-depends:
-      arithmetic-circuits
+      aeson-pretty
+    , arithmetic-circuits
     , arithmetic-circuits:language
     , binary
     , bytestring
+    , directory
+    , optparse-applicative
     , vector
 
   ghc-options:        -freverse-errors -O2 -Wall
@@ -215,7 +219,7 @@ test-suite circom-compat-tests
 
   other-modules:
     Paths_arithmetic_circuits
-    Test.R1CS.Circom
+    Test.Circom.R1CS
 
   hs-source-dirs:     circom-compat/test
 
