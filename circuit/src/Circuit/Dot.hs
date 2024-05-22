@@ -1,7 +1,6 @@
 -- | Visualise circuits using Graphviz
 module Circuit.Dot
   ( arithCircuitToDot,
-    dotWriteSVG,
   )
 where
 
@@ -9,8 +8,6 @@ import Circuit.Affine ()
 import Circuit.Arithmetic (ArithCircuit (..), Gate (..), Wire (..), booleanWires)
 import Data.Text qualified as Text
 import Protolude
-import System.FilePath (replaceExtension)
-import System.Process (readProcessWithExitCode)
 import Text.PrettyPrint.Leijen.Text (Pretty (..))
 
 arithCircuitToDot ::
@@ -79,11 +76,3 @@ arithCircuitToDot c@(ArithCircuit gates) =
       where
         gateLabel = Text.concat . fmap dotWire $ outputs
     graphGate (Boolean _) = []
-
-callDot :: Text -> IO Text
-callDot g = do
-  (_, out, err) <- readProcessWithExitCode "dot" ["-Tsvg"] (Text.unpack g)
-  if err == "" then pure (Text.pack out) else panic (Text.pack err)
-
-dotWriteSVG :: FilePath -> Text -> IO ()
-dotWriteSVG path = callDot >=> writeFile (replaceExtension path ".svg")
