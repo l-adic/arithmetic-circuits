@@ -44,20 +44,20 @@ optsParser progName =
 
     compileCommand :: Mod CommandFields Command
     compileCommand =
-      command "compile" (info (Compile <$> compileOptsParser <**> helper) (progDesc "Compile the program to an r1cs and constraint system"))
+      command "compile" (info (Compile <$> compileOptsParser) (progDesc "Compile the program to an r1cs and constraint system"))
 
     solveCommand :: Mod CommandFields Command
     solveCommand =
-      command "solve" (info (Solve <$> solveOptsParser <**> helper) (progDesc "Generate a witness"))
+      command "solve" (info (Solve <$> solveOptsParser) (progDesc "Generate a witness"))
 
 data Command
   = Compile CompileOpts
   | Solve SolveOpts
 
 data CompileOpts = CompileOpts
-  { optimizeOpts :: OptimizeOpts,
-    genDotFile :: Bool,
-    includeJson :: Bool
+  { coOptimizeOpts :: OptimizeOpts,
+    coGenDotFile :: Bool,
+    coIncludeJson :: Bool
   }
 
 compileOptsParser :: Parser CompileOpts
@@ -86,7 +86,8 @@ optimizeOptsParser =
       )
 
 data SolveOpts = SolveOpts
-  { inputsFile :: FilePath
+  { soInputsFile :: FilePath,
+    soIncludeJson :: Bool
   }
 
 solveOptsParser :: Parser SolveOpts
@@ -97,6 +98,10 @@ solveOptsParser =
           <> help "inputs json file"
           <> showDefault
           <> value "inputs.json"
+      )
+    <*> switch
+      ( long "json"
+          <> help "also write json versions of artifacts"
       )
 
 defaultMain ::
@@ -111,7 +116,7 @@ defaultMain progName program = do
   case cmd opts of
     Compile compilerOpts -> do
       let BuilderState {..} = snd $ runCircuitBuilder program
-          prog = optimize (optimizeOpts compilerOpts) $ mkCircomProgram bsVars bsCircuit
+          prog = optimize (coOptimizeOpts compilerOpts) $ mkCircomProgram bsVars bsCircuit
           r1cs = r1csToCircomR1CS $ toR1CS (cpVars prog) (cpCircuit prog)
       createDirectoryIfMissing True outDir
       encodeFile (r1csFilePath outDir) r1cs
@@ -119,17 +124,20 @@ defaultMain progName program = do
       -- We generarate a template json file for the inputs with default values set to null
       let inputsTemplate = map (const A.Null) $ labelToVar $ cvInputsLabels $ cpVars prog
       A.encodeFile (inputsTemplateFilePath outDir) inputsTemplate
-      when (includeJson compilerOpts) $ do
+      when (coIncludeJson compilerOpts) $ do
         A.encodeFile (r1csFilePath outDir <> ".json") (map fromP r1cs)
-      when (genDotFile compilerOpts) $ do
+        A.encodeFile (binFilePath outDir <> ".json") (map fromP prog)
+      when (coGenDotFile compilerOpts) $ do
         writeFile (dotFilePath outDir) $ arithCircuitToDot (cpCircuit prog)
     Solve solveOpts -> do
       inputs <- do
-        mInputs <- decodeFileStrict (inputsFile solveOpts)
+        mInputs <- decodeFileStrict (soInputsFile solveOpts)
         maybe (panic "Failed to decode inputs") (pure . map (fromInteger @f)) mInputs
       circuit <- decodeFile (binFilePath outDir)
       let wtns = nativeGenWitness circuit inputs
       encodeFile (witnessFilePath outDir) wtns
+      when (soIncludeJson solveOpts) $ do
+        A.encodeFile (witnessFilePath outDir <> ".json") (map fromP wtns)
   where
     baseFilePath :: FilePath -> FilePath
     baseFilePath dir = dir <> "/" <> Text.unpack progName

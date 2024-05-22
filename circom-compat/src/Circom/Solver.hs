@@ -25,6 +25,7 @@ where
 
 import Circom.R1CS (CircomWitness, FieldSize (..), circomReindexMap, integerFromLittleEndian, integerToLittleEndian, n32, witnessToCircomWitness)
 import Circuit
+import Data.Aeson (ToJSON)
 import Data.Binary (Binary)
 import Data.Field.Galois (GaloisField, PrimeField (fromP), char)
 import Data.IORef (IORef, readIORef, writeIORef)
@@ -46,6 +47,15 @@ data CircomProgram f = CircomProgram
   deriving (Generic)
 
 instance (Binary f) => Binary (CircomProgram f)
+
+instance Functor CircomProgram where
+  fmap f CircomProgram {cpVars, cpCircuit} =
+    CircomProgram
+      { cpVars,
+        cpCircuit = fmap f cpCircuit
+      }
+
+instance (ToJSON f) => ToJSON (CircomProgram f)
 
 mkCircomProgram ::
   CircuitVars Text ->

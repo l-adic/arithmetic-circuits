@@ -30,7 +30,7 @@ import Circuit.Affine
   ( AffineCircuit (..),
     evalAffineCircuit,
   )
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON, ToJSON, ToJSONKey)
 import Data.Binary (Binary)
 import Data.Field.Galois (PrimeField, fromP)
 import Data.IntMap qualified as IntMap
@@ -300,6 +300,8 @@ data CircuitVars label = CircuitVars
 
 instance (Binary label) => Binary (CircuitVars label)
 
+instance (ToJSON label, ToJSONKey label) => ToJSON (CircuitVars label)
+
 instance (Pretty label) => Pretty (CircuitVars label) where
   pretty CircuitVars {cvVars, cvPrivateInputs, cvPublicInputs, cvOutputs, cvInputsLabels} =
     vcat
@@ -406,6 +408,8 @@ data InputBindings label = InputBindings
   deriving (Show, Generic, NFData)
 
 instance (Binary label) => Binary (InputBindings label)
+
+instance (ToJSON label, ToJSONKey label) => ToJSON (InputBindings label)
 
 mapLabels :: (Ord l2) => (l1 -> l2) -> InputBindings l1 -> InputBindings l2
 mapLabels f InputBindings {labelToVar, varToLabel} =

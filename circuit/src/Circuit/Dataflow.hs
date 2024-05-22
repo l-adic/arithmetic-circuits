@@ -21,6 +21,7 @@ newtype Roots a = DEnv {dfRoots :: IntSet}
 
 addRoot :: Int -> State (Roots a) ()
 addRoot x = modify (\s -> s {dfRoots = IntSet.insert x (dfRoots s)})
+{-# INLINE addRoot #-}
 
 data Env a = Env
   { gatesMap :: Map GateId (Gate a Wire),
