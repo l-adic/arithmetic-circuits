@@ -474,6 +474,7 @@ instance Reindexable Wire where
 
 instance Reindexable (AffineCircuit f Wire) where
   reindex f (Add l r) = Add (reindex f l) (reindex f r)
+  reindex f (ScalarMul c a) = ScalarMul c (reindex f a)
   reindex f (Var i) = Var $ reindex f i
   reindex _ a = a
 

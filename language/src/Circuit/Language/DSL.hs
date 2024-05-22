@@ -24,6 +24,7 @@ module Circuit.Language.DSL
     not_,
     nots_,
     eq_,
+    neq_,
     fieldInput,
     boolInput,
     fieldOutput,
@@ -114,6 +115,9 @@ xors_ = binOp_ BXors
 -- | Negate expression
 not_ :: (Hashable f) => Signal f 'TBool -> Signal f 'TBool
 not_ = unOp_ UNot
+
+neq_ :: (Hashable f) => Signal f 'TField -> Signal f 'TField -> Signal f 'TBool
+neq_ a b = not_ (eq_ a b)
 
 nots_ :: (Hashable f) => Signal f ('TVec n 'TBool) -> Signal f ('TVec n 'TBool)
 nots_ = unOp_ UNots

@@ -13,7 +13,12 @@ type Fr = Prime 2188824287183927522224640574525727508854836440041603434369820418
 
 program :: ExprM Fr (Var Wire Fr 'TBool)
 program = do
-  n <- var_ <$> fieldInput Public "n"
   a <- var_ <$> fieldInput Private "a"
   b <- var_ <$> fieldInput Private "b"
-  boolOutput "out" $ eq_ n (a * b)
+  n <- var_ <$> fieldInput Public "n"
+  let cs =
+        [ neq_ n a,
+          neq_ n b,
+          eq_ n (a * b)
+        ]
+  boolOutput "out" $ unAnd_ $ foldMap And_ cs
