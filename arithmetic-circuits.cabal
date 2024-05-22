@@ -112,8 +112,7 @@ library circom-compat
   other-modules:      Paths_arithmetic_circuits
   hs-source-dirs:     circom-compat/src
   build-depends:
-      aeson-pretty
-    , arithmetic-circuits
+      arithmetic-circuits
     , arithmetic-circuits:language
     , binary
     , bytestring

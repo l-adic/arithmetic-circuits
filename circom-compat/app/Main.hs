@@ -1,15 +1,10 @@
 module Main where
 
 import Circom.CLI (defaultMain)
-import Circom.R1CS (r1csToCircomR1CS)
-import Circom.Solver (CircomProgram (..), mkCircomProgram, nativeGenWitness)
 import Circuit
 import Circuit.Language
-import Data.Binary (decodeFile, encodeFile)
 import Data.Field.Galois (Prime)
-import Data.Map qualified as Map
 import Protolude
-import R1CS (toR1CS)
 
 main :: IO ()
 main = defaultMain "factors" program
