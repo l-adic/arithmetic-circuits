@@ -161,10 +161,10 @@ optimize opts =
     performRemoveUnreachable :: Endo (CircomProgram f)
     performRemoveUnreachable =
       if (removeUnreachable opts)
-        then mempty
-        else Endo $ \prog ->
+        then Endo $ \prog ->
           let outVars :: [Int]
               outVars = IntSet.toList $ cvOutputs $ cpVars prog
               (newCircuit, usedVars) = DataFlow.removeUnreachable outVars (cpCircuit prog)
               newVars = restrictVars (cpVars prog) usedVars
            in mkCircomProgram newVars newCircuit
+        else mempty

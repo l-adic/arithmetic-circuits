@@ -47,7 +47,7 @@ removeUnreachable ::
   [Int] ->
   ArithCircuit a ->
   (ArithCircuit a, IntSet)
-removeUnreachable outVars cs =
+removeUnreachable outVars cs@(ArithCircuit gs) =
   let gatesMap = numberGates cs
       env =
         Env
@@ -62,7 +62,8 @@ removeUnreachable outVars cs =
             exploreVars env outVars
             roots <- gets dfRoots
             pure $ IntSet.foldl (\acc root -> acc `Set.union` findGates env root) mempty roots
-   in ( ArithCircuit $ Set.toList foundGates,
+   in -- we have to preserve the order of the gates here
+      ( ArithCircuit $ filter (\x -> x `Set.member` foundGates) gs,
         dfRoots usedVars
       )
   where
