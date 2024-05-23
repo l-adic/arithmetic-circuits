@@ -44,11 +44,11 @@ common deps
   build-depends:
       aeson           >=1.4
     , base            >=4.10  && <5
+    , binary          >=0.8.9 && <0.9
     , containers      >=0.6.0
     , filepath        >=1.4.2
     , finite-typelits >=0.1.0
     , galois-field    >=2.0.0
-    , process
     , propagators
     , protolude       >=0.2
     , semirings       >=0.7
@@ -103,16 +103,19 @@ library circom-compat
   import: deps, extensions, warnings
   visibility: public
   exposed-modules:
-    Circuit.Solver.Circom
     FNV
-    R1CS.Circom
+    Circom.CLI
+    Circom.Solver
+    Circom.R1CS
 
   other-modules:      Paths_arithmetic_circuits
   hs-source-dirs:     circom-compat/src
   build-depends:
       arithmetic-circuits
-    , binary
+    , arithmetic-circuits:language
     , bytestring
+    , directory
+    , optparse-applicative
     , vector
 
   ghc-options:        -freverse-errors -O2 -Wall
@@ -166,8 +169,7 @@ executable factors
   import:           warnings, extensions, deps
   main-is:          Main.hs
   build-depends:
-      binary
-    , arithmetic-circuits
+      arithmetic-circuits
     , arithmetic-circuits:language
     , arithmetic-circuits:circom-compat
     , vector
@@ -213,7 +215,7 @@ test-suite circom-compat-tests
 
   other-modules:
     Paths_arithmetic_circuits
-    Test.R1CS.Circom
+    Test.Circom.R1CS
 
   hs-source-dirs:     circom-compat/test
 
@@ -227,7 +229,6 @@ test-suite circom-compat-tests
     , tasty-quickcheck      >=0.10
     , hspec
     , QuickCheck
-    , binary
 
   build-tool-depends: tasty-discover:tasty-discover >=4.2
 

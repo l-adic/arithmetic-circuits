@@ -19,7 +19,7 @@ module Circuit.Arithmetic
     lookupVar,
     booleanWires,
     nGates,
-    InputBidings (..),
+    InputBindings (..),
     insertInputBinding,
     Reindexable (..),
     restrictVars,
@@ -30,7 +30,8 @@ import Circuit.Affine
   ( AffineCircuit (..),
     evalAffineCircuit,
   )
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON, ToJSON, ToJSONKey)
+import Data.Binary (Binary)
 import Data.Field.Galois (PrimeField, fromP)
 import Data.IntMap qualified as IntMap
 import Data.IntSet qualified as IntSet
@@ -54,6 +55,8 @@ instance FromJSON InputType
 
 instance ToJSON InputType
 
+instance Binary InputType
+
 -- | Wires are can be labeled in the ways given in this data type
 data Wire
   = InputWire Text InputType Int
@@ -67,6 +70,8 @@ instance ToJSON Wire
 
 instance Hashable Wire where
   hashWithSalt s w = s `hashWithSalt` (0 :: Int) `hashWithSalt` (wireName w)
+
+instance Binary Wire
 
 instance Pretty Wire where
   pretty (InputWire label t v) =
@@ -108,6 +113,8 @@ deriving instance Functor (Gate f)
 deriving instance Foldable (Gate f)
 
 deriving instance Traversable (Gate f)
+
+instance (Binary i, Binary f) => Binary (Gate f i)
 
 instance Bifunctor Gate where
   bimap f g = \case
@@ -211,6 +218,8 @@ instance (FromJSON f) => FromJSON (ArithCircuit f)
 
 instance (ToJSON f) => ToJSON (ArithCircuit f)
 
+instance (Binary f) => Binary (ArithCircuit f)
+
 instance Functor ArithCircuit where
   fmap f (ArithCircuit gates) = ArithCircuit $ map (first f) gates
 
@@ -285,9 +294,13 @@ data CircuitVars label = CircuitVars
     cvPrivateInputs :: IntSet,
     cvPublicInputs :: IntSet,
     cvOutputs :: IntSet,
-    cvInputsLabels :: InputBidings label
+    cvInputsLabels :: InputBindings label
   }
-  deriving (Show)
+  deriving (Show, Generic, NFData)
+
+instance (Binary label) => Binary (CircuitVars label)
+
+instance (ToJSON label, ToJSONKey label) => ToJSON (CircuitVars label)
 
 instance (Pretty label) => Pretty (CircuitVars label) where
   pretty CircuitVars {cvVars, cvPrivateInputs, cvPublicInputs, cvOutputs, cvInputsLabels} =
@@ -365,7 +378,7 @@ restrictVars CircuitVars {..} vars =
       cvPrivateInputs = IntSet.intersection cvPrivateInputs vars,
       cvPublicInputs = IntSet.intersection cvPublicInputs vars,
       cvOutputs = IntSet.intersection cvOutputs vars,
-      cvInputsLabels = cvInputsLabels
+      cvInputsLabels = restrictInputBindings vars cvInputsLabels
     }
 
 assignInputs :: (Ord label) => CircuitVars label -> Map label f -> IntMap f
@@ -388,22 +401,26 @@ nGates :: ArithCircuit f -> Int
 nGates (ArithCircuit gates) = length gates
 
 --------------------------------------------------------------------------------
-data InputBidings label = InputBidings
+data InputBindings label = InputBindings
   { labelToVar :: Map label Int,
     varToLabel :: IntMap label
   }
-  deriving (Show)
+  deriving (Show, Generic, NFData)
 
-mapLabels :: (Ord l2) => (l1 -> l2) -> InputBidings l1 -> InputBidings l2
-mapLabels f InputBidings {labelToVar, varToLabel} =
-  InputBidings
+instance (Binary label) => Binary (InputBindings label)
+
+instance (ToJSON label, ToJSONKey label) => ToJSON (InputBindings label)
+
+mapLabels :: (Ord l2) => (l1 -> l2) -> InputBindings l1 -> InputBindings l2
+mapLabels f InputBindings {labelToVar, varToLabel} =
+  InputBindings
     { labelToVar = Map.mapKeys f labelToVar,
       varToLabel = fmap f varToLabel
     }
 
-instance Reindexable (InputBidings label) where
-  reindex f InputBidings {..} =
-    InputBidings
+instance Reindexable (InputBindings label) where
+  reindex f InputBindings {..} =
+    InputBindings
       { labelToVar = Map.mapMaybe (flip IntMap.lookup f) labelToVar,
         varToLabel = IntMap.compose varToLabel (reverseMap f)
       }
@@ -411,33 +428,40 @@ instance Reindexable (InputBidings label) where
       reverseMap :: IntMap Int -> IntMap Int
       reverseMap = IntMap.foldlWithKey' (\acc k v -> IntMap.insert v k acc) mempty
 
-instance (Ord label) => Semigroup (InputBidings label) where
+instance (Ord label) => Semigroup (InputBindings label) where
   a <> b =
-    InputBidings
+    InputBindings
       { labelToVar = labelToVar a <> labelToVar b,
         varToLabel = varToLabel a <> varToLabel b
       }
 
-instance (Ord label) => Monoid (InputBidings label) where
+instance (Ord label) => Monoid (InputBindings label) where
   mempty =
-    InputBidings
+    InputBindings
       { labelToVar = mempty,
         varToLabel = mempty
       }
 
-instance (Pretty label) => Pretty (InputBidings label) where
-  pretty InputBidings {labelToVar} =
+instance (Pretty label) => Pretty (InputBindings label) where
+  pretty InputBindings {labelToVar} =
     pretty $ Map.toList labelToVar
 
-insertInputBinding :: (Ord label) => label -> Int -> InputBidings label -> InputBidings label
-insertInputBinding label var InputBidings {..} =
-  InputBidings
+insertInputBinding :: (Ord label) => label -> Int -> InputBindings label -> InputBindings label
+insertInputBinding label var InputBindings {..} =
+  InputBindings
     { labelToVar = Map.insert label var labelToVar,
       varToLabel = IntMap.insert var label varToLabel
     }
 
-inputBindingsFromList :: (Ord label) => [(label, Int)] -> InputBidings label
+inputBindingsFromList :: (Ord label) => [(label, Int)] -> InputBindings label
 inputBindingsFromList = foldl' (flip $ uncurry insertInputBinding) mempty
+
+restrictInputBindings :: IntSet -> InputBindings label -> InputBindings label
+restrictInputBindings s InputBindings {..} =
+  InputBindings
+    { labelToVar = Map.filter (\a -> a `IntSet.member` s) labelToVar,
+      varToLabel = IntMap.restrictKeys varToLabel s
+    }
 
 --------------------------------------------------------------------------------
 
@@ -454,6 +478,7 @@ instance Reindexable Wire where
 
 instance Reindexable (AffineCircuit f Wire) where
   reindex f (Add l r) = Add (reindex f l) (reindex f r)
+  reindex f (ScalarMul c a) = ScalarMul c (reindex f a)
   reindex f (Var i) = Var $ reindex f i
   reindex _ a = a
 

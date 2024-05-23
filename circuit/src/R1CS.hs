@@ -80,6 +80,9 @@ mkLinearPoly = \case
 
 newtype R1C f = R1C (LinearPoly f, LinearPoly f, LinearPoly f) deriving (Eq, Show, Generic)
 
+instance Functor R1C where
+  fmap f (R1C (a, b, c)) = R1C (fmap f a, fmap f b, fmap f c)
+
 instance (ToJSON f) => ToJSON (R1C f)
 
 instance (FromJSON f) => FromJSON (R1C f)

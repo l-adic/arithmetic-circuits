@@ -13,7 +13,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/l-adic/galois-fields.git
-  tag: b0867ffdebda5043c80315a51b15e82ed25acba6
+  tag: 525521de7b985364f7e0c32222fc3b21fea8e530
   --sha256: j/zGFd2aeowzJfgCCBmJYmG8mDsfF0irqj/cPOw9ulE=
 
 source-repository-package

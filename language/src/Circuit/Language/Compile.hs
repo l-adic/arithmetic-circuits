@@ -192,6 +192,7 @@ addVar s = case s of
 addWire :: (MonadState (BuilderState f) m, Num f) => SignalSource f -> m Wire
 addWire x = case x of
   WireSource w -> pure w
+  AffineSource (Var w) -> pure w
   AffineSource c -> do
     mulOut <- imm
     emit $ Mul (ConstGate 1) c mulOut

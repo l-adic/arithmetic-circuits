@@ -11,6 +11,7 @@ module Circuit.Affine
 where
 
 import Data.Aeson (FromJSON, ToJSON)
+import Data.Binary (Binary)
 import Data.Map qualified as Map
 import Protolude
 import Text.PrettyPrint.Leijen.Text
@@ -29,6 +30,8 @@ data AffineCircuit f i
   | ConstGate f
   | Var i
   deriving (Read, Eq, Ord, Show, Generic, NFData)
+
+instance (Binary i, Binary f) => Binary (AffineCircuit f i)
 
 instance (FromJSON i, FromJSON f) => FromJSON (AffineCircuit f i)
 
