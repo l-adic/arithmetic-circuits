@@ -28,7 +28,7 @@ import Circuit
 import Data.Aeson (ToJSON)
 import Data.Binary (Binary)
 import Data.Field.Galois (GaloisField, PrimeField (fromP), char)
-import Data.IORef (IORef, readIORef, writeIORef)
+import Data.IORef (IORef, modifyIORef', readIORef, writeIORef)
 import Data.IntMap qualified as IntMap
 import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
@@ -115,7 +115,13 @@ mkProgramState ProgramEnv {peFieldSize} = do
       }
 
 _init :: ProgramEnv f -> IORef (ProgramState f) -> Int -> IO ()
-_init env st _ = writeBuffer env st 0
+_init env stRef _ = do
+  writeBuffer env stRef 0
+  modifyIORef' stRef $ \st ->
+    st
+      { psInputs = Inputs mempty,
+        psWitness = Witness mempty
+      }
 
 _getNVars :: ProgramEnv f -> Int
 _getNVars = peWitnessSize
