@@ -56,6 +56,7 @@ data Command
 
 data CompileOpts = CompileOpts
   { coOptimizeOpts :: OptimizeOpts,
+    coGenInputsTemplate :: Bool,
     coGenDotFile :: Bool,
     coIncludeJson :: Bool
   }
@@ -64,6 +65,10 @@ compileOptsParser :: Parser CompileOpts
 compileOptsParser =
   CompileOpts
     <$> optimizeOptsParser
+    <*> switch
+      ( long "inputs-template"
+          <> help "generate a template json file for the inputs"
+      )
     <*> switch
       ( long "dot"
           <> help "generate a dot file for the circuit"
@@ -121,9 +126,9 @@ defaultMain progName program = do
       createDirectoryIfMissing True outDir
       encodeFile (r1csFilePath outDir) r1cs
       encodeFile (binFilePath outDir) prog
-      -- We generarate a template json file for the inputs with default values set to null
-      let inputsTemplate = map (const A.Null) $ labelToVar $ cvInputsLabels $ cpVars prog
-      A.encodeFile (inputsTemplateFilePath outDir) inputsTemplate
+      when (coGenInputsTemplate compilerOpts) $ do
+        let inputsTemplate = map (const A.Null) $ labelToVar $ cvInputsLabels $ cpVars prog
+        A.encodeFile (inputsTemplateFilePath outDir) inputsTemplate
       when (coIncludeJson compilerOpts) $ do
         A.encodeFile (r1csFilePath outDir <> ".json") (map fromP r1cs)
         A.encodeFile (binFilePath outDir <> ".json") (map fromP prog)
