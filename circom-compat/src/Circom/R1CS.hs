@@ -11,6 +11,7 @@ module Circom.R1CS
     FieldSize (..),
     n32,
     circomReindexMap,
+    decodeR1CSHeaderFromFile,
     -- for testing
     integerFromLittleEndian,
     integerToLittleEndian,
@@ -20,7 +21,7 @@ where
 import Circuit (CircuitVars (..))
 import Data.Aeson (ToJSON)
 import Data.Binary (Binary (..), Get, Put)
-import Data.Binary.Get (getInt32le, getInt64le, getWord32le, getWord64le, lookAhead, skip)
+import Data.Binary.Get (getInt32le, getInt64le, getWord32le, getWord64le, lookAhead, skip, runGet)
 import Data.Binary.Put (putInt32le, putLazyByteString, putWord32le, putWord64le, runPut)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Field.Galois (GaloisField (char), PrimeField, fromP)
@@ -123,10 +124,28 @@ newtype FieldSize = FieldSize Int32
 n32 :: FieldSize -> Int
 n32 (FieldSize n) = fromIntegral n `div` 4
 
+decodeR1CSHeaderFromFile :: FilePath -> IO R1CSHeader
+decodeR1CSHeaderFromFile path = do
+  contents <- LBS.readFile path
+  let p = do
+        _ <- getPreamble 0x73633172
+        lookAhead findR1CSHeader
+  pure $ runGet p contents
+
+findR1CSHeader :: Get R1CSHeader
+findR1CSHeader = do
+  sectionType <- getWord32le
+  len <- getInt64le
+  case sectionType of
+    0x00000001 -> getR1CSHeader
+    _ -> do
+      skip $ fromIntegral len
+      findR1CSHeader
+
 instance (PrimeField k) => Binary (CircomR1CS k) where
   get = do
     preamble <- getPreamble 0x73633172
-    header <- lookAhead findHeader
+    header <- lookAhead findR1CSHeader
     builders <- replicateM (fromIntegral $ nSections preamble) (parseR1CSSection header)
     let def =
           CircomR1CS
@@ -136,16 +155,6 @@ instance (PrimeField k) => Binary (CircomR1CS k) where
               crWireMap = []
             }
     pure $ foldr (\(CircomR1CSBuilder f) acc -> f acc) def builders
-    where
-      findHeader :: Get R1CSHeader
-      findHeader = do
-        sectionType <- getWord32le
-        len <- getInt64le
-        case sectionType of
-          0x00000001 -> getR1CSHeader
-          _ -> do
-            skip $ fromIntegral len
-            findHeader
 
   put CircomR1CS {..} = do
     putPreamble crPreamble
@@ -390,7 +399,7 @@ witnessFromCircomWitness (CircomWitness {wtnsValues}) =
 instance (PrimeField k) => Binary (CircomWitness k) where
   get = do
     preamble <- getPreamble 0x736e7477
-    header <- lookAhead findHeader
+    header <- lookAhead findWitnessHeader
     builders <- replicateM (fromIntegral $ nSections preamble) (parseWitnessSection header)
     let def =
           CircomWitness
@@ -400,15 +409,15 @@ instance (PrimeField k) => Binary (CircomWitness k) where
             }
     pure $ foldr (\(CircomWitnessBuilder f) acc -> f acc) def builders
     where
-      findHeader :: Get WitnessHeader
-      findHeader = do
+      findWitnessHeader :: Get WitnessHeader
+      findWitnessHeader = do
         sectionType <- getWord32le
         len <- getInt64le
         case sectionType of
           0x00000001 -> getWitnessHeader
           _ -> do
             skip $ fromIntegral len
-            findHeader
+            findWitnessHeader
   put CircomWitness {..} = do
     putPreamble wtnsPreamble
     putHeaderSection
