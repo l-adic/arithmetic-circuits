@@ -2,7 +2,7 @@ module Circom.CLI (defaultMain) where
 
 import Circom.R1CS (r1csToCircomR1CS)
 import Circom.Solver (CircomProgram (..), mkCircomProgram, nativeGenWitness)
-import Circuit.Arithmetic (CircuitVars (cvInputsLabels, cvOutputs), InputBindings (labelToVar), restrictVars)
+import Circuit.Arithmetic (CircuitVars (..), InputBindings (labelToVar), restrictVars)
 import Circuit.Dataflow qualified as DataFlow
 import Circuit.Dot (arithCircuitToDot)
 import Circuit.Language.Compile (BuilderState (..), ExprM, runCircuitBuilder)
@@ -127,7 +127,9 @@ defaultMain progName program = do
       encodeFile (r1csFilePath outDir) r1cs
       encodeFile (binFilePath outDir) prog
       when (coGenInputsTemplate compilerOpts) $ do
-        let inputsTemplate = map (const A.Null) $ labelToVar $ cvInputsLabels $ cpVars prog
+        let vars = cpVars prog
+            inputsOnly = cvInputsLabels $ restrictVars vars (cvPrivateInputs vars `IntSet.union` cvPublicInputs vars)
+            inputsTemplate = map (const A.Null) $ labelToVar inputsOnly
         A.encodeFile (inputsTemplateFilePath outDir) inputsTemplate
       when (coIncludeJson compilerOpts) $ do
         A.encodeFile (r1csFilePath outDir <> ".json") (map fromP r1cs)
