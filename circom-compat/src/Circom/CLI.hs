@@ -16,6 +16,8 @@ import GHC.TypeNats (SNat, withKnownNat, withSomeSNat)
 import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, execParser, fullDesc, header, help, helper, hsubparser, info, long, progDesc, showDefault, strOption, switch, value)
 import Protolude
 import R1CS (R1CS, Witness, isValidWitness, toR1CS)
+import Data.Text.Read (decimal, hexadecimal)
+import Prelude (MonadFail (fail))
 
 data GlobalOpts = GlobalOpts
   { cmd :: Command
@@ -188,7 +190,7 @@ defaultMain progName program = do
     Solve solveOpts -> do
       inputs <- do
         mInputs <- decodeFileStrict (soInputsFile solveOpts)
-        maybe (panic "Failed to decode inputs") (pure . map (fromInteger @f)) mInputs
+        maybe (panic "Failed to decode inputs") (pure . map (fromInteger @f . unFieldElem)) mInputs
       let binFilePath = soCircuitBinFile solveOpts
       circuit <- decodeFile binFilePath 
       let wtns = nativeGenWitness circuit inputs
@@ -231,3 +233,16 @@ optimize opts =
               newVars = restrictVars (cpVars prog) usedVars
            in mkCircomProgram newVars newCircuit
         else mempty
+
+newtype FieldElem = FieldElem {unFieldElem :: Integer} deriving newtype (Eq, Ord, Enum, Num, Real, Integral)
+
+instance A.FromJSON FieldElem where
+  parseJSON v = case v of
+    A.String s ->
+      case hexadecimal s <> decimal s of
+        Left e -> fail e
+        Right (a, rest) ->
+          if Text.null rest
+            then pure a
+            else fail $ "FieldElem parser failed to consume all input: " <> Text.unpack rest
+    _ -> FieldElem <$> A.parseJSON v
