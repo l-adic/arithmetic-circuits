@@ -16,11 +16,9 @@ import GHC.TypeNats (SNat, withKnownNat, withSomeSNat)
 import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, execParser, fullDesc, header, help, helper, hsubparser, info, long, progDesc, showDefault, strOption, switch, value)
 import Protolude
 import R1CS (R1CS, Witness, isValidWitness, toR1CS)
-import System.Directory (createDirectoryIfMissing)
 
 data GlobalOpts = GlobalOpts
-  { outputDir :: FilePath,
-    cmd :: Command
+  { cmd :: Command
   }
 
 optsParser :: Text -> ParserInfo GlobalOpts
@@ -35,17 +33,11 @@ optsParser progName =
     globalOptsParser :: Parser GlobalOpts
     globalOptsParser =
       GlobalOpts
-        <$> strOption
-          ( long "output-dir"
-              <> help "output directory"
-              <> showDefault
-              <> value "circuit-output"
-          )
-        <*> hsubparser (compileCommand <> solveCommand <> verifyCommand)
+        <$> hsubparser (compileCommand <> solveCommand <> verifyCommand)
 
     compileCommand :: Mod CommandFields Command
     compileCommand =
-      command "compile" (info (Compile <$> compileOptsParser) (progDesc "Compile the program to an r1cs and constraint system"))
+      command "compile" (info (Compile <$> compileOptsParser progName) (progDesc "Compile the program to an r1cs and constraint system"))
 
     solveCommand :: Mod CommandFields Command
     solveCommand =
@@ -64,11 +56,13 @@ data CompileOpts = CompileOpts
   { coOptimizeOpts :: OptimizeOpts,
     coGenInputsTemplate :: Bool,
     coGenDotFile :: Bool,
-    coIncludeJson :: Bool
+    coIncludeJson :: Bool,
+    coR1CSFile :: FilePath,
+    coCircuitBinFile :: FilePath
   }
 
-compileOptsParser :: Parser CompileOpts
-compileOptsParser =
+compileOptsParser :: Text -> Parser CompileOpts
+compileOptsParser progName =
   CompileOpts
     <$> optimizeOptsParser
     <*> switch
@@ -82,6 +76,18 @@ compileOptsParser =
     <*> switch
       ( long "json"
           <> help "also write json versions of artifacts"
+      )
+    <*> strOption
+      ( long "r1cs"
+          <> help "r1cs output file"
+          <> showDefault
+          <> value (Text.unpack progName <> ".r1cs")
+      )
+    <*> strOption
+      ( long "constraints"
+          <> help "constraints output bin file"
+          <> showDefault
+          <> value (Text.unpack progName <> ".bin")
       )
 
 data OptimizeOpts = OptimizeOpts
@@ -99,6 +105,7 @@ optimizeOptsParser =
 data SolveOpts = SolveOpts
   { soInputsFile :: FilePath,
     soIncludeJson :: Bool,
+    soCircuitBinFile :: FilePath,
     soWitnessFile :: FilePath
   }
 
@@ -116,6 +123,12 @@ solveOptsParser progName =
           <> help "also write json versions of artifacts"
       )
     <*> strOption
+      ( long "constraints"
+          <> help "constraints output bin file"
+          <> showDefault
+          <> value (Text.unpack progName <> ".bin")
+      )
+    <*> strOption
       ( long "witness"
           <> help "witness output file"
           <> showDefault
@@ -123,13 +136,20 @@ solveOptsParser progName =
       )
 
 data VerifyOpts = VerifyOpts
-  { voWitnessFile :: FilePath
+  { voR1CSFile :: FilePath
+  , voWitnessFile :: FilePath
   }
 
 verifyOptsParser :: Text -> Parser VerifyOpts
 verifyOptsParser progName =
   VerifyOpts
     <$> strOption
+      ( long "r1cs"
+          <> help "r1cs file"
+          <> showDefault
+          <> value (Text.unpack progName <> ".r1cs")
+      )
+    <*> strOption
       ( long "witness"
           <> help "witness file"
           <> showDefault
@@ -144,54 +164,51 @@ defaultMain ::
   IO ()
 defaultMain progName program = do
   opts <- execParser (optsParser progName)
-  let outDir = outputDir opts
   case cmd opts of
     Compile compilerOpts -> do
       let BuilderState {..} = snd $ runCircuitBuilder program
           prog = optimize (coOptimizeOpts compilerOpts) $ mkCircomProgram bsVars bsCircuit
           r1cs = r1csToCircomR1CS $ toR1CS (cpVars prog) (cpCircuit prog)
-      createDirectoryIfMissing True outDir
-      encodeFile (r1csFilePath outDir) r1cs
-      encodeFile (binFilePath outDir) prog
+      let r1csFilePath = coR1CSFile compilerOpts
+      encodeFile r1csFilePath r1cs
+      let binFilePath = coCircuitBinFile compilerOpts
+      encodeFile binFilePath prog
       when (coGenInputsTemplate compilerOpts) $ do
         let vars = cpVars prog
             inputsOnly = cvInputsLabels $ restrictVars vars (cvPrivateInputs vars `IntSet.union` cvPublicInputs vars)
             inputsTemplate = map (const A.Null) $ labelToVar inputsOnly
-        A.encodeFile (inputsTemplateFilePath outDir) inputsTemplate
+            inputsTemplateFilePath = Text.unpack progName <> "-inputs-template.json"
+        A.encodeFile inputsTemplateFilePath inputsTemplate
       when (coIncludeJson compilerOpts) $ do
-        A.encodeFile (r1csFilePath outDir <> ".json") (map fromP r1cs)
-        A.encodeFile (binFilePath outDir <> ".json") (map fromP prog)
+        A.encodeFile (r1csFilePath <> ".json") (map fromP r1cs)
+        A.encodeFile (binFilePath <> ".json") (map fromP prog)
       when (coGenDotFile compilerOpts) $ do
-        writeFile (dotFilePath outDir) $ arithCircuitToDot (cpCircuit prog)
+        let dotFilePath = Text.unpack progName <> ".dot"
+        writeFile dotFilePath $ arithCircuitToDot (cpCircuit prog)
     Solve solveOpts -> do
       inputs <- do
         mInputs <- decodeFileStrict (soInputsFile solveOpts)
         maybe (panic "Failed to decode inputs") (pure . map (fromInteger @f)) mInputs
-      circuit <- decodeFile (binFilePath outDir)
+      let binFilePath = soCircuitBinFile solveOpts
+      circuit <- decodeFile binFilePath 
       let wtns = nativeGenWitness circuit inputs
-          wtnsFilePath = outDir <> "/" <> soWitnessFile solveOpts
+          wtnsFilePath =  soWitnessFile solveOpts
       encodeFile wtnsFilePath wtns
       when (soIncludeJson solveOpts) $ do
         A.encodeFile (wtnsFilePath <> ".json") (map fromP wtns)
     Verify verifyOpts -> do
-      cr1cs <- decodeR1CSHeaderFromFile (r1csFilePath outDir)
+      let r1csFilePath = voR1CSFile verifyOpts
+      cr1cs <- decodeR1CSHeaderFromFile r1csFilePath
       withSomeSNat (fromInteger $ rhPrime cr1cs) $ \(snat :: SNat p) ->
         withKnownNat @p snat $ do
-          r1cs :: R1CS (Prime p) <- r1csFromCircomR1CS <$> decodeFile (r1csFilePath outDir)
-          let wtnsFilePath = outDir <> "/" <> voWitnessFile verifyOpts
+          r1cs :: R1CS (Prime p) <- r1csFromCircomR1CS <$> decodeFile r1csFilePath
+          let wtnsFilePath = voWitnessFile verifyOpts
           wtns :: Witness (Prime p) <- witnessFromCircomWitness <$> decodeFile wtnsFilePath
           if isValidWitness wtns r1cs
             then print ("Witness is valid" :: Text)
             else do
               print ("Witness is invalid" :: Text)
               exitFailure
-  where
-    baseFilePath :: FilePath -> FilePath
-    baseFilePath dir = dir <> "/" <> Text.unpack progName
-    inputsTemplateFilePath dir = dir <> "/" <> "inputs-template.json"
-    binFilePath dir = baseFilePath dir <> ".bin"
-    r1csFilePath dir = baseFilePath dir <> ".r1cs"
-    dotFilePath dir = baseFilePath dir <> ".dot"
 
 optimize ::
   forall f.
