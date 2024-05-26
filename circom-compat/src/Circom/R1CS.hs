@@ -21,7 +21,7 @@ where
 import Circuit (CircuitVars (..))
 import Data.Aeson (ToJSON)
 import Data.Binary (Binary (..), Get, Put)
-import Data.Binary.Get (getInt32le, getInt64le, getWord32le, getWord64le, lookAhead, skip, runGet)
+import Data.Binary.Get (getInt32le, getInt64le, getWord32le, getWord64le, lookAhead, runGet, skip)
 import Data.Binary.Put (putInt32le, putLazyByteString, putWord32le, putWord64le, runPut)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Field.Galois (GaloisField (char), PrimeField, fromP)

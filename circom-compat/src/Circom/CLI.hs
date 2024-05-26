@@ -1,6 +1,6 @@
 module Circom.CLI (defaultMain) where
 
-import Circom.R1CS (r1csToCircomR1CS, r1csFromCircomR1CS, witnessFromCircomWitness, R1CSHeader (rhPrime), decodeR1CSHeaderFromFile)
+import Circom.R1CS (R1CSHeader (rhPrime), decodeR1CSHeaderFromFile, r1csFromCircomR1CS, r1csToCircomR1CS, witnessFromCircomWitness)
 import Circom.Solver (CircomProgram (..), mkCircomProgram, nativeGenWitness)
 import Circuit.Arithmetic (CircuitVars (..), InputBindings (labelToVar), restrictVars)
 import Circuit.Dataflow qualified as DataFlow
@@ -9,16 +9,14 @@ import Circuit.Language.Compile (BuilderState (..), ExprM, runCircuitBuilder)
 import Data.Aeson (decodeFileStrict)
 import Data.Aeson qualified as A
 import Data.Binary (decodeFile, encodeFile)
-import Data.Field.Galois (PrimeField (fromP), Prime)
+import Data.Field.Galois (Prime, PrimeField (fromP))
 import Data.IntSet qualified as IntSet
 import Data.Text qualified as Text
+import GHC.TypeNats (SNat, withKnownNat, withSomeSNat)
 import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, execParser, fullDesc, header, help, helper, hsubparser, info, long, progDesc, showDefault, strOption, switch, value)
 import Protolude
-import R1CS (toR1CS, isValidWitness, R1CS, Witness)
+import R1CS (R1CS, Witness, isValidWitness, toR1CS)
 import System.Directory (createDirectoryIfMissing)
-import GHC.TypeNats (withKnownNat, SNat, withSomeSNat)
-
-
 
 data GlobalOpts = GlobalOpts
   { outputDir :: FilePath,
@@ -51,16 +49,16 @@ optsParser progName =
 
     solveCommand :: Mod CommandFields Command
     solveCommand =
-      command "solve" (info (Solve <$> solveOptsParser) (progDesc "Generate a witness"))
+      command "solve" (info (Solve <$> solveOptsParser progName) (progDesc "Generate a witness"))
 
     verifyCommand :: Mod CommandFields Command
     verifyCommand =
-      command "verify" (info (pure Verify) (progDesc "Verify a witness"))
+      command "verify" (info (Verify <$> verifyOptsParser progName) (progDesc "Verify a witness"))
 
 data Command
   = Compile CompileOpts
   | Solve SolveOpts
-  | Verify
+  | Verify VerifyOpts
 
 data CompileOpts = CompileOpts
   { coOptimizeOpts :: OptimizeOpts,
@@ -100,11 +98,12 @@ optimizeOptsParser =
 
 data SolveOpts = SolveOpts
   { soInputsFile :: FilePath,
-    soIncludeJson :: Bool
+    soIncludeJson :: Bool,
+    soWitnessFile :: FilePath
   }
 
-solveOptsParser :: Parser SolveOpts
-solveOptsParser =
+solveOptsParser :: Text -> Parser SolveOpts
+solveOptsParser progName =
   SolveOpts
     <$> strOption
       ( long "inputs"
@@ -115,6 +114,26 @@ solveOptsParser =
     <*> switch
       ( long "json"
           <> help "also write json versions of artifacts"
+      )
+    <*> strOption
+      ( long "witness"
+          <> help "witness output file"
+          <> showDefault
+          <> value (Text.unpack progName <> ".wtns")
+      )
+
+data VerifyOpts = VerifyOpts
+  { voWitnessFile :: FilePath
+  }
+
+verifyOptsParser :: Text -> Parser VerifyOpts
+verifyOptsParser progName =
+  VerifyOpts
+    <$> strOption
+      ( long "witness"
+          <> help "witness file"
+          <> showDefault
+          <> value (Text.unpack progName <> ".wtns")
       )
 
 defaultMain ::
@@ -150,18 +169,20 @@ defaultMain progName program = do
         maybe (panic "Failed to decode inputs") (pure . map (fromInteger @f)) mInputs
       circuit <- decodeFile (binFilePath outDir)
       let wtns = nativeGenWitness circuit inputs
-      encodeFile (witnessFilePath outDir) wtns
+          wtnsFilePath = outDir <> "/" <> soWitnessFile solveOpts
+      encodeFile wtnsFilePath wtns
       when (soIncludeJson solveOpts) $ do
-        A.encodeFile (witnessFilePath outDir <> ".json") (map fromP wtns)
-    Verify -> do
+        A.encodeFile (wtnsFilePath <> ".json") (map fromP wtns)
+    Verify verifyOpts -> do
       cr1cs <- decodeR1CSHeaderFromFile (r1csFilePath outDir)
       withSomeSNat (fromInteger $ rhPrime cr1cs) $ \(snat :: SNat p) ->
         withKnownNat @p snat $ do
           r1cs :: R1CS (Prime p) <- r1csFromCircomR1CS <$> decodeFile (r1csFilePath outDir)
-          wtns :: Witness (Prime p) <- witnessFromCircomWitness <$> decodeFile (witnessFilePath outDir)
+          let wtnsFilePath = outDir <> "/" <> voWitnessFile verifyOpts
+          wtns :: Witness (Prime p) <- witnessFromCircomWitness <$> decodeFile wtnsFilePath
           if isValidWitness wtns r1cs
             then print ("Witness is valid" :: Text)
-            else do 
+            else do
               print ("Witness is invalid" :: Text)
               exitFailure
   where
@@ -170,7 +191,6 @@ defaultMain progName program = do
     inputsTemplateFilePath dir = dir <> "/" <> "inputs-template.json"
     binFilePath dir = baseFilePath dir <> ".bin"
     r1csFilePath dir = baseFilePath dir <> ".r1cs"
-    witnessFilePath dir = baseFilePath dir <> ".wtns"
     dotFilePath dir = baseFilePath dir <> ".dot"
 
 optimize ::
