@@ -11,13 +11,12 @@ import Data.Aeson qualified as A
 import Data.Binary (decodeFile, encodeFile)
 import Data.Field.Galois (Prime, PrimeField (fromP))
 import Data.IntSet qualified as IntSet
-import Data.Map qualified as Map
 import Data.Text qualified as Text
-import Data.Text.Read (decimal, hexadecimal)
 import GHC.TypeNats (SNat, withKnownNat, withSomeSNat)
 import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, execParser, fullDesc, header, help, helper, hsubparser, info, long, progDesc, showDefault, strOption, switch, value)
 import Protolude
 import R1CS (R1CS, Witness, isValidWitness, toR1CS)
+import Data.Text.Read (decimal, hexadecimal)
 import Prelude (MonadFail (fail))
 
 data GlobalOpts = GlobalOpts
@@ -139,8 +138,8 @@ solveOptsParser progName =
       )
 
 data VerifyOpts = VerifyOpts
-  { voR1CSFile :: FilePath,
-    voWitnessFile :: FilePath
+  { voR1CSFile :: FilePath
+  , voWitnessFile :: FilePath
   }
 
 verifyOptsParser :: Text -> Parser VerifyOpts
@@ -191,11 +190,11 @@ defaultMain progName program = do
     Solve solveOpts -> do
       inputs <- do
         mInputs <- decodeFileStrict (soInputsFile solveOpts)
-        maybe (panic "Failed to decode inputs") (pure . mkInputs @f) mInputs
+        maybe (panic "Failed to decode inputs") (pure . map (fromInteger @f . unFieldElem)) mInputs
       let binFilePath = soCircuitBinFile solveOpts
-      circuit <- decodeFile binFilePath
+      circuit <- decodeFile binFilePath 
       let wtns = nativeGenWitness circuit inputs
-          wtnsFilePath = soWitnessFile solveOpts
+          wtnsFilePath =  soWitnessFile solveOpts
       encodeFile wtnsFilePath wtns
       when (soIncludeJson solveOpts) $ do
         A.encodeFile (wtnsFilePath <> ".json") (map fromP wtns)
@@ -235,8 +234,6 @@ optimize opts =
            in mkCircomProgram newVars newCircuit
         else mempty
 
---------------------------------------------------------------------------------
-
 newtype FieldElem = FieldElem {unFieldElem :: Integer} deriving newtype (Eq, Ord, Enum, Num, Real, Integral)
 
 instance A.FromJSON FieldElem where
@@ -249,24 +246,3 @@ instance A.FromJSON FieldElem where
             then pure a
             else fail $ "FieldElem parser failed to consume all input: " <> Text.unpack rest
     _ -> FieldElem <$> A.parseJSON v
-
-data Input
-  = Simple FieldElem
-  | Multiple [FieldElem]
-
-instance A.FromJSON Input where
-  parseJSON v = case v of
-    A.Array as -> Multiple . toList <$> traverse A.parseJSON as
-    _ -> Simple <$> A.parseJSON v
-
-newtype Inputs = Inputs (Map Text Input) deriving newtype (A.FromJSON)
-
-mkInputs :: forall f. (PrimeField f) => Inputs -> Map Text f
-mkInputs (Inputs m) =
-  let f (label, input) = case input of
-        Simple a -> [(label, fromInteger @f . unFieldElem $ a)]
-        Multiple as -> zipWith (g label) [0 ..] as
-   in Map.fromList . concatMap f . Map.toList $ m
-  where
-    g l (idx :: Int) a =
-      (l <> "[" <> show idx <> "]", fromInteger @f . unFieldElem $ a)
