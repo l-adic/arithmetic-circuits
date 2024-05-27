@@ -27,6 +27,8 @@ module Circuit.Language.DSL
     neq_,
     fieldInput,
     boolInput,
+    fieldInputs,
+    boolInputs,
     fieldOutput,
     boolOutput,
     fieldsOutput,
@@ -134,6 +136,20 @@ fieldInput it label =
     Public -> VarField <$> freshPublicInput label
     Private -> VarField <$> freshPrivateInput label
 {-# INLINE fieldInput #-}
+
+fieldInputs :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TField))
+fieldInputs it label =
+  SV.generateM $ \fin ->
+    let label' = label <> "[" <> show (toInteger fin) <> "]"
+     in fieldInput it label'
+{-# INLINE fieldInputs #-}
+
+boolInputs :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TBool))
+boolInputs it label =
+  SV.generateM $ \fin ->
+    let label' = label <> "[" <> show (toInteger fin) <> "]"
+     in boolInput it label'
+{-# INLINE boolInputs #-}
 
 boolInput :: InputType -> Text -> ExprM f (Var Wire f 'TBool)
 boolInput it label = case it of
