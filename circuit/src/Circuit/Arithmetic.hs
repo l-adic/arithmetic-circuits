@@ -81,7 +81,7 @@ instance Pretty Wire where
     let a = case t of
           Public -> "pub"
           Private -> "priv"
-        suffix = if Text.null label then "" else "_" <> label <> "[" <> show offset <> "]"
+        suffix = if Text.null label then "" else "_" <> label <> "_" <> show offset
      in text (a <> "_input_") <> pretty v <> pretty suffix
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
