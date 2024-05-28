@@ -26,11 +26,13 @@ module Circuit.Language.DSL
     eq_,
     neq_,
     fieldInput,
+    fieldInputs,
     boolInput,
+    boolInputs,
     fieldOutput,
     boolOutput,
-    fieldsOutput,
-    boolsOutput,
+    fieldOutputs,
+    boolOutputs,
     compileWithWire,
     split_,
     join_,
@@ -131,33 +133,80 @@ negs_ = unOp_ UNegs
 fieldInput :: InputType -> Text -> ExprM f (Var Wire f 'TField)
 fieldInput it label =
   case it of
-    Public -> VarField <$> freshPublicInput label
-    Private -> VarField <$> freshPrivateInput label
+    Public -> VarField <$> freshPublicInput label 0
+    Private -> VarField <$> freshPrivateInput label 0
 {-# INLINE fieldInput #-}
+
+fieldInputs :: KnownNat n => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TField))
+fieldInputs it label = 
+  case it of
+    Public -> SV.generateM (\fin -> 
+        let i = fromIntegral fin
+        in VarField <$> freshPublicInput label i
+      )
+    Private -> SV.generateM (\fin -> 
+        let i = fromIntegral fin
+        in VarField <$> freshPrivateInput label i
+      )
+{-# INLINE fieldInputs #-}
 
 boolInput :: InputType -> Text -> ExprM f (Var Wire f 'TBool)
 boolInput it label = case it of
-  Public -> VarBool <$> freshPublicInput label
-  Private -> VarBool <$> freshPrivateInput label
+  Public -> VarBool <$> freshPublicInput label 0 
+  Private -> VarBool <$> freshPrivateInput label 0
 {-# INLINE boolInput #-}
+
+boolInputs :: KnownNat n => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TBool))
+boolInputs it label = 
+  case it of
+    Public -> SV.generateM (\fin -> 
+        let i = fromIntegral fin
+        in VarBool <$> freshPublicInput label i
+      )
+    Private -> SV.generateM (\fin -> 
+        let i = fromIntegral fin
+        in VarBool <$> freshPrivateInput label i
+      )
+{-# INLINE boolInputs #-}
 
 fieldOutput :: (Hashable f, GaloisField f) => Text -> Signal f 'TField -> ExprM f (Var Wire f 'TField)
 fieldOutput label s = do
-  out <- VarField <$> freshOutput label
+  out <- VarField <$> freshOutput label 0
   compileWithWire out s
 {-# INLINE fieldOutput #-}
 
-fieldsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f 'TField) -> Signal f ('TVec n 'TField) -> ExprM f (Vector n (Var Wire f 'TField))
-fieldsOutput vs s = fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
+fieldOutputs :: forall n f.
+  (KnownNat n, Hashable f, GaloisField f) => 
+  Text -> 
+  Signal f ('TVec n 'TField) -> 
+  ExprM f (Vector n (Var Wire f 'TField))
+fieldOutputs label s = do
+  vs <- SV.generateM @n (\fin -> 
+          let i = fromIntegral fin
+          in VarField <$> freshOutput label i
+        )
+  fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
 
 boolOutput :: forall f. (Hashable f, GaloisField f) => Text -> Signal f 'TBool -> ExprM f (Var Wire f 'TBool)
 boolOutput label s = do
-  out <- VarBool <$> freshOutput label
+  out <- VarBool <$> freshOutput label 0
   unsafeCoerce <$> compileWithWire (boolToField @(Var Wire f 'TBool) out) (boolToField s)
 {-# INLINE boolOutput #-}
 
-boolsOutput :: (KnownNat n, Hashable f, GaloisField f) => Vector n (Var Wire f 'TBool) -> Signal f ('TVec n 'TBool) -> ExprM f (Vector n (Var Wire f 'TBool))
-boolsOutput vs s = unsafeCoerce <$> fieldsOutput (boolToField <$> vs) (boolToField s)
+boolOutputs :: 
+  forall n f. 
+  (KnownNat n, Hashable f, GaloisField f) => 
+  Text ->
+  Signal f ('TVec n 'TBool) -> 
+  ExprM f (Vector n (Var Wire f 'TBool))
+boolOutputs label s = do
+  vs <- SV.generateM @n (\fin -> 
+          let i = fromIntegral fin
+          in VarBool <$> freshOutput label i
+        )
+  out <- fromJust . SV.toSized @n <$> 
+    compileWithWires (SV.fromSized $ map (boolToField @(Var Wire f 'TBool) ) vs) s
+  pure $ unsafeCoerce out
 
 truncate_ ::
   forall f ty n m.

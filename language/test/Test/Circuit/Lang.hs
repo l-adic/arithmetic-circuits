@@ -9,9 +9,7 @@ import Data.Field.Galois (Prime, PrimeField (fromP))
 import Data.Finite (Finite)
 import Data.IntMap qualified as IntMap
 import Data.Map qualified as Map
-import Data.Maybe (fromJust)
 import Data.Vector qualified as V
-import Data.Vector.Sized qualified as SV
 import Protolude
 import Test.QuickCheck (Arbitrary (arbitrary), Property, forAll, vectorOf, (.&&.), (=/=), (===), (==>))
 
@@ -30,7 +28,7 @@ bitSplitJoin = do
 prop_bitsSplitJoin :: Fr -> Property
 prop_bitsSplitJoin x =
   let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder bitSplitJoin
-      input = assignInputs bsVars $ Map.singleton "x" x
+      input = assignInputs bsVars $ Map.singleton "x" (Simple x)
       w = solve bsVars bsCircuit input
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
    in lookupVar bsVars "out" w === Just x .&&. computed === Right (V.singleton x)
@@ -39,7 +37,7 @@ prop_bitsSplitJoinContra :: Fr -> Fr -> Property
 prop_bitsSplitJoinContra x y =
   (x /= y) ==>
     let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder bitSplitJoin
-        input = assignInputs bsVars $ Map.singleton "x" x
+        input = assignInputs bsVars $ Map.singleton "x" (Simple x)
         w = solve bsVars bsCircuit input
      in lookupVar bsVars "out" w =/= Just y
 
@@ -55,7 +53,7 @@ factors = do
 prop_factorization :: Fr -> Fr -> Property
 prop_factorization x y =
   let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder factors
-      inputs = assignInputs bsVars $ Map.fromList [("n", x * y), ("a", x), ("b", y)]
+      inputs = assignInputs bsVars $ Map.fromList [("n", Simple $ x * y), ("a", Simple x), ("b", Simple y)]
       w = solve bsVars bsCircuit inputs
       computed = evalExpr IntMap.lookup inputs (relabelExpr wireName prog)
    in lookupVar bsVars "out" w === Just 1 .&&. computed === Right (V.singleton 1)
@@ -64,7 +62,7 @@ prop_factorizationContra :: Fr -> Fr -> Fr -> Property
 prop_factorizationContra x y z =
   (x * y /= z) ==>
     let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder factors
-        inputs = assignInputs bsVars $ Map.fromList [("n", z), ("a", x), ("b", y)]
+        inputs = assignInputs bsVars $ Map.fromList [("n", Simple z), ("a", Simple x), ("b", Simple y)]
         w = solve bsVars bsCircuit inputs
         computed = evalExpr IntMap.lookup inputs (relabelExpr wireName prog)
      in lookupVar bsVars "out" w == Just 0 .&&. computed == Right (V.singleton 0)
@@ -82,7 +80,7 @@ prop_bitIndex i x =
   let _i = i `mod` nBits
       _x = fromP x
       (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (bitIndex $ fromIntegral _i)
-      input = assignInputs bsVars $ Map.singleton "x" x
+      input = assignInputs bsVars $ Map.singleton "x" (Simple x)
       w = solve bsVars bsCircuit input
       expected = if testBit _x _i then 1 else 0
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
@@ -102,7 +100,7 @@ prop_setAtIndex i x b =
   let _i = i `mod` nBits
       _x = fromP x
       (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (setAtIndex (fromIntegral _i) b)
-      input = assignInputs bsVars $ Map.singleton "x" x
+      input = assignInputs bsVars $ Map.singleton "x" (Simple x)
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
       expected = fromInteger (if b then setBit _x _i else clearBit _x _i)
@@ -123,7 +121,7 @@ prop_bundleUnbundle :: Fr -> Property
 prop_bundleUnbundle x =
   let _x = fromP x
       (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder bundleUnbundle
-      input = assignInputs bsVars $ Map.singleton "x" x
+      input = assignInputs bsVars $ Map.singleton "x" (Simple x)
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
       expected = foldl (\acc i -> acc + if testBit _x i then 0 else 1) 0 [0 .. nBits - 1]
@@ -141,7 +139,7 @@ sharingProg = do
 prop_sharingProg :: Fr -> Fr -> Property
 prop_sharingProg x y =
   let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (sharingProg)
-      input = assignInputs bsVars $ Map.fromList [("x", x), ("y", y)]
+      input = assignInputs bsVars $ Map.fromList [("x", Simple x), ("y", Simple y)]
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
       expected = sum $ replicate 10 (x * y)
@@ -154,14 +152,10 @@ boolBinopsProg ::
   BinOp Fr ('TVec 50 'TBool) ->
   ExprM Fr (Expr Wire Fr ('TVec 50 'TBool))
 boolBinopsProg op = do
-  xs <- SV.generateM $ \i ->
-    var_ <$> boolInput Public ("x" <> showFinite i)
-  ys <- SV.generateM $ \i ->
-    var_ <$> boolInput Public ("y" <> showFinite i)
-  zs <- SV.generateM $ \i ->
-    VarBool <$> freshOutput ("out" <> showFinite i)
+  xs <- map var_ <$> boolInputs Public "x"
+  ys <- map var_ <$> boolInputs Public "y"
   let res = binOp_ op (bundle_ xs) (bundle_ ys)
-  void $ boolsOutput zs $ binOp_ op (bundle_ xs) (bundle_ ys)
+  void $ boolOutputs "out" $ binOp_ op (bundle_ xs) (bundle_ ys)
   pure res
 
 propBoolBinopsProg ::
@@ -169,19 +163,17 @@ propBoolBinopsProg ::
   (Bool -> Bool -> Bool) ->
   Property
 propBoolBinopsProg top op = forAll arbInputs $ \(bs, bs') ->
-  let _xs = zip (map (\i -> "x" <> show @Int i) [0 ..]) bs
-      _ys = zip (map (\i -> "y" <> show @Int i) [0 ..]) bs'
+  let 
+      
       (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (boolBinopsProg top)
-      input =
-        assignInputs bsVars $
-          fmap boolToField $
-            Map.fromList (_xs <> _ys)
+      input = assignInputs bsVars $ Map.fromList 
+        [ ("x", Array (map boolToField bs))
+        , ("y", Array (map boolToField bs'))
+        ]
       w = solve bsVars bsCircuit input
       expected = map boolToField $ zipWith op bs bs'
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in ( all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
-          zip [0 ..] expected
-      )
+   in lookupArrayVars bsVars "out" w === Just expected
         .&&. computed === Right (V.fromList expected)
   where
     arbInputs = ((,) <$> vectorOf 50 arbitrary <*> vectorOf 50 arbitrary)
@@ -199,14 +191,10 @@ prop_xorsProg = propBoolBinopsProg BXors (/=)
 
 fieldBinopsProg :: BinOp Fr (TVec 50 'TField) -> ExprM Fr (Expr Wire Fr ('TVec 50 'TField))
 fieldBinopsProg op = do
-  xs <- SV.generateM $ \i ->
-    var_ <$> fieldInput Public ("x" <> showFinite i)
-  ys <- SV.generateM $ \i ->
-    var_ <$> fieldInput Public ("y" <> showFinite i)
-  zs <- SV.generateM $ \i ->
-    VarField <$> freshOutput ("out" <> showFinite i)
+  xs <- map var_ <$> fieldInputs Public "x"
+  ys <- map var_ <$> fieldInputs Public "y"
   let res = binOp_ op (bundle_ xs) (bundle_ ys)
-  void $ fieldsOutput zs res
+  void $ fieldOutputs "out" res
   pure res
 
 propFieldBinopsProg ::
@@ -214,18 +202,14 @@ propFieldBinopsProg ::
   (Fr -> Fr -> Fr) ->
   Property
 propFieldBinopsProg top op = forAll arbInputs $ \(bs, bs') ->
-  let _xs = zip (map (\i -> "x" <> show @Int i) [0 ..]) bs
-      _ys = zip (map (\i -> "y" <> show @Int i) [0 ..]) bs'
+  let 
+      
       (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (fieldBinopsProg top)
-      input =
-        assignInputs bsVars $
-          Map.fromList (_xs <> _ys)
+      input = assignInputs bsVars $ Map.fromList [("x", Array bs), ("y", Array bs')]
       w = solve bsVars bsCircuit input
       expected = zipWith op bs bs'
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in ( all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
-          zip [0 ..] expected
-      )
+   in lookupArrayVars bsVars "out" w == Just expected
         .&&. computed === Right (V.fromList expected)
   where
     arbInputs = ((,) <$> vectorOf 50 arbitrary <*> vectorOf 50 arbitrary)
@@ -248,12 +232,9 @@ boolUnopsProg ::
   UnOp Fr ('TVec 32 'TBool) ->
   ExprM Fr (Expr Wire Fr ('TVec 32 'TBool))
 boolUnopsProg op = do
-  xs <- SV.generateM $ \i ->
-    var_ <$> boolInput Public ("x" <> showFinite i)
-  zs <- SV.generateM $ \i ->
-    VarBool <$> freshOutput ("out" <> showFinite i)
+  xs <- map var_ <$> boolInputs @32 Public "x"
   let res = unOp_ op (bundle_ xs)
-  void $ boolsOutput zs res
+  void $ boolOutputs "out" res
   pure res
 
 propBitVecUnopsProg ::
@@ -261,15 +242,17 @@ propBitVecUnopsProg ::
   ([Bool] -> [Bool]) ->
   Property
 propBitVecUnopsProg top op = forAll arbInputs $ \bs ->
-  let _xs = zip (map (\i -> "x" <> show @Int i) [0 ..]) bs
-      (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (boolUnopsProg top)
-      input = assignInputs bsVars $ fmap boolToField $ Map.fromList _xs
+  let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (boolUnopsProg top)
+      input = assignInputs bsVars $ 
+        Map.singleton "x" (Array $ map boolToField bs)
       w = solve bsVars bsCircuit input
       expected = op bs
       a = intToBitVec $ bitOp $ bitVecToInt bs
-      out = fromJust $ sequence $ map (\i -> lookupVar bsVars ("out" <> show @Int i) w) [0 .. 31]
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in map boolToField expected === out .&&. map _fieldToBool out === a .&&. computed === Right (V.fromList out)
+   in lookupArrayVars bsVars "out" w == Just (map boolToField expected)
+        .&&. computed === Right (V.fromList (map boolToField expected))
+        .&&. expected === a
+    
   where
     arbInputs = vectorOf 32 arbitrary
     bitOp = case top of
@@ -293,12 +276,9 @@ fieldUnopsProg ::
   UnOp Fr ('TVec 50 'TField) ->
   ExprM Fr (Expr Wire Fr ('TVec 50 'TField))
 fieldUnopsProg op = do
-  xs <- SV.generateM $ \i ->
-    var_ <$> fieldInput Public ("x" <> showFinite i)
-  zs <- SV.generateM $ \i ->
-    VarField <$> freshOutput ("out" <> showFinite i)
+  xs <- map var_ <$> fieldInputs @50 Public "x"
   let res = unOp_ op (bundle_ xs)
-  void $ fieldsOutput zs res
+  void $ fieldOutputs "out" res
   pure res
 
 propFieldUnopsProg ::
@@ -306,17 +286,13 @@ propFieldUnopsProg ::
   (Fr -> Fr) ->
   Property
 propFieldUnopsProg top op = forAll arbInputs $ \bs ->
-  let _xs = zip (map (\i -> "x" <> show @Int i) [0 ..]) bs
+  let 
       (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (fieldUnopsProg top)
-      input =
-        assignInputs bsVars $
-          Map.fromList _xs
+      input = assignInputs bsVars $ Map.singleton "x" (Array bs)
       w = solve bsVars bsCircuit input
       expected = map op bs
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
-   in ( all (\(i, b) -> lookupVar bsVars ("out" <> show @Int i) w == Just b) $
-          zip [0 ..] expected
-      )
+   in lookupArrayVars bsVars "out" w == Just expected
         .&&. computed == Right (V.fromList expected)
   where
     arbInputs = vectorOf 50 arbitrary

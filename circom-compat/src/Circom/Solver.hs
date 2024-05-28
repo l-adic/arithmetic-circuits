@@ -163,13 +163,13 @@ _setInputSignal ::
   Word32 ->
   Int ->
   IO ()
-_setInputSignal env@(ProgramEnv {peCircuit, peInputsSize, peCircuitVars}) stRef msb lsb _ = do
+_setInputSignal env@(ProgramEnv {peCircuit, peInputsSize, peCircuitVars}) stRef msb lsb i = do
   st <- readIORef stRef
   let Inputs inputs = psInputs st
   let h = mkFNV msb lsb
-      i = fromMaybe (panic $ "Hash not found: " <> show h) $ Map.lookup h (labelToVar $ cvInputsLabels peCircuitVars)
+      v = fromMaybe (panic $ "Hash not found: " <> show h) $ Map.lookup (h,i) (labelToVar $ cvInputsLabels peCircuitVars)
   newInput <- fromInteger <$> readBuffer env stRef
-  let newInputs = IntMap.insert i newInput inputs
+  let newInputs = IntMap.insert v newInput inputs
   writeIORef stRef $
     if IntMap.size newInputs == peInputsSize
       then
@@ -206,7 +206,7 @@ nativeGenWitness ::
   forall f.
   (PrimeField f) =>
   CircomProgram f ->
-  Map Text f ->
+  Map Text (VarType f) ->
   CircomWitness f
 nativeGenWitness CircomProgram {cpVars = vars, cpCircuit = circ} inputs =
   let initAssignments = assignInputs vars inputs

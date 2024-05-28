@@ -2,7 +2,7 @@ module Circom.CLI (defaultMain) where
 
 import Circom.R1CS (R1CSHeader (rhPrime), decodeR1CSHeaderFromFile, r1csFromCircomR1CS, r1csToCircomR1CS, witnessFromCircomWitness)
 import Circom.Solver (CircomProgram (..), mkCircomProgram, nativeGenWitness)
-import Circuit.Arithmetic (CircuitVars (..), InputBindings (labelToVar), restrictVars)
+import Circuit.Arithmetic (CircuitVars (..), VarType (..), InputBindings (labelToVar), restrictVars)
 import Circuit.Dataflow qualified as DataFlow
 import Circuit.Dot (arithCircuitToDot)
 import Circuit.Language.Compile (BuilderState (..), ExprM, runCircuitBuilder)
@@ -15,9 +15,13 @@ import Data.Text qualified as Text
 import GHC.TypeNats (SNat, withKnownNat, withSomeSNat)
 import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, execParser, fullDesc, header, help, helper, hsubparser, info, long, progDesc, showDefault, strOption, switch, value)
 import Protolude
-import R1CS (R1CS, Witness, isValidWitness, toR1CS)
+import R1CS (R1CS, Witness (Witness), isValidWitness, toR1CS)
 import Data.Text.Read (decimal, hexadecimal)
 import Prelude (MonadFail (fail))
+import Data.Map qualified as Map
+import Protolude.Unsafe (unsafeHead)
+import Data.Maybe (fromJust)
+import qualified Data.IntMap as IntMap
 
 data GlobalOpts = GlobalOpts
   { cmd :: Command
@@ -108,7 +112,9 @@ data SolveOpts = SolveOpts
   { soInputsFile :: FilePath,
     soIncludeJson :: Bool,
     soCircuitBinFile :: FilePath,
-    soWitnessFile :: FilePath
+    soWitnessFile :: FilePath,
+    soShowOutputs :: Bool
+
   }
 
 solveOptsParser :: Text -> Parser SolveOpts
@@ -135,6 +141,10 @@ solveOptsParser progName =
           <> help "witness output file"
           <> showDefault
           <> value (Text.unpack progName <> ".wtns")
+      )
+    <*> switch
+      ( long "show-outputs"
+          <> help "print the output values as json"
       )
 
 data VerifyOpts = VerifyOpts
@@ -176,9 +186,7 @@ defaultMain progName program = do
       let binFilePath = coCircuitBinFile compilerOpts
       encodeFile binFilePath prog
       when (coGenInputsTemplate compilerOpts) $ do
-        let vars = cpVars prog
-            inputsOnly = cvInputsLabels $ restrictVars vars (cvPrivateInputs vars `IntSet.union` cvPublicInputs vars)
-            inputsTemplate = map (const A.Null) $ labelToVar inputsOnly
+        let inputsTemplate = mkInputsTemplate $ cpVars prog
             inputsTemplateFilePath = Text.unpack progName <> "-inputs-template.json"
         A.encodeFile inputsTemplateFilePath inputsTemplate
       when (coIncludeJson compilerOpts) $ do
@@ -190,7 +198,7 @@ defaultMain progName program = do
     Solve solveOpts -> do
       inputs <- do
         mInputs <- decodeFileStrict (soInputsFile solveOpts)
-        maybe (panic "Failed to decode inputs") (pure . map (fromInteger @f . unFieldElem)) mInputs
+        maybe (panic "Failed to decode inputs") (pure . map (map (fromInteger @f . unFieldElem))) mInputs
       let binFilePath = soCircuitBinFile solveOpts
       circuit <- decodeFile binFilePath 
       let wtns = nativeGenWitness circuit inputs
@@ -198,6 +206,9 @@ defaultMain progName program = do
       encodeFile wtnsFilePath wtns
       when (soIncludeJson solveOpts) $ do
         A.encodeFile (wtnsFilePath <> ".json") (map fromP wtns)
+      when (soShowOutputs solveOpts) $ do
+        let outputs = mkOutputs (cpVars circuit) (witnessFromCircomWitness wtns)
+        print $ A.encode (map (map fromP) outputs)
     Verify verifyOpts -> do
       let r1csFilePath = voR1CSFile verifyOpts
       cr1cs <- decodeR1CSHeaderFromFile r1csFilePath
@@ -234,6 +245,8 @@ optimize opts =
            in mkCircomProgram newVars newCircuit
         else mempty
 
+--------------------------------------------------------------------------------
+
 newtype FieldElem = FieldElem {unFieldElem :: Integer} deriving newtype (Eq, Ord, Enum, Num, Real, Integral)
 
 instance A.FromJSON FieldElem where
@@ -246,3 +259,42 @@ instance A.FromJSON FieldElem where
             then pure a
             else fail $ "FieldElem parser failed to consume all input: " <> Text.unpack rest
     _ -> FieldElem <$> A.parseJSON v
+instance A.ToJSON FieldElem where
+  toJSON (FieldElem a) = A.toJSON a
+
+newtype Inputs = Inputs (Map Text (VarType FieldElem)) deriving newtype (A.FromJSON, A.ToJSON)
+
+mkInputsTemplate :: CircuitVars Text -> Inputs
+mkInputsTemplate vars =
+  let inputsOnly = cvInputsLabels $ restrictVars vars (cvPrivateInputs vars `IntSet.union` cvPublicInputs vars)
+      vs =
+        map (\a -> (fst $ unsafeHead a, length a)) $ 
+          groupBy (\a b -> fst a == fst b) $ 
+          Map.keys $ 
+          labelToVar inputsOnly
+      f (label, len) =
+        if len > 1
+          then (label, Array (replicate len 0))
+          else (label, Simple 0)
+   in Inputs $ Map.fromList $ map f vs
+
+mkOutputs :: CircuitVars Text -> Witness f -> Map Text (VarType f)
+mkOutputs vars (Witness w) =
+  let vs :: [[((Text,Int), Int)]]
+      vs = groupBy (\a b -> fst (fst a) == fst (fst b)) $ 
+             Map.toList $ 
+             Map.filter (\a -> a `IntSet.member` cvOutputs vars) $
+             labelToVar $ 
+             cvInputsLabels vars
+      f = \case
+        [((label, _), v)] -> 
+          let val = fromJust $ IntMap.lookup v w
+          in (label, Simple val)
+        as@( ((l, _), _) : _ ) -> 
+          ( l
+          , Array $ fromJust $ for as $ \(_, i) -> 
+              IntMap.lookup i w
+              
+          )
+        _ -> panic "impossible: groupBy lists are non empty"
+  in Map.fromList $ map f vs

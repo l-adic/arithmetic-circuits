@@ -48,7 +48,7 @@ arbExpr numVars size
       oneof $
         [val_ . ValField <$> arbitrary]
           ++ if numVars > 0
-            then [var_ . VarField . InputWire "" Public <$> choose (0, numVars - 1)]
+            then [var_ . VarField . InputWire ("", 0) Public <$> choose (0, numVars - 1)]
             else []
   | otherwise =
       oneof
@@ -92,7 +92,7 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) =
    in all (testInput circuit) inputs
   where
     testInput circuit input =
-      let a = evalExpr Map.lookup (Map.mapKeys (InputWire "" Public) input) expr
+      let a = evalExpr Map.lookup (Map.mapKeys (InputWire ("",0) Public) input) expr
           b = arithOutput input circuit Map.! (OutputWire 1)
        in a == Right (V.singleton b)
     arithOutput input circuit =
@@ -100,7 +100,7 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) =
         (Map.lookup)
         (Map.insert)
         circuit
-        (Map.mapKeys (InputWire "" Public) input)
+        (Map.mapKeys (InputWire ("",0) Public) input)
 
 arbInputVector :: (Arbitrary f) => Int -> Gen (Map Int f)
 arbInputVector numVars = Map.fromList . zip [0 ..] <$> vector numVars
