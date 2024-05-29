@@ -26,8 +26,7 @@ import R1CS (R1CS, Witness (Witness), isValidWitness, toR1CS)
 import Prelude (MonadFail (fail))
 
 data GlobalOpts = GlobalOpts
-  { cmd :: Command,
-    encoding :: Encoding
+  { cmd :: Command
   }
 
 optsParser :: Text -> ParserInfo GlobalOpts
@@ -43,27 +42,6 @@ optsParser progName =
     globalOptsParser =
       GlobalOpts
         <$> hsubparser (compileCommand <> solveCommand <> verifyCommand)
-        <*> encodingParser
-
-    encodingParser :: Parser Encoding
-    encodingParser =
-      let readEncoding = eitherReader $ \case
-            "hex" -> pure HexString
-            "decimal-string" -> pure DecString
-            "decimal" -> pure Dec
-            _ -> throwError $ "Invalid encoding, expected one of: hex, decimal-string, decimal"
-       in option
-            readEncoding
-            ( long "encoding"
-                <> help "encoding for inputs and outputs"
-                <> showDefaultWith
-                  ( \case
-                      HexString -> "hex"
-                      DecString -> "decimal-string"
-                      Dec -> "decimal"
-                  )
-                <> value Dec
-            )
 
     compileCommand :: Mod CommandFields Command
     compileCommand =
@@ -88,7 +66,8 @@ data CompileOpts = CompileOpts
     coGenDotFile :: Bool,
     coIncludeJson :: Bool,
     coR1CSFile :: FilePath,
-    coCircuitBinFile :: FilePath
+    coCircuitBinFile :: FilePath,
+    coEncoding :: Encoding
   }
 
 compileOptsParser :: Text -> Parser CompileOpts
@@ -119,6 +98,27 @@ compileOptsParser progName =
           <> showDefault
           <> value (Text.unpack progName <> ".bin")
       )
+    <*> encodingParser
+
+encodingParser :: Parser Encoding
+encodingParser =
+  let readEncoding = eitherReader $ \case
+        "hex" -> pure HexString
+        "decimal-string" -> pure DecString
+        "decimal" -> pure Dec
+        _ -> throwError $ "Invalid encoding, expected one of: hex, decimal-string, decimal"
+   in option
+        readEncoding
+        ( long "encoding"
+            <> help "encoding for inputs and outputs"
+            <> showDefaultWith
+              ( \case
+                  HexString -> "hex"
+                  DecString -> "decimal-string"
+                  Dec -> "decimal"
+              )
+            <> value Dec
+        )
 
 data OptimizeOpts = OptimizeOpts
   { removeUnreachable :: Bool
@@ -137,7 +137,8 @@ data SolveOpts = SolveOpts
     soIncludeJson :: Bool,
     soCircuitBinFile :: FilePath,
     soWitnessFile :: FilePath,
-    soShowOutputs :: Bool
+    soShowOutputs :: Bool,
+    soEncoding :: Encoding
   }
 
 solveOptsParser :: Text -> Parser SolveOpts
@@ -169,6 +170,7 @@ solveOptsParser progName =
       ( long "show-outputs"
           <> help "print the output values as json"
       )
+    <*> encodingParser
 
 data VerifyOpts = VerifyOpts
   { voR1CSFile :: FilePath,
@@ -209,7 +211,7 @@ defaultMain progName program = do
       let binFilePath = coCircuitBinFile compilerOpts
       encodeFile binFilePath prog
       when (coGenInputsTemplate compilerOpts) $ do
-        let inputsTemplate = mkInputsTemplate (encoding opts) (cpVars prog)
+        let inputsTemplate = mkInputsTemplate (coEncoding compilerOpts) (cpVars prog)
             inputsTemplateFilePath = Text.unpack progName <> "-inputs-template.json"
         writeIOVars inputsTemplateFilePath inputsTemplate
       when (coIncludeJson compilerOpts) $ do
@@ -220,7 +222,7 @@ defaultMain progName program = do
         writeFile dotFilePath $ arithCircuitToDot (cpCircuit prog)
     Solve solveOpts -> do
       inputs <- do
-        IOVars _ is <- readIOVars (encoding opts) (soInputsFile solveOpts)
+        IOVars _ is <- readIOVars (soEncoding solveOpts) (soInputsFile solveOpts)
         pure $ map (map (fromInteger @f . unFieldElem)) is
       let binFilePath = soCircuitBinFile solveOpts
       circuit <- decodeFile binFilePath
@@ -230,7 +232,7 @@ defaultMain progName program = do
       when (soIncludeJson solveOpts) $ do
         A.encodeFile (wtnsFilePath <> ".json") (map fromP wtns)
       when (soShowOutputs solveOpts) $ do
-        let outputs = mkOutputs (encoding opts) (cpVars circuit) (witnessFromCircomWitness wtns)
+        let outputs = mkOutputs (soEncoding solveOpts) (cpVars circuit) (witnessFromCircomWitness wtns)
         print $ A.encode $ encodeIOVars outputs
     Verify verifyOpts -> do
       let r1csFilePath = voR1CSFile verifyOpts
