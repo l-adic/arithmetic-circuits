@@ -2,7 +2,7 @@ module Circom.CLI (defaultMain) where
 
 import Circom.R1CS (R1CSHeader (rhPrime), decodeR1CSHeaderFromFile, r1csFromCircomR1CS, r1csToCircomR1CS, witnessFromCircomWitness)
 import Circom.Solver (CircomProgram (..), mkCircomProgram, nativeGenWitness)
-import Circuit.Arithmetic (CircuitVars (..), InputBindings (labelToVar), VarType (..), restrictVars)
+import Circuit.Arithmetic (CircuitVars (..), InputBindings (labelToVar), VarType (..), inputSizes, restrictVars)
 import Circuit.Dataflow qualified as DataFlow
 import Circuit.Dot (arithCircuitToDot)
 import Circuit.Language.Compile (BuilderState (..), ExprM, runCircuitBuilder)
@@ -21,7 +21,6 @@ import GHC.TypeNats (SNat, withKnownNat, withSomeSNat)
 import Numeric (showHex)
 import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, eitherReader, execParser, fullDesc, header, help, helper, hsubparser, info, long, option, progDesc, showDefault, showDefaultWith, strOption, switch, value)
 import Protolude
-import Protolude.Unsafe (unsafeHead)
 import R1CS (R1CS, Witness (Witness), isValidWitness, toR1CS)
 import Prelude (MonadFail (fail))
 
@@ -328,11 +327,7 @@ decodeIOVars enc v = do
 mkInputsTemplate :: Encoding -> CircuitVars Text -> IOVars
 mkInputsTemplate enc vars =
   let inputsOnly = cvInputsLabels $ restrictVars vars (cvPrivateInputs vars `IntSet.union` cvPublicInputs vars)
-      vs =
-        map (\a -> (fst $ unsafeHead a, length a)) $
-          groupBy (\a b -> fst a == fst b) $
-            Map.keys $
-              labelToVar inputsOnly
+      vs = Map.toList $ inputSizes inputsOnly
       f (label, len) =
         if len > 1
           then (label, Array (replicate len 0))

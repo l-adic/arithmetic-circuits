@@ -23,6 +23,7 @@ module Circuit.Arithmetic
     nGates,
     InputBindings (..),
     insertInputBinding,
+    inputSizes,
     Reindexable (..),
     restrictVars,
   )
@@ -50,6 +51,7 @@ import Text.PrettyPrint.Leijen.Text as PP
     vcat,
     (<+>),
   )
+import Protolude.Unsafe (unsafeHead)
 
 data InputType = Public | Private deriving (Show, Eq, Ord, Generic, NFData)
 
@@ -488,6 +490,13 @@ restrictInputBindings s InputBindings {..} =
     { labelToVar = Map.filter (\a -> a `IntSet.member` s) labelToVar,
       varToLabel = IntMap.restrictKeys varToLabel s
     }
+
+inputSizes :: (Ord label) => InputBindings label -> Map label Int
+inputSizes InputBindings {..} =
+  Map.fromList $
+    map (\a -> (fst $ unsafeHead a, length a)) $
+      groupBy (\a b -> fst a == fst b) $
+        Map.keys labelToVar
 
 --------------------------------------------------------------------------------
 

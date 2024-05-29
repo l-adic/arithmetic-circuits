@@ -77,6 +77,7 @@ data ProgramEnv f = ProgramEnv
     peInputsSize :: Int,
     peWitnessSize :: Int,
     peCircuit :: ArithCircuit f,
+    peSignalSizes :: Map FNVHash Int,
     peCircuitVars :: CircuitVars FNVHash
   }
 
@@ -86,14 +87,16 @@ mkProgramEnv ::
   CircomProgram f ->
   ProgramEnv f
 mkProgramEnv CircomProgram {cpVars = vars, cpCircuit = circ} =
-  ProgramEnv
+  let vs = relabel hashText vars
+  in ProgramEnv
     { peFieldSize = FieldSize 32,
       peRawPrime = toInteger $ char (1 :: f),
       peVersion = 2,
       peInputsSize = IntSet.size $ cvPrivateInputs vars <> cvPublicInputs vars,
       peWitnessSize = IntSet.size $ IntSet.insert oneVar $ cvVars vars,
       peCircuit = circ,
-      peCircuitVars = relabel hashText vars
+      peSignalSizes = inputSizes (cvInputsLabels vs),
+      peCircuitVars = vs
     }
 
 data ProgramState f = ProgramState
@@ -150,8 +153,11 @@ _getInputSize :: ProgramEnv f -> Int
 _getInputSize = peInputsSize
 
 -- we dont (yet) support multiple values (e.g. arrays) for signal values
-_getInputSignalSize :: Word32 -> Word32 -> IO Int
-_getInputSignalSize _ _ = pure 1
+_getInputSignalSize :: ProgramEnv f -> Word32 -> Word32 -> IO Int
+_getInputSignalSize ProgramEnv {peSignalSizes} msb lsb = 
+  let h = mkFNV msb lsb
+  in pure $ fromMaybe 0 $ Map.lookup h peSignalSizes
+  
 
 -- we ignore the last arugment because our signals don't have indices, only names
 _setInputSignal ::
