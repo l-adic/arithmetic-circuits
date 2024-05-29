@@ -50,7 +50,6 @@ import Text.PrettyPrint.Leijen.Text as PP
     vcat,
     (<+>),
   )
-import qualified Data.Aeson as A
 
 data InputType = Public | Private deriving (Show, Eq, Ord, Generic, NFData)
 
@@ -389,14 +388,6 @@ data VarType f = Simple f | Array [f]
 instance Functor VarType where
   fmap f (Simple a) = Simple (f a)
   fmap f (Array as) = Array (map f as)
-
-instance A.FromJSON f => A.FromJSON (VarType f) where
-  parseJSON (A.Array as) = Array . toList <$> traverse A.parseJSON as
-  parseJSON a = Simple <$> A.parseJSON a
-
-instance A.ToJSON f => A.ToJSON (VarType f) where
-  toJSON (Simple a) = A.toJSON a
-  toJSON (Array as) = A.toJSON as
 
 assignInputs :: forall label f. (Ord label) => CircuitVars label -> Map label (VarType f) -> IntMap f
 assignInputs CircuitVars {..} inputs =

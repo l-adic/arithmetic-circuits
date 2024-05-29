@@ -6,14 +6,14 @@ import Circuit.Arithmetic (CircuitVars (..), VarType (..), InputBindings (labelT
 import Circuit.Dataflow qualified as DataFlow
 import Circuit.Dot (arithCircuitToDot)
 import Circuit.Language.Compile (BuilderState (..), ExprM, runCircuitBuilder)
-import Data.Aeson (decodeFileStrict)
 import Data.Aeson qualified as A
+import Data.Aeson.Types qualified as A
 import Data.Binary (decodeFile, encodeFile)
 import Data.Field.Galois (Prime, PrimeField (fromP))
 import Data.IntSet qualified as IntSet
 import Data.Text qualified as Text
 import GHC.TypeNats (SNat, withKnownNat, withSomeSNat)
-import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, execParser, fullDesc, header, help, helper, hsubparser, info, long, progDesc, showDefault, strOption, switch, value)
+import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, execParser, fullDesc, header, help, helper, hsubparser, info, long, progDesc, showDefault, strOption, switch, value, option, eitherReader, showDefaultWith)
 import Protolude
 import R1CS (R1CS, Witness (Witness), isValidWitness, toR1CS)
 import Data.Text.Read (decimal, hexadecimal)
@@ -22,9 +22,12 @@ import Data.Map qualified as Map
 import Protolude.Unsafe (unsafeHead)
 import Data.Maybe (fromJust)
 import qualified Data.IntMap as IntMap
+import Numeric (showHex)
+import Control.Error (hoistEither)
 
 data GlobalOpts = GlobalOpts
   { cmd :: Command
+  , encoding :: Encoding
   }
 
 optsParser :: Text -> ParserInfo GlobalOpts
@@ -40,6 +43,25 @@ optsParser progName =
     globalOptsParser =
       GlobalOpts
         <$> hsubparser (compileCommand <> solveCommand <> verifyCommand)
+        <*> encodingParser
+    
+    encodingParser :: Parser Encoding
+    encodingParser = 
+      let readEncoding = eitherReader $ \case
+            "hex" -> pure HexString
+            "decimal-string" -> pure DecString
+            "decimal" -> pure Dec
+            _ -> throwError $ "Invalid encoding, expected one of: hex, decimal-string, decimal"
+      in option readEncoding
+        ( long "encoding"
+            <> help "encoding for inputs and outputs"
+            <> showDefaultWith (\case
+              HexString -> "hex"
+              DecString -> "decimal-string"
+              Dec -> "decimal"
+            )
+            <> value Dec
+        )
 
     compileCommand :: Mod CommandFields Command
     compileCommand =
@@ -186,9 +208,9 @@ defaultMain progName program = do
       let binFilePath = coCircuitBinFile compilerOpts
       encodeFile binFilePath prog
       when (coGenInputsTemplate compilerOpts) $ do
-        let inputsTemplate = mkInputsTemplate $ cpVars prog
+        let inputsTemplate = mkInputsTemplate (encoding opts) (cpVars prog)
             inputsTemplateFilePath = Text.unpack progName <> "-inputs-template.json"
-        A.encodeFile inputsTemplateFilePath inputsTemplate
+        writeIOVars inputsTemplateFilePath inputsTemplate
       when (coIncludeJson compilerOpts) $ do
         A.encodeFile (r1csFilePath <> ".json") (map fromP r1cs)
         A.encodeFile (binFilePath <> ".json") (map fromP prog)
@@ -197,8 +219,8 @@ defaultMain progName program = do
         writeFile dotFilePath $ arithCircuitToDot (cpCircuit prog)
     Solve solveOpts -> do
       inputs <- do
-        mInputs <- decodeFileStrict (soInputsFile solveOpts)
-        maybe (panic "Failed to decode inputs") (pure . map (map (fromInteger @f . unFieldElem))) mInputs
+        IOVars _ is <- readIOVars (encoding opts) (soInputsFile solveOpts)
+        pure $ map (map (fromInteger @f . unFieldElem)) is
       let binFilePath = soCircuitBinFile solveOpts
       circuit <- decodeFile binFilePath 
       let wtns = nativeGenWitness circuit inputs
@@ -207,8 +229,8 @@ defaultMain progName program = do
       when (soIncludeJson solveOpts) $ do
         A.encodeFile (wtnsFilePath <> ".json") (map fromP wtns)
       when (soShowOutputs solveOpts) $ do
-        let outputs = mkOutputs (cpVars circuit) (witnessFromCircomWitness wtns)
-        print $ A.encode (map (map fromP) outputs)
+        let outputs = mkOutputs (encoding opts) (cpVars circuit) (witnessFromCircomWitness wtns)
+        print $ A.encode $ encodeIOVars outputs 
     Verify verifyOpts -> do
       let r1csFilePath = voR1CSFile verifyOpts
       cr1cs <- decodeR1CSHeaderFromFile r1csFilePath
@@ -246,26 +268,62 @@ optimize opts =
         else mempty
 
 --------------------------------------------------------------------------------
+-- Programs expecting to interact with Circom via the file system and solver API can
+-- be incredibly stupid w.r.t. to accepting / demanding inputs be encoded as strings (either hex or dec)
+-- or as numbers.
+
+data Encoding = HexString | DecString | Dec deriving (Eq, Show)
 
 newtype FieldElem = FieldElem {unFieldElem :: Integer} deriving newtype (Eq, Ord, Enum, Num, Real, Integral)
 
-instance A.FromJSON FieldElem where
-  parseJSON v = case v of
-    A.String s ->
-      case hexadecimal s <> decimal s of
-        Left e -> fail e
-        Right (a, rest) ->
-          if Text.null rest
-            then pure a
-            else fail $ "FieldElem parser failed to consume all input: " <> Text.unpack rest
-    _ -> FieldElem <$> A.parseJSON v
-instance A.ToJSON FieldElem where
-  toJSON (FieldElem a) = A.toJSON a
+encodeFieldElem :: Encoding -> FieldElem -> A.Value
+encodeFieldElem enc (FieldElem a) = case enc of
+  HexString -> A.toJSON $ "0x" <> (Text.pack $ showHex a "")
+  DecString -> A.toJSON $ Text.pack $ show a
+  Dec -> A.toJSON a
 
-newtype Inputs = Inputs (Map Text (VarType FieldElem)) deriving newtype (A.FromJSON, A.ToJSON)
+decodeFieldElem :: Encoding -> A.Value -> A.Parser FieldElem
+decodeFieldElem enc _v = case enc of
+  Dec -> FieldElem <$> A.parseJSON _v
+  DecString -> do
+    s <- A.parseJSON _v
+    FieldElem <$> parseDec s
+    where
+      parseDec str = case decimal str of
+        Right (n, "") -> pure n
+        _ -> fail "FieldElem: expected a decimal string"
+  HexString -> do
+    s <- A.parseJSON _v
+    FieldElem <$> parseHex s
+    where
+      parseHex str = case hexadecimal str of
+        Right (n, "") -> pure n
+        _ -> fail "FieldElem: expected a hexadecimal string"
 
-mkInputsTemplate :: CircuitVars Text -> Inputs
-mkInputsTemplate vars =
+encodeVarType :: Encoding -> VarType FieldElem -> A.Value
+encodeVarType enc = \case
+  Simple a -> encodeFieldElem enc a
+  Array as -> A.toJSON $ map (encodeFieldElem enc) as
+
+decodeVarType :: Encoding -> A.Value -> A.Parser (VarType FieldElem)
+decodeVarType enc v = do
+  vs <- A.parseJSON v
+  case vs of
+    A.Array as -> Array <$> traverse (decodeFieldElem enc) (toList as)
+    _ -> Simple <$> decodeFieldElem enc v
+
+data IOVars  = IOVars Encoding (Map Text (VarType FieldElem))
+
+encodeIOVars :: IOVars -> A.Value
+encodeIOVars (IOVars enc vs) = A.toJSON $ map (encodeVarType enc) vs
+
+decodeIOVars :: Encoding -> A.Value -> A.Parser IOVars
+decodeIOVars enc v = do
+  kvs <- A.parseJSON v
+  IOVars enc <$> traverse (decodeVarType enc) kvs
+
+mkInputsTemplate :: Encoding -> CircuitVars Text -> IOVars
+mkInputsTemplate enc vars =
   let inputsOnly = cvInputsLabels $ restrictVars vars (cvPrivateInputs vars `IntSet.union` cvPublicInputs vars)
       vs =
         map (\a -> (fst $ unsafeHead a, length a)) $ 
@@ -276,10 +334,10 @@ mkInputsTemplate vars =
         if len > 1
           then (label, Array (replicate len 0))
           else (label, Simple 0)
-   in Inputs $ Map.fromList $ map f vs
+   in IOVars enc $ Map.fromList $ map f vs
 
-mkOutputs :: CircuitVars Text -> Witness f -> Map Text (VarType f)
-mkOutputs vars (Witness w) =
+mkOutputs :: PrimeField f => Encoding -> CircuitVars Text -> Witness f -> IOVars
+mkOutputs enc vars (Witness w) =
   let vs :: [[((Text,Int), Int)]]
       vs = groupBy (\a b -> fst (fst a) == fst (fst b)) $ 
              Map.toList $ 
@@ -289,12 +347,20 @@ mkOutputs vars (Witness w) =
       f = \case
         [((label, _), v)] -> 
           let val = fromJust $ IntMap.lookup v w
-          in (label, Simple val)
+          in (label, Simple . FieldElem . fromP $ val)
         as@( ((l, _), _) : _ ) -> 
           ( l
           , Array $ fromJust $ for as $ \(_, i) -> 
-              IntMap.lookup i w
+              FieldElem . fromP <$> IntMap.lookup i w
               
           )
         _ -> panic "impossible: groupBy lists are non empty"
-  in Map.fromList $ map f vs
+  in IOVars enc (Map.fromList $ map f vs)
+
+writeIOVars :: FilePath -> IOVars -> IO ()
+writeIOVars fp (IOVars enc vs) = A.encodeFile fp (encodeIOVars (IOVars enc vs))
+
+readIOVars :: Encoding -> FilePath -> IO IOVars
+readIOVars enc fp = map (either (panic . Text.pack) identity) $ runExceptT $ do 
+  contents <- ExceptT $ A.eitherDecodeFileStrict fp
+  hoistEither $ A.parseEither (decodeIOVars enc) contents

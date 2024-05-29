@@ -12,3 +12,4 @@ dist-newstyle
 inputs.json
 circuit-output
 factors.*
+factors-inputs-template.json
