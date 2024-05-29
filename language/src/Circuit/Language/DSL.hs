@@ -137,36 +137,44 @@ fieldInput it label =
     Private -> VarField <$> freshPrivateInput label 0
 {-# INLINE fieldInput #-}
 
-fieldInputs :: KnownNat n => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TField))
-fieldInputs it label = 
+fieldInputs :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TField))
+fieldInputs it label =
   case it of
-    Public -> SV.generateM (\fin -> 
-        let i = fromIntegral fin
-        in VarField <$> freshPublicInput label i
-      )
-    Private -> SV.generateM (\fin -> 
-        let i = fromIntegral fin
-        in VarField <$> freshPrivateInput label i
-      )
+    Public ->
+      SV.generateM
+        ( \fin ->
+            let i = fromIntegral fin
+             in VarField <$> freshPublicInput label i
+        )
+    Private ->
+      SV.generateM
+        ( \fin ->
+            let i = fromIntegral fin
+             in VarField <$> freshPrivateInput label i
+        )
 {-# INLINE fieldInputs #-}
 
 boolInput :: InputType -> Text -> ExprM f (Var Wire f 'TBool)
 boolInput it label = case it of
-  Public -> VarBool <$> freshPublicInput label 0 
+  Public -> VarBool <$> freshPublicInput label 0
   Private -> VarBool <$> freshPrivateInput label 0
 {-# INLINE boolInput #-}
 
-boolInputs :: KnownNat n => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TBool))
-boolInputs it label = 
+boolInputs :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TBool))
+boolInputs it label =
   case it of
-    Public -> SV.generateM (\fin -> 
-        let i = fromIntegral fin
-        in VarBool <$> freshPublicInput label i
-      )
-    Private -> SV.generateM (\fin -> 
-        let i = fromIntegral fin
-        in VarBool <$> freshPrivateInput label i
-      )
+    Public ->
+      SV.generateM
+        ( \fin ->
+            let i = fromIntegral fin
+             in VarBool <$> freshPublicInput label i
+        )
+    Private ->
+      SV.generateM
+        ( \fin ->
+            let i = fromIntegral fin
+             in VarBool <$> freshPrivateInput label i
+        )
 {-# INLINE boolInputs #-}
 
 fieldOutput :: (Hashable f, GaloisField f) => Text -> Signal f 'TField -> ExprM f (Var Wire f 'TField)
@@ -175,16 +183,19 @@ fieldOutput label s = do
   compileWithWire out s
 {-# INLINE fieldOutput #-}
 
-fieldOutputs :: forall n f.
-  (KnownNat n, Hashable f, GaloisField f) => 
-  Text -> 
-  Signal f ('TVec n 'TField) -> 
+fieldOutputs ::
+  forall n f.
+  (KnownNat n, Hashable f, GaloisField f) =>
+  Text ->
+  Signal f ('TVec n 'TField) ->
   ExprM f (Vector n (Var Wire f 'TField))
 fieldOutputs label s = do
-  vs <- SV.generateM @n (\fin -> 
+  vs <-
+    SV.generateM @n
+      ( \fin ->
           let i = fromIntegral fin
-          in VarField <$> freshOutput label i
-        )
+           in VarField <$> freshOutput label i
+      )
   fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
 
 boolOutput :: forall f. (Hashable f, GaloisField f) => Text -> Signal f 'TBool -> ExprM f (Var Wire f 'TBool)
@@ -193,19 +204,22 @@ boolOutput label s = do
   unsafeCoerce <$> compileWithWire (boolToField @(Var Wire f 'TBool) out) (boolToField s)
 {-# INLINE boolOutput #-}
 
-boolOutputs :: 
-  forall n f. 
-  (KnownNat n, Hashable f, GaloisField f) => 
+boolOutputs ::
+  forall n f.
+  (KnownNat n, Hashable f, GaloisField f) =>
   Text ->
-  Signal f ('TVec n 'TBool) -> 
+  Signal f ('TVec n 'TBool) ->
   ExprM f (Vector n (Var Wire f 'TBool))
 boolOutputs label s = do
-  vs <- SV.generateM @n (\fin -> 
+  vs <-
+    SV.generateM @n
+      ( \fin ->
           let i = fromIntegral fin
-          in VarBool <$> freshOutput label i
-        )
-  out <- fromJust . SV.toSized @n <$> 
-    compileWithWires (SV.fromSized $ map (boolToField @(Var Wire f 'TBool) ) vs) s
+           in VarBool <$> freshOutput label i
+      )
+  out <-
+    fromJust . SV.toSized @n
+      <$> compileWithWires (SV.fromSized $ map (boolToField @(Var Wire f 'TBool)) vs) s
   pure $ unsafeCoerce out
 
 truncate_ ::

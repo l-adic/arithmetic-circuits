@@ -20,14 +20,14 @@ benchmarks =
       bench "1_000_000" $ whnf largeMult (Proxy @1_000_000)
     ]
 
-largeMult :: KnownNat n => Proxy n -> IO Fr
+largeMult :: (KnownNat n) => Proxy n -> IO Fr
 largeMult n =
   let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (program n)
       inputs =
         assignInputs bsVars $ Map.singleton "x" (Array $ map fromIntegral [1 .. natVal n])
       w = altSolve bsCircuit inputs
       res = fromMaybe (panic "output not found") $ lookupVar bsVars "out" w
-  in pure res
+   in pure res
 
 program :: forall n. (KnownNat n) => Proxy n -> ExprM Fr (Var Wire Fr 'TField)
 program _ = do

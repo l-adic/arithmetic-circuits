@@ -163,13 +163,13 @@ propBoolBinopsProg ::
   (Bool -> Bool -> Bool) ->
   Property
 propBoolBinopsProg top op = forAll arbInputs $ \(bs, bs') ->
-  let 
-      
-      (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (boolBinopsProg top)
-      input = assignInputs bsVars $ Map.fromList 
-        [ ("x", Array (map boolToField bs))
-        , ("y", Array (map boolToField bs'))
-        ]
+  let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (boolBinopsProg top)
+      input =
+        assignInputs bsVars $
+          Map.fromList
+            [ ("x", Array (map boolToField bs)),
+              ("y", Array (map boolToField bs'))
+            ]
       w = solve bsVars bsCircuit input
       expected = map boolToField $ zipWith op bs bs'
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
@@ -202,9 +202,7 @@ propFieldBinopsProg ::
   (Fr -> Fr -> Fr) ->
   Property
 propFieldBinopsProg top op = forAll arbInputs $ \(bs, bs') ->
-  let 
-      
-      (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (fieldBinopsProg top)
+  let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (fieldBinopsProg top)
       input = assignInputs bsVars $ Map.fromList [("x", Array bs), ("y", Array bs')]
       w = solve bsVars bsCircuit input
       expected = zipWith op bs bs'
@@ -243,8 +241,9 @@ propBitVecUnopsProg ::
   Property
 propBitVecUnopsProg top op = forAll arbInputs $ \bs ->
   let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (boolUnopsProg top)
-      input = assignInputs bsVars $ 
-        Map.singleton "x" (Array $ map boolToField bs)
+      input =
+        assignInputs bsVars $
+          Map.singleton "x" (Array $ map boolToField bs)
       w = solve bsVars bsCircuit input
       expected = op bs
       a = intToBitVec $ bitOp $ bitVecToInt bs
@@ -252,7 +251,6 @@ propBitVecUnopsProg top op = forAll arbInputs $ \bs ->
    in lookupArrayVars bsVars "out" w == Just (map boolToField expected)
         .&&. computed === Right (V.fromList (map boolToField expected))
         .&&. expected === a
-    
   where
     arbInputs = vectorOf 32 arbitrary
     bitOp = case top of
@@ -286,8 +284,7 @@ propFieldUnopsProg ::
   (Fr -> Fr) ->
   Property
 propFieldUnopsProg top op = forAll arbInputs $ \bs ->
-  let 
-      (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (fieldUnopsProg top)
+  let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (fieldUnopsProg top)
       input = assignInputs bsVars $ Map.singleton "x" (Array bs)
       w = solve bsVars bsCircuit input
       expected = map op bs

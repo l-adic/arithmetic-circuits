@@ -154,8 +154,8 @@ prop_complexMultiplication :: (Fr, Fr, Fr, Fr) -> Bool
 prop_complexMultiplication (a, b, c, d) =
   let circuit =
         ArithCircuit
-          [ Mul (Var (InputWire ("",0) Public 1)) (Var (InputWire ("", 0) Public 2)) (OutputWire 3),
-            Mul (Var (InputWire ("",0) Public 4)) (Var (InputWire ("", 0) Public 5)) (OutputWire 6),
+          [ Mul (Var (InputWire ("", 0) Public 1)) (Var (InputWire ("", 0) Public 2)) (OutputWire 3),
+            Mul (Var (InputWire ("", 0) Public 4)) (Var (InputWire ("", 0) Public 5)) (OutputWire 6),
             Mul (Var (OutputWire 3)) (Var (OutputWire 6)) (OutputWire 7)
           ]
       inputs = IntMap.fromList [(1, a), (2, b), (4, c), (5, d)]

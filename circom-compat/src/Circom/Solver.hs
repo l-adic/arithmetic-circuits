@@ -167,7 +167,7 @@ _setInputSignal env@(ProgramEnv {peCircuit, peInputsSize, peCircuitVars}) stRef 
   st <- readIORef stRef
   let Inputs inputs = psInputs st
   let h = mkFNV msb lsb
-      v = fromMaybe (panic $ "Hash not found: " <> show h) $ Map.lookup (h,i) (labelToVar $ cvInputsLabels peCircuitVars)
+      v = fromMaybe (panic $ "Hash not found: " <> show h) $ Map.lookup (h, i) (labelToVar $ cvInputsLabels peCircuitVars)
   newInput <- fromInteger <$> readBuffer env stRef
   let newInputs = IntMap.insert v newInput inputs
   writeIORef stRef $

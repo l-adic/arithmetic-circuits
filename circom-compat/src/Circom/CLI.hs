@@ -2,32 +2,32 @@ module Circom.CLI (defaultMain) where
 
 import Circom.R1CS (R1CSHeader (rhPrime), decodeR1CSHeaderFromFile, r1csFromCircomR1CS, r1csToCircomR1CS, witnessFromCircomWitness)
 import Circom.Solver (CircomProgram (..), mkCircomProgram, nativeGenWitness)
-import Circuit.Arithmetic (CircuitVars (..), VarType (..), InputBindings (labelToVar), restrictVars)
+import Circuit.Arithmetic (CircuitVars (..), InputBindings (labelToVar), VarType (..), restrictVars)
 import Circuit.Dataflow qualified as DataFlow
 import Circuit.Dot (arithCircuitToDot)
 import Circuit.Language.Compile (BuilderState (..), ExprM, runCircuitBuilder)
+import Control.Error (hoistEither)
 import Data.Aeson qualified as A
 import Data.Aeson.Types qualified as A
 import Data.Binary (decodeFile, encodeFile)
 import Data.Field.Galois (Prime, PrimeField (fromP))
+import Data.IntMap qualified as IntMap
 import Data.IntSet qualified as IntSet
-import Data.Text qualified as Text
-import GHC.TypeNats (SNat, withKnownNat, withSomeSNat)
-import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, execParser, fullDesc, header, help, helper, hsubparser, info, long, progDesc, showDefault, strOption, switch, value, option, eitherReader, showDefaultWith)
-import Protolude
-import R1CS (R1CS, Witness (Witness), isValidWitness, toR1CS)
-import Data.Text.Read (decimal, hexadecimal)
-import Prelude (MonadFail (fail))
 import Data.Map qualified as Map
-import Protolude.Unsafe (unsafeHead)
 import Data.Maybe (fromJust)
-import qualified Data.IntMap as IntMap
+import Data.Text qualified as Text
+import Data.Text.Read (decimal, hexadecimal)
+import GHC.TypeNats (SNat, withKnownNat, withSomeSNat)
 import Numeric (showHex)
-import Control.Error (hoistEither)
+import Options.Applicative (CommandFields, Mod, Parser, ParserInfo, command, eitherReader, execParser, fullDesc, header, help, helper, hsubparser, info, long, option, progDesc, showDefault, showDefaultWith, strOption, switch, value)
+import Protolude
+import Protolude.Unsafe (unsafeHead)
+import R1CS (R1CS, Witness (Witness), isValidWitness, toR1CS)
+import Prelude (MonadFail (fail))
 
 data GlobalOpts = GlobalOpts
-  { cmd :: Command
-  , encoding :: Encoding
+  { cmd :: Command,
+    encoding :: Encoding
   }
 
 optsParser :: Text -> ParserInfo GlobalOpts
@@ -44,24 +44,26 @@ optsParser progName =
       GlobalOpts
         <$> hsubparser (compileCommand <> solveCommand <> verifyCommand)
         <*> encodingParser
-    
+
     encodingParser :: Parser Encoding
-    encodingParser = 
+    encodingParser =
       let readEncoding = eitherReader $ \case
             "hex" -> pure HexString
             "decimal-string" -> pure DecString
             "decimal" -> pure Dec
             _ -> throwError $ "Invalid encoding, expected one of: hex, decimal-string, decimal"
-      in option readEncoding
-        ( long "encoding"
-            <> help "encoding for inputs and outputs"
-            <> showDefaultWith (\case
-              HexString -> "hex"
-              DecString -> "decimal-string"
-              Dec -> "decimal"
+       in option
+            readEncoding
+            ( long "encoding"
+                <> help "encoding for inputs and outputs"
+                <> showDefaultWith
+                  ( \case
+                      HexString -> "hex"
+                      DecString -> "decimal-string"
+                      Dec -> "decimal"
+                  )
+                <> value Dec
             )
-            <> value Dec
-        )
 
     compileCommand :: Mod CommandFields Command
     compileCommand =
@@ -136,7 +138,6 @@ data SolveOpts = SolveOpts
     soCircuitBinFile :: FilePath,
     soWitnessFile :: FilePath,
     soShowOutputs :: Bool
-
   }
 
 solveOptsParser :: Text -> Parser SolveOpts
@@ -170,8 +171,8 @@ solveOptsParser progName =
       )
 
 data VerifyOpts = VerifyOpts
-  { voR1CSFile :: FilePath
-  , voWitnessFile :: FilePath
+  { voR1CSFile :: FilePath,
+    voWitnessFile :: FilePath
   }
 
 verifyOptsParser :: Text -> Parser VerifyOpts
@@ -222,15 +223,15 @@ defaultMain progName program = do
         IOVars _ is <- readIOVars (encoding opts) (soInputsFile solveOpts)
         pure $ map (map (fromInteger @f . unFieldElem)) is
       let binFilePath = soCircuitBinFile solveOpts
-      circuit <- decodeFile binFilePath 
+      circuit <- decodeFile binFilePath
       let wtns = nativeGenWitness circuit inputs
-          wtnsFilePath =  soWitnessFile solveOpts
+          wtnsFilePath = soWitnessFile solveOpts
       encodeFile wtnsFilePath wtns
       when (soIncludeJson solveOpts) $ do
         A.encodeFile (wtnsFilePath <> ".json") (map fromP wtns)
       when (soShowOutputs solveOpts) $ do
         let outputs = mkOutputs (encoding opts) (cpVars circuit) (witnessFromCircomWitness wtns)
-        print $ A.encode $ encodeIOVars outputs 
+        print $ A.encode $ encodeIOVars outputs
     Verify verifyOpts -> do
       let r1csFilePath = voR1CSFile verifyOpts
       cr1cs <- decodeR1CSHeaderFromFile r1csFilePath
@@ -269,7 +270,7 @@ optimize opts =
 
 --------------------------------------------------------------------------------
 -- Programs expecting to interact with Circom via the file system and solver API can
--- be incredibly stupid w.r.t. to accepting / demanding inputs be encoded as strings (either hex or dec)
+-- be all over the place w.r.t. to accepting / demanding inputs be encoded as strings (either hex or dec)
 -- or as numbers.
 
 data Encoding = HexString | DecString | Dec deriving (Eq, Show)
@@ -312,7 +313,7 @@ decodeVarType enc v = do
     A.Array as -> Array <$> traverse (decodeFieldElem enc) (toList as)
     _ -> Simple <$> decodeFieldElem enc v
 
-data IOVars  = IOVars Encoding (Map Text (VarType FieldElem))
+data IOVars = IOVars Encoding (Map Text (VarType FieldElem))
 
 encodeIOVars :: IOVars -> A.Value
 encodeIOVars (IOVars enc vs) = A.toJSON $ map (encodeVarType enc) vs
@@ -326,41 +327,41 @@ mkInputsTemplate :: Encoding -> CircuitVars Text -> IOVars
 mkInputsTemplate enc vars =
   let inputsOnly = cvInputsLabels $ restrictVars vars (cvPrivateInputs vars `IntSet.union` cvPublicInputs vars)
       vs =
-        map (\a -> (fst $ unsafeHead a, length a)) $ 
-          groupBy (\a b -> fst a == fst b) $ 
-          Map.keys $ 
-          labelToVar inputsOnly
+        map (\a -> (fst $ unsafeHead a, length a)) $
+          groupBy (\a b -> fst a == fst b) $
+            Map.keys $
+              labelToVar inputsOnly
       f (label, len) =
         if len > 1
           then (label, Array (replicate len 0))
           else (label, Simple 0)
    in IOVars enc $ Map.fromList $ map f vs
 
-mkOutputs :: PrimeField f => Encoding -> CircuitVars Text -> Witness f -> IOVars
+mkOutputs :: (PrimeField f) => Encoding -> CircuitVars Text -> Witness f -> IOVars
 mkOutputs enc vars (Witness w) =
-  let vs :: [[((Text,Int), Int)]]
-      vs = groupBy (\a b -> fst (fst a) == fst (fst b)) $ 
-             Map.toList $ 
-             Map.filter (\a -> a `IntSet.member` cvOutputs vars) $
-             labelToVar $ 
-             cvInputsLabels vars
+  let vs :: [[((Text, Int), Int)]]
+      vs =
+        groupBy (\a b -> fst (fst a) == fst (fst b)) $
+          Map.toList $
+            Map.filter (\a -> a `IntSet.member` cvOutputs vars) $
+              labelToVar $
+                cvInputsLabels vars
       f = \case
-        [((label, _), v)] -> 
+        [((label, _), v)] ->
           let val = fromJust $ IntMap.lookup v w
-          in (label, Simple . FieldElem . fromP $ val)
-        as@( ((l, _), _) : _ ) -> 
-          ( l
-          , Array $ fromJust $ for as $ \(_, i) -> 
+           in (label, Simple . FieldElem . fromP $ val)
+        as@(((l, _), _) : _) ->
+          ( l,
+            Array $ fromJust $ for as $ \(_, i) ->
               FieldElem . fromP <$> IntMap.lookup i w
-              
           )
         _ -> panic "impossible: groupBy lists are non empty"
-  in IOVars enc (Map.fromList $ map f vs)
+   in IOVars enc (Map.fromList $ map f vs)
 
 writeIOVars :: FilePath -> IOVars -> IO ()
 writeIOVars fp (IOVars enc vs) = A.encodeFile fp (encodeIOVars (IOVars enc vs))
 
 readIOVars :: Encoding -> FilePath -> IO IOVars
-readIOVars enc fp = map (either (panic . Text.pack) identity) $ runExceptT $ do 
+readIOVars enc fp = map (either (panic . Text.pack) identity) $ runExceptT $ do
   contents <- ExceptT $ A.eitherDecodeFileStrict fp
   hoistEither $ A.parseEither (decodeIOVars enc) contents

@@ -15,7 +15,7 @@ module Circuit.Arithmetic
     CircuitVars (..),
     relabel,
     collectCircuitVars,
-    VarType(..),
+    VarType (..),
     assignInputs,
     lookupVar,
     lookupArrayVars,
@@ -392,29 +392,29 @@ instance Functor VarType where
 assignInputs :: forall label f. (Ord label) => CircuitVars label -> Map label (VarType f) -> IntMap f
 assignInputs CircuitVars {..} inputs =
   let is :: Map (label, Int) f
-      is = 
+      is =
         let f (label, i) = case i of
               Simple a -> [((label, 0), a)]
-              Array as -> zipWith (\idx a -> ((label, idx), a)) [0..] as 
-        in Map.fromList $ concatMap f $ Map.toList inputs
-  in IntMap.mapMaybe (\label -> Map.lookup label is) (varToLabel cvInputsLabels)
+              Array as -> zipWith (\idx a -> ((label, idx), a)) [0 ..] as
+         in Map.fromList $ concatMap f $ Map.toList inputs
+   in IntMap.mapMaybe (\label -> Map.lookup label is) (varToLabel cvInputsLabels)
 
 lookupVar :: (Ord label) => CircuitVars label -> label -> IntMap f -> Maybe f
 lookupVar vs label sol = do
   let labelBindings = labelToVar $ cvInputsLabels vs
-  var <- Map.lookup (label,0) labelBindings
+  var <- Map.lookup (label, 0) labelBindings
   IntMap.lookup var sol
 
 lookupArrayVars :: (Ord label) => CircuitVars label -> label -> IntMap f -> Maybe [f]
 lookupArrayVars vs label sol = do
   let labelBindings :: [Int]
-      labelBindings = 
-        map snd $ 
-          sortOn (snd . fst) $ 
-          filter (\a -> fst (fst a) == label) $ 
-          Map.toList $ 
-          labelToVar $ 
-          cvInputsLabels vs
+      labelBindings =
+        map snd $
+          sortOn (snd . fst) $
+            filter (\a -> fst (fst a) == label) $
+              Map.toList $
+                labelToVar $
+                  cvInputsLabels vs
   traverse (flip IntMap.lookup sol) labelBindings
 
 booleanWires :: ArithCircuit f -> Set Wire

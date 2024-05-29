@@ -308,8 +308,10 @@ rotateRight xs i = map ((\idx -> xs ^. SV.ix idx) . (\idx -> fromIntegral $ idx 
 sha3Program :: (KnownNat n) => Proxy n -> ExprM Fr (Vector 256 (Var Wire Fr 'TBool))
 sha3Program _ = do
   bits <- map var_ <$> boolInputs Public "b"
-  boolOutputs "out" $ 
-    sha3_256 $ map bundle_ $ chunk bits
+  boolOutputs "out" $
+    sha3_256 $
+      map bundle_ $
+        chunk bits
 
 prop :: forall n n0. (((n + 1) + n0) ~ 25, KnownNat n0, KnownNat ((n + 1) * 64)) => ([Word8] -> [Word8]) -> Int -> Vector n (Vector 64 Bool) -> Property
 prop hashFunc mdlen vec = withMaxSuccess 1 $ monadicIO $ run $ do
@@ -317,7 +319,8 @@ prop hashFunc mdlen vec = withMaxSuccess 1 $ monadicIO $ run $ do
       inputVec = vec `SV.snoc` mkBitVector' @Integer 0x8000000000000006
       inIndices :: [Finite ((n + 1) * 64)]
       inIndices = [minBound .. maxBound]
-      assignments = Map.singleton "b" $
+      assignments =
+        Map.singleton "b" $
           (Array $ map (\i -> boolToField_ $ concatVec inputVec `SV.index` i) inIndices)
   let input = assignInputs shaVars assignments
   let w = altSolve shaCircuit input

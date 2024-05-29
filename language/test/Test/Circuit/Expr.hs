@@ -92,7 +92,7 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) =
    in all (testInput circuit) inputs
   where
     testInput circuit input =
-      let a = evalExpr Map.lookup (Map.mapKeys (InputWire ("",0) Public) input) expr
+      let a = evalExpr Map.lookup (Map.mapKeys (InputWire ("", 0) Public) input) expr
           b = arithOutput input circuit Map.! (OutputWire 1)
        in a == Right (V.singleton b)
     arithOutput input circuit =
@@ -100,7 +100,7 @@ prop_evalEqArithEval (ExprWithInputs expr inputs) =
         (Map.lookup)
         (Map.insert)
         circuit
-        (Map.mapKeys (InputWire ("",0) Public) input)
+        (Map.mapKeys (InputWire ("", 0) Public) input)
 
 arbInputVector :: (Arbitrary f) => Int -> Gen (Map Int f)
 arbInputVector numVars = Map.fromList . zip [0 ..] <$> vector numVars
