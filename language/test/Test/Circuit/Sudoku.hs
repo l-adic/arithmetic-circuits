@@ -95,10 +95,10 @@ spec_sudokuSolver = do
       for_ (zip [(0 :: Int) ..] examplePuzzles) $ \(i, b) -> do
         sol <- Map.toAscList <$> solvePuzzle (concat b)
         let pubAssignments =
-              map (first (\a -> "cell_" <> show (fst a) <> show (snd a))) $
+              map (first (\a -> ("cell_" <> show (fst a) <> show (snd a), 0))) $
                 [((_i, j), v) | _i <- [0 .. 8], j <- [0 .. 8], let v = b !! _i !! j]
             privAssignments =
-              map (first (\a -> "private_cell_" <> show (fst a) <> show (snd a))) $
+              map (first (\a -> ("private_cell_" <> show (fst a) <> show (snd a), 0))) $
                 filter (\(_, v) -> v /= 0) sol
             (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder validate
         let pubInputs =

@@ -15,12 +15,15 @@ module Circuit.Arithmetic
     CircuitVars (..),
     relabel,
     collectCircuitVars,
+    VarType (..),
     assignInputs,
     lookupVar,
+    lookupArrayVars,
     booleanWires,
     nGates,
     InputBindings (..),
     insertInputBinding,
+    inputSizes,
     Reindexable (..),
     restrictVars,
   )
@@ -39,6 +42,7 @@ import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Protolude
+import Protolude.Unsafe (unsafeHead)
 import Text.PrettyPrint.Leijen.Text as PP
   ( Pretty (..),
     hsep,
@@ -59,7 +63,7 @@ instance Binary InputType
 
 -- | Wires are can be labeled in the ways given in this data type
 data Wire
-  = InputWire Text InputType Int
+  = InputWire (Text, Int) InputType Int
   | IntermediateWire Int
   | OutputWire Int
   deriving (Show, Eq, Ord, Generic, NFData)
@@ -74,11 +78,11 @@ instance Hashable Wire where
 instance Binary Wire
 
 instance Pretty Wire where
-  pretty (InputWire label t v) =
+  pretty (InputWire (label, offset) t v) =
     let a = case t of
           Public -> "pub"
           Private -> "priv"
-        suffix = if Text.null label then "" else "_" <> label
+        suffix = if Text.null label then "" else "_" <> label <> "_" <> show offset
      in text (a <> "_input_") <> pretty v <> pretty suffix
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
@@ -381,15 +385,39 @@ restrictVars CircuitVars {..} vars =
       cvInputsLabels = restrictInputBindings vars cvInputsLabels
     }
 
-assignInputs :: (Ord label) => CircuitVars label -> Map label f -> IntMap f
+data VarType f = Simple f | Array [f]
+
+instance Functor VarType where
+  fmap f (Simple a) = Simple (f a)
+  fmap f (Array as) = Array (map f as)
+
+assignInputs :: forall label f. (Ord label) => CircuitVars label -> Map label (VarType f) -> IntMap f
 assignInputs CircuitVars {..} inputs =
-  IntMap.mapMaybe (\label -> Map.lookup label inputs) (varToLabel cvInputsLabels)
+  let is :: Map (label, Int) f
+      is =
+        let f (label, i) = case i of
+              Simple a -> [((label, 0), a)]
+              Array as -> zipWith (\idx a -> ((label, idx), a)) [0 ..] as
+         in Map.fromList $ concatMap f $ Map.toList inputs
+   in IntMap.mapMaybe (\label -> Map.lookup label is) (varToLabel cvInputsLabels)
 
 lookupVar :: (Ord label) => CircuitVars label -> label -> IntMap f -> Maybe f
 lookupVar vs label sol = do
   let labelBindings = labelToVar $ cvInputsLabels vs
-  var <- Map.lookup label labelBindings
+  var <- Map.lookup (label, 0) labelBindings
   IntMap.lookup var sol
+
+lookupArrayVars :: (Ord label) => CircuitVars label -> label -> IntMap f -> Maybe [f]
+lookupArrayVars vs label sol = do
+  let labelBindings :: [Int]
+      labelBindings =
+        map snd $
+          sortOn (snd . fst) $
+            filter (\a -> fst (fst a) == label) $
+              Map.toList $
+                labelToVar $
+                  cvInputsLabels vs
+  traverse (flip IntMap.lookup sol) labelBindings
 
 booleanWires :: ArithCircuit f -> Set Wire
 booleanWires (ArithCircuit gates) = foldMap f gates
@@ -402,8 +430,8 @@ nGates (ArithCircuit gates) = length gates
 
 --------------------------------------------------------------------------------
 data InputBindings label = InputBindings
-  { labelToVar :: Map label Int,
-    varToLabel :: IntMap label
+  { labelToVar :: Map (label, Int) Int,
+    varToLabel :: IntMap (label, Int)
   }
   deriving (Show, Generic, NFData)
 
@@ -414,8 +442,8 @@ instance (ToJSON label, ToJSONKey label) => ToJSON (InputBindings label)
 mapLabels :: (Ord l2) => (l1 -> l2) -> InputBindings l1 -> InputBindings l2
 mapLabels f InputBindings {labelToVar, varToLabel} =
   InputBindings
-    { labelToVar = Map.mapKeys f labelToVar,
-      varToLabel = fmap f varToLabel
+    { labelToVar = Map.mapKeys (first f) labelToVar,
+      varToLabel = fmap (first f) varToLabel
     }
 
 instance Reindexable (InputBindings label) where
@@ -446,14 +474,14 @@ instance (Pretty label) => Pretty (InputBindings label) where
   pretty InputBindings {labelToVar} =
     pretty $ Map.toList labelToVar
 
-insertInputBinding :: (Ord label) => label -> Int -> InputBindings label -> InputBindings label
+insertInputBinding :: (Ord label) => (label, Int) -> Int -> InputBindings label -> InputBindings label
 insertInputBinding label var InputBindings {..} =
   InputBindings
     { labelToVar = Map.insert label var labelToVar,
       varToLabel = IntMap.insert var label varToLabel
     }
 
-inputBindingsFromList :: (Ord label) => [(label, Int)] -> InputBindings label
+inputBindingsFromList :: (Ord label) => [((label, Int), Int)] -> InputBindings label
 inputBindingsFromList = foldl' (flip $ uncurry insertInputBinding) mempty
 
 restrictInputBindings :: IntSet -> InputBindings label -> InputBindings label
@@ -462,6 +490,13 @@ restrictInputBindings s InputBindings {..} =
     { labelToVar = Map.filter (\a -> a `IntSet.member` s) labelToVar,
       varToLabel = IntMap.restrictKeys varToLabel s
     }
+
+inputSizes :: (Ord label) => InputBindings label -> Map label Int
+inputSizes InputBindings {..} =
+  Map.fromList $
+    map (\a -> (fst $ unsafeHead a, length a)) $
+      groupBy (\a b -> fst a == fst b) $
+        Map.keys labelToVar
 
 --------------------------------------------------------------------------------
 

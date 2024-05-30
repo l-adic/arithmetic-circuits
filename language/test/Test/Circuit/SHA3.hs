@@ -307,13 +307,11 @@ rotateRight xs i = map ((\idx -> xs ^. SV.ix idx) . (\idx -> fromIntegral $ idx 
 
 sha3Program :: (KnownNat n) => Proxy n -> ExprM Fr (Vector 256 (Var Wire Fr 'TBool))
 sha3Program _ = do
-  bits :: Vector n (Signal f 'TBool) <- SV.generateM $ \i ->
-    var_ <$> boolInput Public ("b_" <> show (toInteger i))
-  let res = sha3_256 $ map bundle_ $ chunk bits
-  outs <- SV.generateM $ \i -> do
-    let label = "out_" <> show (toInteger i)
-    VarBool <$> freshPublicInput label
-  boolsOutput outs res
+  bits <- map var_ <$> boolInputs Public "b"
+  boolOutputs "out" $
+    sha3_256 $
+      map bundle_ $
+        chunk bits
 
 prop :: forall n n0. (((n + 1) + n0) ~ 25, KnownNat n0, KnownNat ((n + 1) * 64)) => ([Word8] -> [Word8]) -> Int -> Vector n (Vector 64 Bool) -> Property
 prop hashFunc mdlen vec = withMaxSuccess 1 $ monadicIO $ run $ do
@@ -322,16 +320,12 @@ prop hashFunc mdlen vec = withMaxSuccess 1 $ monadicIO $ run $ do
       inIndices :: [Finite ((n + 1) * 64)]
       inIndices = [minBound .. maxBound]
       assignments =
-        Map.fromList $
-          map (\i -> ("b_" <> show @Int (fromIntegral i), boolToField_ $ concatVec inputVec `SV.index` i)) inIndices
-  let input =
-        assignInputs shaVars $
-          assignments
+        Map.singleton "b" $
+          (Array $ map (\i -> boolToField_ $ concatVec inputVec `SV.index` i) inIndices)
+  let input = assignInputs shaVars assignments
   let w = altSolve shaCircuit input
-  let outIndices :: [Finite 256]
-      outIndices = [minBound .. maxBound]
-      res :: [Bool]
-      res = map (\i -> _fieldToBool $ fromJust $ lookupVar shaVars ("out_" <> show (fromIntegral @_ @Int i)) w) outIndices
+  let res :: [Bool]
+      res = map _fieldToBool $ fromJust $ lookupArrayVars shaVars "out" w
   -- let str = reverse $ map unpack $ chunkList 8 $ toList inputVec
   let resStr = take mdlen $ mkOutput res
   let testIn = mkOutput $ toList (concatVec inputVec)
@@ -341,7 +335,7 @@ prop hashFunc mdlen vec = withMaxSuccess 1 $ monadicIO $ run $ do
 mkOutput :: [Bool] -> [Word8]
 mkOutput = map unpack . chunkList 8
 
---
+-- currently unrunnable
 propsha256 :: ArbVec -> Property
 propsha256 (ArbVec v) =
   withMaxSuccess 1 $

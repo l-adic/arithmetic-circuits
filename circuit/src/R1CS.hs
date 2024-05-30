@@ -141,7 +141,7 @@ validateWitness (Witness w) (R1CS {r1csConstraints}) =
     w' = IntMap.insert oneVar 1 w
     satisfiesR1C (R1C (a, b, c)) = substitute a w' * substitute b w' == substitute c w'
 
-isValidWitness :: (Eq f, Num f) => Witness f -> R1CS f -> Bool
+isValidWitness :: forall f. (Eq f, Num f) => Witness f -> R1CS f -> Bool
 isValidWitness w r1cs = isRight $ validateWitness w r1cs
 
 toR1CS :: (Num f) => CircuitVars l -> ArithCircuit f -> R1CS f

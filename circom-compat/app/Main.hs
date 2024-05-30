@@ -16,9 +16,11 @@ program = do
   a <- var_ <$> fieldInput Private "a"
   b <- var_ <$> fieldInput Private "b"
   n <- var_ <$> fieldInput Public "n"
-  let cs =
+  zs <- map var_ <$> fieldInputs @5 Public "zs"
+  let s = unAdd_ $ foldMap Add_ zs
+      cs =
         [ neq_ n a,
           neq_ n b,
-          eq_ n (a * b)
+          eq_ n (a * b + s)
         ]
   boolOutput "out" $ unAnd_ $ foldMap And_ cs

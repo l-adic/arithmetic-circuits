@@ -114,7 +114,7 @@ library circom-compat
       arithmetic-circuits
     , arithmetic-circuits:language
     , bytestring
-    , directory
+    , errors
     , optparse-applicative
     , vector
 

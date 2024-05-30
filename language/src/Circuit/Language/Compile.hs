@@ -110,44 +110,47 @@ imm = IntermediateWire <$> fresh
 {-# INLINE imm #-}
 
 -- | Fresh input variables
-freshPublicInput :: (MonadState (BuilderState f) m) => Text -> m Wire
-freshPublicInput label = do
-  v <- InputWire label Public <$> fresh
+freshPublicInput :: (MonadState (BuilderState f) m) => Text -> Int -> m Wire
+freshPublicInput label offset = do
+  let l = (label, offset)
+  v <- InputWire l Public <$> fresh
   modify $ \s ->
     s
       { bsVars =
           (bsVars s)
             { cvPublicInputs = IntSet.insert (wireName v) (cvPublicInputs $ bsVars s),
-              cvInputsLabels = insertInputBinding label (wireName v) (cvInputsLabels $ bsVars s)
+              cvInputsLabels = insertInputBinding l (wireName v) (cvInputsLabels $ bsVars s)
             }
       }
   pure v
 {-# INLINE freshPublicInput #-}
 
-freshPrivateInput :: (MonadState (BuilderState f) m) => Text -> m Wire
-freshPrivateInput label = do
-  v <- InputWire label Private <$> fresh
+freshPrivateInput :: (MonadState (BuilderState f) m) => Text -> Int -> m Wire
+freshPrivateInput label offset = do
+  let l = (label, offset)
+  v <- InputWire l Private <$> fresh
   modify $ \s ->
     s
       { bsVars =
           (bsVars s)
             { cvPrivateInputs = IntSet.insert (wireName v) (cvPrivateInputs $ bsVars s),
-              cvInputsLabels = insertInputBinding label (wireName v) (cvInputsLabels $ bsVars s)
+              cvInputsLabels = insertInputBinding l (wireName v) (cvInputsLabels $ bsVars s)
             }
       }
   pure v
 {-# INLINE freshPrivateInput #-}
 
 -- | Fresh output variables
-freshOutput :: (MonadState (BuilderState f) m) => Text -> m Wire
-freshOutput label = do
+freshOutput :: (MonadState (BuilderState f) m) => Text -> Int -> m Wire
+freshOutput label offset = do
+  let l = (label, offset)
   v <- OutputWire <$> fresh
   modify $ \s ->
     s
       { bsVars =
           (bsVars s)
             { cvOutputs = IntSet.insert (wireName v) (cvOutputs $ bsVars s),
-              cvInputsLabels = insertInputBinding label (wireName v) (cvInputsLabels $ bsVars s)
+              cvInputsLabels = insertInputBinding l (wireName v) (cvInputsLabels $ bsVars s)
             }
       }
   pure v
