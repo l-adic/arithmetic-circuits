@@ -88,16 +88,16 @@ mkProgramEnv ::
   ProgramEnv f
 mkProgramEnv CircomProgram {cpVars = vars, cpCircuit = circ} =
   let vs = relabel hashText vars
-  in ProgramEnv
-    { peFieldSize = FieldSize 32,
-      peRawPrime = toInteger $ char (1 :: f),
-      peVersion = 2,
-      peInputsSize = IntSet.size $ cvPrivateInputs vars <> cvPublicInputs vars,
-      peWitnessSize = IntSet.size $ IntSet.insert oneVar $ cvVars vars,
-      peCircuit = circ,
-      peSignalSizes = inputSizes (cvInputsLabels vs),
-      peCircuitVars = vs
-    }
+   in ProgramEnv
+        { peFieldSize = FieldSize 32,
+          peRawPrime = toInteger $ char (1 :: f),
+          peVersion = 2,
+          peInputsSize = IntSet.size $ cvPrivateInputs vars <> cvPublicInputs vars,
+          peWitnessSize = IntSet.size $ IntSet.insert oneVar $ cvVars vars,
+          peCircuit = circ,
+          peSignalSizes = inputSizes (cvInputsLabels vs),
+          peCircuitVars = vs
+        }
 
 data ProgramState f = ProgramState
   { psInputs :: Inputs f,
@@ -154,10 +154,9 @@ _getInputSize = peInputsSize
 
 -- we dont (yet) support multiple values (e.g. arrays) for signal values
 _getInputSignalSize :: ProgramEnv f -> Word32 -> Word32 -> IO Int
-_getInputSignalSize ProgramEnv {peSignalSizes} msb lsb = 
+_getInputSignalSize ProgramEnv {peSignalSizes} msb lsb =
   let h = mkFNV msb lsb
-  in pure $ fromMaybe 0 $ Map.lookup h peSignalSizes
-  
+   in pure $ fromMaybe 0 $ Map.lookup h peSignalSizes
 
 -- we ignore the last arugment because our signals don't have indices, only names
 _setInputSignal ::

@@ -42,6 +42,7 @@ import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Protolude
+import Protolude.Unsafe (unsafeHead)
 import Text.PrettyPrint.Leijen.Text as PP
   ( Pretty (..),
     hsep,
@@ -51,7 +52,6 @@ import Text.PrettyPrint.Leijen.Text as PP
     vcat,
     (<+>),
   )
-import Protolude.Unsafe (unsafeHead)
 
 data InputType = Public | Private deriving (Show, Eq, Ord, Generic, NFData)
 
