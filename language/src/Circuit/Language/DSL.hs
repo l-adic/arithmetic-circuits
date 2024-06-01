@@ -52,7 +52,7 @@ module Circuit.Language.DSL
   )
 where
 
-import Circuit.Arithmetic (InputType (Private, Public), Wire (..))
+import Circuit.Arithmetic (Gate (Boolean), InputType (Private, Public), Wire (..))
 import Circuit.Language.Compile
 import Circuit.Language.Expr
 import Data.Field.Galois (GaloisField)
@@ -162,19 +162,15 @@ boolInput it label = case it of
 
 boolInputs :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TBool))
 boolInputs it label =
-  case it of
-    Public ->
-      SV.generateM
-        ( \fin ->
-            let i = fromIntegral fin
-             in VarBool <$> freshPublicInput label i
-        )
-    Private ->
-      SV.generateM
-        ( \fin ->
-            let i = fromIntegral fin
-             in VarBool <$> freshPrivateInput label i
-        )
+  let f fin =
+        let i = fromIntegral fin
+         in case it of
+              Public -> freshPublicInput label i
+              Private -> freshPrivateInput label i
+   in SV.generateM $ \fin -> do
+        w <- f fin
+        emit $ Boolean w
+        pure $ VarBool w
 {-# INLINE boolInputs #-}
 
 fieldOutput :: (Hashable f, GaloisField f) => Text -> Signal f 'TField -> ExprM f (Var Wire f 'TField)
@@ -190,18 +186,16 @@ fieldOutputs ::
   Signal f ('TVec n 'TField) ->
   ExprM f (Vector n (Var Wire f 'TField))
 fieldOutputs label s = do
-  vs <-
-    SV.generateM @n
-      ( \fin ->
-          let i = fromIntegral fin
-           in VarField <$> freshOutput label i
-      )
+  vs <- SV.generateM @n $ \fin ->
+    let i = fromIntegral fin
+     in VarField <$> freshOutput label i
   fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
 
 boolOutput :: forall f. (Hashable f, GaloisField f) => Text -> Signal f 'TBool -> ExprM f (Var Wire f 'TBool)
 boolOutput label s = do
   out <- VarBool <$> freshOutput label 0
-  unsafeCoerce <$> compileWithWire (boolToField @(Var Wire f 'TBool) out) (boolToField s)
+  res <- compileWithWire (boolToField @(Var Wire f 'TBool) out) (boolToField s)
+  pure $ unsafeCoerce res
 {-# INLINE boolOutput #-}
 
 boolOutputs ::
@@ -211,12 +205,9 @@ boolOutputs ::
   Signal f ('TVec n 'TBool) ->
   ExprM f (Vector n (Var Wire f 'TBool))
 boolOutputs label s = do
-  vs <-
-    SV.generateM @n
-      ( \fin ->
-          let i = fromIntegral fin
-           in VarBool <$> freshOutput label i
-      )
+  vs <- SV.generateM @n $ \fin ->
+    let i = fromIntegral fin
+     in VarBool <$> freshOutput label i
   out <-
     fromJust . SV.toSized @n
       <$> compileWithWires (SV.fromSized $ map (boolToField @(Var Wire f 'TBool)) vs) s
