@@ -206,7 +206,7 @@ evalGate _lookupVar _updateVar vars gate =
     Boolean i ->
       case _lookupVar i vars of
         Nothing ->
-          panic "evalGate: the impossible happened"
+          panic ("evalGate: missing var " <> show i)
         Just inp ->
           if not (inp == 0 || inp == 1)
             then panic $ "evalGate: boolean input is not 0 or 1: " <> show inp

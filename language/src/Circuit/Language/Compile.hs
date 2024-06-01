@@ -10,6 +10,7 @@ module Circuit.Language.Compile
     freshPrivateInput,
     freshOutput,
     imm,
+    emit,
     fieldToBool,
     compileWithWire,
     compileWithWires,
@@ -38,7 +39,8 @@ data BuilderState f = BuilderState
   { bsCircuit :: ArithCircuit f,
     bsNextVar :: Int,
     bsVars :: CircuitVars Text,
-    bsMemoMap :: Map Hash (V.Vector (SignalSource f))
+    bsMemoMap :: Map Hash (V.Vector (SignalSource f)),
+    bsBoolVars :: IntSet
   }
   deriving (Show)
 
@@ -48,7 +50,8 @@ defaultBuilderState =
     { bsCircuit = ArithCircuit [],
       bsNextVar = 1,
       bsVars = mempty,
-      bsMemoMap = mempty
+      bsMemoMap = mempty,
+      bsBoolVars = mempty
     }
 
 -- non recoverable errors that can arise during circuit building
@@ -180,6 +183,15 @@ mulToImm l r = do
 
 -- | Add a Mul and its output to the ArithCircuit
 emit :: (MonadState (BuilderState f) m) => Gate f Wire -> m ()
+emit c@(Boolean w) = do
+  let v = wireName w
+  bvs <- gets bsBoolVars
+  unless (v `IntSet.member` bvs) $
+    modify $ \s@(BuilderState {bsCircuit = ArithCircuit cs}) ->
+      s
+        { bsCircuit = ArithCircuit (c : cs),
+          bsBoolVars = IntSet.insert v (bsBoolVars s)
+        }
 emit c = modify $ \s@(BuilderState {bsCircuit = ArithCircuit cs}) ->
   s {bsCircuit = ArithCircuit (c : cs)}
 {-# INLINE emit #-}
