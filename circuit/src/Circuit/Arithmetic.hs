@@ -42,7 +42,6 @@ import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Protolude
-import Protolude.Unsafe (unsafeHead)
 import Text.PrettyPrint.Leijen.Text as PP
   ( Pretty (..),
     hsep,
@@ -63,7 +62,7 @@ instance Binary InputType
 
 -- | Wires are can be labeled in the ways given in this data type
 data Wire
-  = InputWire (Text, Int) InputType Int
+  = InputWire (Text, Maybe Int) InputType Int
   | IntermediateWire Int
   | OutputWire Int
   deriving (Show, Eq, Ord, Generic, NFData)
@@ -393,18 +392,18 @@ instance Functor VarType where
 
 assignInputs :: forall label f. (Ord label) => CircuitVars label -> Map label (VarType f) -> IntMap f
 assignInputs CircuitVars {..} inputs =
-  let is :: Map (label, Int) f
+  let is :: Map (label, Maybe Int) f
       is =
         let f (label, i) = case i of
-              Simple a -> [((label, 0), a)]
-              Array as -> zipWith (\idx a -> ((label, idx), a)) [0 ..] as
+              Simple a -> [((label, Nothing), a)]
+              Array as -> zipWith (\idx a -> ((label, Just idx), a)) [0 ..] as
          in Map.fromList $ concatMap f $ Map.toList inputs
    in IntMap.mapMaybe (\label -> Map.lookup label is) (varToLabel cvInputsLabels)
 
 lookupVar :: (Ord label) => CircuitVars label -> label -> IntMap f -> Maybe f
 lookupVar vs label sol = do
   let labelBindings = labelToVar $ cvInputsLabels vs
-  var <- Map.lookup (label, 0) labelBindings
+  var <- Map.lookup (label, Nothing) labelBindings
   IntMap.lookup var sol
 
 lookupArrayVars :: (Ord label) => CircuitVars label -> label -> IntMap f -> Maybe [f]
@@ -430,8 +429,8 @@ nGates (ArithCircuit gates) = length gates
 
 --------------------------------------------------------------------------------
 data InputBindings label = InputBindings
-  { labelToVar :: Map (label, Int) Int,
-    varToLabel :: IntMap (label, Int)
+  { labelToVar :: Map (label, Maybe Int) Int,
+    varToLabel :: IntMap (label, Maybe Int)
   }
   deriving (Show, Generic, NFData)
 
@@ -474,14 +473,14 @@ instance (Pretty label) => Pretty (InputBindings label) where
   pretty InputBindings {labelToVar} =
     pretty $ Map.toList labelToVar
 
-insertInputBinding :: (Ord label) => (label, Int) -> Int -> InputBindings label -> InputBindings label
+insertInputBinding :: (Ord label) => (label, Maybe Int) -> Int -> InputBindings label -> InputBindings label
 insertInputBinding label var InputBindings {..} =
   InputBindings
     { labelToVar = Map.insert label var labelToVar,
       varToLabel = IntMap.insert var label varToLabel
     }
 
-inputBindingsFromList :: (Ord label) => [((label, Int), Int)] -> InputBindings label
+inputBindingsFromList :: (Ord label) => [((label, Maybe Int), Int)] -> InputBindings label
 inputBindingsFromList = foldl' (flip $ uncurry insertInputBinding) mempty
 
 restrictInputBindings :: IntSet -> InputBindings label -> InputBindings label
@@ -491,12 +490,13 @@ restrictInputBindings s InputBindings {..} =
       varToLabel = IntMap.restrictKeys varToLabel s
     }
 
-inputSizes :: (Ord label) => InputBindings label -> Map label Int
+inputSizes :: (Ord label) => InputBindings label -> Map label (Maybe Int)
 inputSizes InputBindings {..} =
-  Map.fromList $
-    map (\a -> (fst $ unsafeHead a, length a)) $
-      groupBy (\a b -> fst a == fst b) $
-        Map.keys labelToVar
+  let f as = case as of
+        [(label, Nothing)] -> (label, Nothing)
+        ((label, Just _) : _) -> (label, Just $ length as)
+        _ -> panic "inputSizes: the impossible happened"
+   in Map.fromList $ map f $ groupBy (\a b -> fst a == fst b) $ Map.keys labelToVar
 
 --------------------------------------------------------------------------------
 

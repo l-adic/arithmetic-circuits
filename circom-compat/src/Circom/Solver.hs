@@ -77,7 +77,8 @@ data ProgramEnv f = ProgramEnv
     peInputsSize :: Int,
     peWitnessSize :: Int,
     peCircuit :: ArithCircuit f,
-    peSignalSizes :: Map FNVHash Int,
+    peInputSignalMap :: Map (FNVHash, Int) Int,
+    peInputSignalSizes :: Map FNVHash Int,
     peCircuitVars :: CircuitVars FNVHash
   }
 
@@ -95,7 +96,11 @@ mkProgramEnv CircomProgram {cpVars = vars, cpCircuit = circ} =
           peInputsSize = IntSet.size $ cvPrivateInputs vars <> cvPublicInputs vars,
           peWitnessSize = IntSet.size $ IntSet.insert oneVar $ cvVars vars,
           peCircuit = circ,
-          peSignalSizes = inputSizes (cvInputsLabels vs),
+          peInputSignalMap =
+            Map.mapKeys (bimap hashText (fromMaybe 1)) $
+              labelToVar $
+                cvInputsLabels vars,
+          peInputSignalSizes = map (fromMaybe 1) $ inputSizes (cvInputsLabels vs),
           peCircuitVars = vs
         }
 
@@ -154,9 +159,9 @@ _getInputSize = peInputsSize
 
 -- we dont (yet) support multiple values (e.g. arrays) for signal values
 _getInputSignalSize :: ProgramEnv f -> Word32 -> Word32 -> IO Int
-_getInputSignalSize ProgramEnv {peSignalSizes} msb lsb =
+_getInputSignalSize ProgramEnv {peInputSignalSizes} msb lsb =
   let h = mkFNV msb lsb
-   in pure $ fromMaybe 0 $ Map.lookup h peSignalSizes
+   in pure $ fromMaybe 0 $ Map.lookup h peInputSignalSizes
 
 -- we ignore the last arugment because our signals don't have indices, only names
 _setInputSignal ::
@@ -168,11 +173,13 @@ _setInputSignal ::
   Word32 ->
   Int ->
   IO ()
-_setInputSignal env@(ProgramEnv {peCircuit, peInputsSize, peCircuitVars}) stRef msb lsb i = do
+_setInputSignal env@(ProgramEnv {peCircuit, peInputsSize, peInputSignalMap}) stRef msb lsb i = do
   st <- readIORef stRef
   let Inputs inputs = psInputs st
-  let h = mkFNV msb lsb
-      v = fromMaybe (panic $ "Hash not found: " <> show h) $ Map.lookup (h, i) (labelToVar $ cvInputsLabels peCircuitVars)
+      h = mkFNV msb lsb
+      v =
+        fromMaybe (panic $ "Hash not found: " <> show h) $
+          Map.lookup (h, i) peInputSignalMap
   newInput <- fromInteger <$> readBuffer env stRef
   let newInputs = IntMap.insert v newInput inputs
   writeIORef stRef $
