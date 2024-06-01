@@ -178,7 +178,7 @@ _setInputSignal env@(ProgramEnv {peCircuit, peInputsSize, peInputSignalMap}) stR
   let Inputs inputs = psInputs st
       h = mkFNV msb lsb
       v =
-        fromMaybe (panic $ "Hash not found: " <> show h) $
+        fromMaybe (panic $ "Hash not found: " <> show (h, i)) $
           Map.lookup (h, i) peInputSignalMap
   newInput <- fromInteger <$> readBuffer env stRef
   let newInputs = IntMap.insert v newInput inputs

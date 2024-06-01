@@ -40,7 +40,7 @@ import Data.IntMap qualified as IntMap
 import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
 import Data.Set qualified as Set
-import Data.Text qualified as Text
+import Data.Text.Lazy qualified as Text
 import Protolude
 import Text.PrettyPrint.Leijen.Text as PP
   ( Pretty (..),
@@ -77,12 +77,19 @@ instance Hashable Wire where
 instance Binary Wire
 
 instance Pretty Wire where
-  pretty (InputWire (label, offset) t v) =
-    let a = case t of
-          Public -> "pub"
-          Private -> "priv"
-        suffix = if Text.null label then "" else "_" <> label <> "_" <> show offset
-     in text (a <> "_input_") <> pretty v <> pretty suffix
+  pretty (InputWire (label, moffset) t v) =
+    let name =
+          let offset = maybe "" (\x -> "_" <> show x) moffset
+           in label <> offset
+        internalName =
+          let p = case t of
+                Public -> "pub"
+                Private -> "priv"
+           in p <> "_input_" <> show v
+     in text $
+          if label == mempty
+            then internalName
+            else Text.fromStrict name
   pretty (IntermediateWire v) = text "imm_" <> pretty v
   pretty (OutputWire v) = text "output_" <> pretty v
 
