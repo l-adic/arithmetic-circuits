@@ -7,7 +7,8 @@ A Haskell library for building ZK programs
 - Low level arithmetic circuit DSL
 - Efficient constraint solver for arbitrary circuits
 - Binary codecs for core types (R1CS, witness, etc) which are compatible with the Circom toolchain
-- Witness generator which is WASM compatible with Circom witness generator binaries.
+- Witness generator which is WASM compatible with Circom witness generator binaries
+- A CLI to manage compilation, solving, witness verification, etc
 
 ## Examples
 - There are examples in `language/test` directory. See the [sudoku verifier](https://github.com/l-adic/arithmetic-circuits/blob/master/language/test/Test/Circuit/Sudoku.hs) for the most complete example.
