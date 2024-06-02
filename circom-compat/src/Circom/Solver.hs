@@ -97,7 +97,7 @@ mkProgramEnv CircomProgram {cpVars = vars, cpCircuit = circ} =
           peWitnessSize = IntSet.size $ IntSet.insert oneVar $ cvVars vars,
           peCircuit = circ,
           peInputSignalMap =
-            Map.mapKeys (bimap hashText (fromMaybe 1)) $
+            Map.mapKeys (bimap hashText (fromMaybe 0)) $
               labelToVar $
                 cvInputsLabels vars,
           peInputSignalSizes = map (fromMaybe 1) $ inputSizes (cvInputsLabels vs),
