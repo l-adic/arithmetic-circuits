@@ -15,7 +15,7 @@ import Crypto.Hash as CH
 import Data.ByteArray qualified as BA
 import Data.ByteString qualified as BS
 import Data.Distributive (Distributive (distribute))
-import Data.Field.Galois (GaloisField, Prime)
+import Data.Field.Galois (GaloisField)
 import Data.Finite (Finite)
 import Data.IntMap qualified as IntMap
 import Data.Map qualified as Map
@@ -29,8 +29,6 @@ import Protolude
 import Test.QuickCheck (Arbitrary (..), Property, withMaxSuccess, (===))
 import Test.QuickCheck.Monadic (monadicIO, run)
 import Prelude qualified
-
-type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 type BitVector f n = Signal f ('TVec n 'TBool)
 
@@ -305,7 +303,7 @@ rotateRight xs i = map ((\idx -> xs ^. SV.ix idx) . (\idx -> fromIntegral $ idx 
 
 --------------------------------------------------------------------------------
 
-sha3Program :: (KnownNat n) => Proxy n -> ExprM Fr (Vector 256 (Var Wire Fr 'TBool))
+sha3Program :: (KnownNat n) => Proxy n -> ExprM BN128 (Vector 256 (Var Wire BN128 'TBool))
 sha3Program _ = do
   bits <- map var_ <$> boolInputs Public "b"
   boolOutputs "out" $
@@ -349,7 +347,7 @@ instance Show ArbVec where
 instance Arbitrary (ArbVec) where
   arbitrary = ArbVec <$> SV.replicateM (SV.replicateM arbitrary)
 
-altSolve :: ArithCircuit Fr -> IntMap Fr -> IntMap Fr
+altSolve :: ArithCircuit BN128 -> IntMap BN128 -> IntMap BN128
 altSolve program inputs =
   evalArithCircuit
     (\w m -> IntMap.lookup (wireName w) m)
@@ -368,9 +366,9 @@ chunkList n xs
   | n > 0 = take n xs : (chunkList n (drop n xs))
   | otherwise = panic "Chunk size must be greater than zero."
 
-_fieldToBool :: Fr -> Bool
+_fieldToBool :: BN128 -> Bool
 _fieldToBool x = x /= 0
 
-boolToField_ :: Bool -> Fr
+boolToField_ :: Bool -> BN128
 boolToField_ True = 1
 boolToField_ False = 0

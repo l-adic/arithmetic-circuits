@@ -13,7 +13,7 @@ import Test.Tasty.QuickCheck
 -- Test values
 -------------------------------------------------------------------------------
 
-type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
+type BN128 = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 -------------------------------------------------------------------------------
 -- Generators
@@ -128,11 +128,11 @@ instance (Arbitrary f, Num f) => Arbitrary (ArithCircuitWithInput f) where
 -- Tests
 -------------------------------------------------------------------------------
 
-prop_arithCircuitValid :: ArithCircuitWithInputs Fr -> Bool
+prop_arithCircuitValid :: ArithCircuitWithInputs BN128 -> Bool
 prop_arithCircuitValid (ArithCircuitWithInputs program _) =
   validArithCircuit program
 
-prop_equivalentSolver :: ArithCircuitWithInput Fr -> Bool
+prop_equivalentSolver :: ArithCircuitWithInput BN128 -> Bool
 prop_equivalentSolver (ArithCircuitWithInput program inputs) =
   let vars = collectCircuitVars program
    in solve vars program inputs
@@ -142,7 +142,7 @@ prop_equivalentSolver (ArithCircuitWithInput program inputs) =
           program
           inputs
 
-prop_basicMultiplication :: (Fr, Fr) -> Bool
+prop_basicMultiplication :: (BN128, BN128) -> Bool
 prop_basicMultiplication (a, b) =
   let c = ArithCircuit [Mul (Var (InputWire ("", Nothing) Public 1)) (Var (InputWire ("", Nothing) Public 2)) (OutputWire 3)]
       inputs = IntMap.fromList [(1, a), (2, b)]
@@ -150,7 +150,7 @@ prop_basicMultiplication (a, b) =
       solution = solve vars c inputs
    in IntMap.lookup 3 solution == Just (a * b)
 
-prop_complexMultiplication :: (Fr, Fr, Fr, Fr) -> Bool
+prop_complexMultiplication :: (BN128, BN128, BN128, BN128) -> Bool
 prop_complexMultiplication (a, b, c, d) =
   let circuit =
         ArithCircuit
@@ -163,7 +163,7 @@ prop_complexMultiplication (a, b, c, d) =
       solution = solve vars circuit inputs
    in IntMap.lookup 7 solution == Just (a * b * c * d)
 
-prop_division :: (Fr, Fr) -> Bool
+prop_division :: (BN128, BN128) -> Bool
 prop_division (a, b) =
   let circuit =
         ArithCircuit
@@ -179,7 +179,7 @@ prop_division (a, b) =
 nBits :: Int
 nBits = 254
 
-prop_bitSummingForward :: Fr -> Bool
+prop_bitSummingForward :: BN128 -> Bool
 prop_bitSummingForward a =
   let circuit =
         ArithCircuit
@@ -190,7 +190,7 @@ prop_bitSummingForward a =
       solution = solve vars circuit (IntMap.fromList [(1, a)])
    in all (\i -> IntMap.lookup i solution == Just (if testBit (fromP a) (i - 2) then 1 else 0)) [2 .. nBits + 1]
 
-prop_bitSummingBackward :: Fr -> Bool
+prop_bitSummingBackward :: BN128 -> Bool
 prop_bitSummingBackward a =
   let circuit =
         ArithCircuit
