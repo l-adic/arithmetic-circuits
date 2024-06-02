@@ -10,7 +10,9 @@ A Haskell library for building ZK programs
 - Witness generator which is WASM compatible with Circom witness generator binaries.
 
 ## Examples
-There are examples in `test` directory. See the sudoky verifier for the most complete example.
+- There are examples in `language/test` directory. See the [sudoku verifier](https://github.com/l-adic/arithmetic-circuits/blob/master/language/test/Test/Circuit/Sudoku.hs) for the most complete example.
+- There is an example for how to setup up a client side (in-browser) prover [here](https://github.com/l-adic/factors).
+- There is an example which uses the nova folding scheme [here](https://github.com/l-adic/origami).
 
 ### Note about WASM target
 Circom is a language/compiler which has been widely adopted by developers building ZK programs. As such, many proving frameworks (e.g. arkworks, snarkjs, nova) have integrations with Circom that expect a certain binary serialization format for the r1cs and witness data. The Circom compiler also emits a witness calculator in the form of a WASM binary, which is meant to be embedded in a host environment (e.g. the browser, a rust program, etc). In the `circom-compat` library in this repo, we give the scaffolding that you need in order to produce this binary via GHC's WASM backend. You can see an example of how to use it [here](https://github.com/l-adic/factors) 
