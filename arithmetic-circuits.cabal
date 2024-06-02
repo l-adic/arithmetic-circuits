@@ -62,8 +62,9 @@ library
     Circuit.Affine
     Circuit.Arithmetic
     Circuit.Dataflow
-    Circuit.Solver
     Circuit.Dot
+    Circuit.Primes
+    Circuit.Solver
     R1CS
     Fresh
 

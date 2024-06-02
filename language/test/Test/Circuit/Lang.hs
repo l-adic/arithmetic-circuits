@@ -5,7 +5,7 @@ module Test.Circuit.Lang where
 
 import Circuit
 import Circuit.Language
-import Data.Field.Galois (Prime, PrimeField (fromP))
+import Data.Field.Galois (PrimeField (fromP))
 import Data.Finite (Finite)
 import Data.IntMap qualified as IntMap
 import Data.Map qualified as Map
@@ -13,19 +13,17 @@ import Data.Vector qualified as V
 import Protolude
 import Test.QuickCheck (Arbitrary (arbitrary), Property, forAll, vectorOf, (.&&.), (=/=), (===), (==>))
 
-type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
-
 nBits :: Int
-nBits = fromIntegral $ natVal (Proxy @(NBits Fr))
+nBits = fromIntegral $ natVal (Proxy @(NBits BN128))
 
-bitSplitJoin :: ExprM Fr (Expr Wire Fr 'TField)
+bitSplitJoin :: ExprM BN128 (Expr Wire BN128 'TField)
 bitSplitJoin = do
   _x <- var_ <$> fieldInput Public "x"
   let res = join_ $ split_ _x
   void $ fieldOutput "out" $ res
   pure res
 
-prop_bitsSplitJoin :: Fr -> Property
+prop_bitsSplitJoin :: BN128 -> Property
 prop_bitsSplitJoin x =
   let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder bitSplitJoin
       input = assignInputs bsVars $ Map.singleton "x" (Simple x)
@@ -33,7 +31,7 @@ prop_bitsSplitJoin x =
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
    in lookupVar bsVars "out" w === Just x .&&. computed === Right (V.singleton x)
 
-prop_bitsSplitJoinContra :: Fr -> Fr -> Property
+prop_bitsSplitJoinContra :: BN128 -> BN128 -> Property
 prop_bitsSplitJoinContra x y =
   (x /= y) ==>
     let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder bitSplitJoin
@@ -41,7 +39,7 @@ prop_bitsSplitJoinContra x y =
         w = solve bsVars bsCircuit input
      in lookupVar bsVars "out" w =/= Just y
 
-factors :: ExprM Fr (Expr Wire Fr 'TBool)
+factors :: ExprM BN128 (Expr Wire BN128 'TBool)
 factors = do
   n <- var_ <$> fieldInput Public "n"
   a <- var_ <$> fieldInput Public "a"
@@ -50,7 +48,7 @@ factors = do
   void $ boolOutput "out" isFactorization
   pure isFactorization
 
-prop_factorization :: Fr -> Fr -> Property
+prop_factorization :: BN128 -> BN128 -> Property
 prop_factorization x y =
   let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder factors
       inputs = assignInputs bsVars $ Map.fromList [("n", Simple $ x * y), ("a", Simple x), ("b", Simple y)]
@@ -58,7 +56,7 @@ prop_factorization x y =
       computed = evalExpr IntMap.lookup inputs (relabelExpr wireName prog)
    in lookupVar bsVars "out" w === Just 1 .&&. computed === Right (V.singleton 1)
 
-prop_factorizationContra :: Fr -> Fr -> Fr -> Property
+prop_factorizationContra :: BN128 -> BN128 -> BN128 -> Property
 prop_factorizationContra x y z =
   (x * y /= z) ==>
     let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder factors
@@ -67,7 +65,7 @@ prop_factorizationContra x y z =
         computed = evalExpr IntMap.lookup inputs (relabelExpr wireName prog)
      in lookupVar bsVars "out" w == Just 0 .&&. computed == Right (V.singleton 0)
 
-bitIndex :: Finite (NBits Fr) -> ExprM Fr (Expr Wire Fr 'TBool)
+bitIndex :: Finite (NBits BN128) -> ExprM BN128 (Expr Wire BN128 'TBool)
 bitIndex i = do
   x <- var_ <$> fieldInput Public "x"
   let bits = split_ x
@@ -75,7 +73,7 @@ bitIndex i = do
   void $ boolOutput "out" bi
   pure bi
 
-prop_bitIndex :: Int -> Fr -> Property
+prop_bitIndex :: Int -> BN128 -> Property
 prop_bitIndex i x =
   let _i = i `mod` nBits
       _x = fromP x
@@ -86,7 +84,7 @@ prop_bitIndex i x =
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
    in lookupVar bsVars "out" w === Just expected .&&. computed === Right (V.singleton expected)
 
-setAtIndex :: Finite (NBits Fr) -> Bool -> ExprM Fr (Expr Wire Fr 'TField)
+setAtIndex :: Finite (NBits BN128) -> Bool -> ExprM BN128 (Expr Wire BN128 'TField)
 setAtIndex i b = do
   x <- var_ <$> fieldInput Public "x"
   let bits = split_ x
@@ -95,7 +93,7 @@ setAtIndex i b = do
   void $ fieldOutput "out" res
   pure res
 
-prop_setAtIndex :: Int -> Fr -> Bool -> Property
+prop_setAtIndex :: Int -> BN128 -> Bool -> Property
 prop_setAtIndex i x b =
   let _i = i `mod` nBits
       _x = fromP x
@@ -108,7 +106,7 @@ prop_setAtIndex i x b =
    in res === Just expected .&&. computed === Right (V.singleton expected)
 
 -- TODO: investigate why this one is SCARY SLOW
-bundleUnbundle :: ExprM Fr (Expr Wire Fr 'TField)
+bundleUnbundle :: ExprM BN128 (Expr Wire BN128 'TField)
 bundleUnbundle = do
   x <- var_ <$> fieldInput Public "x"
   let bits = unbundle_ $ split_ x
@@ -117,7 +115,7 @@ bundleUnbundle = do
   void $ fieldOutput "out" res
   pure res
 
-prop_bundleUnbundle :: Fr -> Property
+prop_bundleUnbundle :: BN128 -> Property
 prop_bundleUnbundle x =
   let _x = fromP x
       (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder bundleUnbundle
@@ -128,7 +126,7 @@ prop_bundleUnbundle x =
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
    in res === Just expected .&&. computed === Right (V.singleton expected)
 
-sharingProg :: ExprM Fr (Expr Wire Fr 'TField)
+sharingProg :: ExprM BN128 (Expr Wire BN128 'TField)
 sharingProg = do
   x <- var_ <$> fieldInput Public "x"
   y <- var_ <$> fieldInput Public "y"
@@ -136,7 +134,7 @@ sharingProg = do
   void $ fieldOutput "out" z
   pure $ z
 
-prop_sharingProg :: Fr -> Fr -> Property
+prop_sharingProg :: BN128 -> BN128 -> Property
 prop_sharingProg x y =
   let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (sharingProg)
       input = assignInputs bsVars $ Map.fromList [("x", Simple x), ("y", Simple y)]
@@ -149,8 +147,8 @@ prop_sharingProg x y =
 --------------------------------------------------------------------------------
 
 boolBinopsProg ::
-  BinOp Fr ('TVec 50 'TBool) ->
-  ExprM Fr (Expr Wire Fr ('TVec 50 'TBool))
+  BinOp BN128 ('TVec 50 'TBool) ->
+  ExprM BN128 (Expr Wire BN128 ('TVec 50 'TBool))
 boolBinopsProg op = do
   xs <- map var_ <$> boolInputs Public "x"
   ys <- map var_ <$> boolInputs Public "y"
@@ -159,7 +157,7 @@ boolBinopsProg op = do
   pure res
 
 propBoolBinopsProg ::
-  BinOp Fr ('TVec 50 'TBool) ->
+  BinOp BN128 ('TVec 50 'TBool) ->
   (Bool -> Bool -> Bool) ->
   Property
 propBoolBinopsProg top op = forAll arbInputs $ \(bs, bs') ->
@@ -189,7 +187,7 @@ prop_xorsProg = propBoolBinopsProg BXors (/=)
 
 --------------------------------------------------------------------------------
 
-fieldBinopsProg :: BinOp Fr (TVec 50 'TField) -> ExprM Fr (Expr Wire Fr ('TVec 50 'TField))
+fieldBinopsProg :: BinOp BN128 (TVec 50 'TField) -> ExprM BN128 (Expr Wire BN128 ('TVec 50 'TField))
 fieldBinopsProg op = do
   xs <- map var_ <$> fieldInputs Public "x"
   ys <- map var_ <$> fieldInputs Public "y"
@@ -198,8 +196,8 @@ fieldBinopsProg op = do
   pure res
 
 propFieldBinopsProg ::
-  (BinOp Fr ('TVec 50 'TField)) ->
-  (Fr -> Fr -> Fr) ->
+  (BinOp BN128 ('TVec 50 'TField)) ->
+  (BN128 -> BN128 -> BN128) ->
   Property
 propFieldBinopsProg top op = forAll arbInputs $ \(bs, bs') ->
   let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (fieldBinopsProg top)
@@ -227,8 +225,8 @@ prop_divsProg = propFieldBinopsProg BDivs (/)
 --------------------------------------------------------------------------------
 
 boolUnopsProg ::
-  UnOp Fr ('TVec 32 'TBool) ->
-  ExprM Fr (Expr Wire Fr ('TVec 32 'TBool))
+  UnOp BN128 ('TVec 32 'TBool) ->
+  ExprM BN128 (Expr Wire BN128 ('TVec 32 'TBool))
 boolUnopsProg op = do
   xs <- map var_ <$> boolInputs @32 Public "x"
   let res = unOp_ op (bundle_ xs)
@@ -236,7 +234,7 @@ boolUnopsProg op = do
   pure res
 
 propBitVecUnopsProg ::
-  UnOp Fr ('TVec 32 'TBool) ->
+  UnOp BN128 ('TVec 32 'TBool) ->
   ([Bool] -> [Bool]) ->
   Property
 propBitVecUnopsProg top op = forAll arbInputs $ \bs ->
@@ -271,8 +269,8 @@ prop_shiftProg n = abs n <= 32 ==> propBitVecUnopsProg (UShift n) (shiftList Fal
 --------------------------------------------------------------------------------
 
 fieldUnopsProg ::
-  UnOp Fr ('TVec 50 'TField) ->
-  ExprM Fr (Expr Wire Fr ('TVec 50 'TField))
+  UnOp BN128 ('TVec 50 'TField) ->
+  ExprM BN128 (Expr Wire BN128 ('TVec 50 'TField))
 fieldUnopsProg op = do
   xs <- map var_ <$> fieldInputs @50 Public "x"
   let res = unOp_ op (bundle_ xs)
@@ -280,8 +278,8 @@ fieldUnopsProg op = do
   pure res
 
 propFieldUnopsProg ::
-  UnOp Fr ('TVec 50 'TField) ->
-  (Fr -> Fr) ->
+  UnOp BN128 ('TVec 50 'TField) ->
+  (BN128 -> BN128) ->
   Property
 propFieldUnopsProg top op = forAll arbInputs $ \bs ->
   let (prog, BuilderState {bsVars, bsCircuit}) = runCircuitBuilder (fieldUnopsProg top)
@@ -315,5 +313,5 @@ prop_intBitVecInverse :: Property
 prop_intBitVecInverse = forAll (vectorOf 32 arbitrary) $ \bs ->
   intToBitVec (bitVecToInt bs) === bs
 
-_fieldToBool :: Fr -> Bool
+_fieldToBool :: BN128 -> Bool
 _fieldToBool x = x /= 0

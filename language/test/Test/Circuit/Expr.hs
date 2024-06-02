@@ -2,7 +2,7 @@ module Test.Circuit.Expr where
 
 import Circuit
 import Circuit.Language
-import Data.Field.Galois (GaloisField, Prime)
+import Data.Field.Galois (GaloisField)
 import Data.Map qualified as Map
 import Data.Vector qualified as V
 import Protolude hiding (Show, show)
@@ -13,8 +13,6 @@ import Prelude (Show (..))
 -------------------------------------------------------------------------------
 -- Generators
 -------------------------------------------------------------------------------
-
-type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 arbExprBool :: (GaloisField f, Hashable f) => Int -> Int -> Gen (Signal f 'TBool)
 arbExprBool numVars size
@@ -79,14 +77,14 @@ instance (Pretty f) => Show (ExprWithInputs f) where
 -------------------------------------------------------------------------------
 
 -- | Check whether exprToArithCircuit produces valid circuits
-prop_compiledCircuitValid :: ExprWithInputs Fr -> Bool
+prop_compiledCircuitValid :: ExprWithInputs BN128 -> Bool
 prop_compiledCircuitValid (ExprWithInputs expr _) =
   validArithCircuit $ execCircuitBuilder (exprToArithCircuit expr (OutputWire 0))
 
 -- | Check whether evaluating an expression and
 -- evaluating the arithmetic circuit translation produces the same
 -- result
-prop_evalEqArithEval :: ExprWithInputs Fr -> Bool
+prop_evalEqArithEval :: ExprWithInputs BN128 -> Bool
 prop_evalEqArithEval (ExprWithInputs expr inputs) =
   let circuit = (execCircuitBuilder $ exprToArithCircuit expr (OutputWire 1))
    in all (testInput circuit) inputs

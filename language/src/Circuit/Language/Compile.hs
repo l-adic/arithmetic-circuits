@@ -25,8 +25,8 @@ import Circuit.Language.Expr
 import Data.Field.Galois (GaloisField)
 import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
-import Data.Set qualified as Set
 import Data.Sequence (pattern (:|>))
+import Data.Set qualified as Set
 import Data.Vector qualified as V
 import Lens.Micro (ix, (.~))
 import Protolude hiding (Semiring)
@@ -120,7 +120,8 @@ reserveBinding :: (MonadState (BuilderState f) m) => Text -> m ()
 reserveBinding label = do
   usedBindings <- gets bsBindings
   when (label `Set.member` usedBindings) $
-    panic $ "Binding already used: " <> label
+    panic $
+      "Binding already used: " <> label
   modify $ \s ->
     s {bsBindings = Set.insert label $ bsBindings s}
 

@@ -4,7 +4,7 @@ import Circuit
 import Circuit.Language
 import Data.Array.IO (IOArray, getElems, newArray, readArray, writeArray)
 import Data.Distributive (Distributive (distribute))
-import Data.Field.Galois (Prime, PrimeField)
+import Data.Field.Galois (PrimeField)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.IntMap qualified as IntMap
 import Data.List (union, (!!), (\\))
@@ -75,7 +75,7 @@ initializeBoard board = do
       v <- var_ <$> fieldInput Private varName
       pure $ if_ (cell `eq_` cField 0) v cell
 
-validate :: ExprM Fr (Signal Fr 'TBool)
+validate :: ExprM BN128 (Signal BN128 'TBool)
 validate = do
   b <- mkBoard >>= initializeBoard
   let rowsValid = all_ (isPermutation $ Vec.toList sudokuSet) (Vec.toList <$> b)
@@ -84,8 +84,6 @@ validate = do
   let res = rowsValid `and_` colsValid `and_` boxesValid
   void $ boolOutput "out" res
   pure res
-
-type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 --------------------------------------------------------------------------------
 spec_sudokuSolver :: Spec
@@ -250,7 +248,7 @@ examplePuzzles =
     ]
   ]
 
-altSolve :: ArithCircuit Fr -> IntMap Fr -> IntMap Fr
+altSolve :: ArithCircuit BN128 -> IntMap BN128 -> IntMap BN128
 altSolve p inputs =
   evalArithCircuit
     (\w m -> IntMap.lookup (wireName w) m)

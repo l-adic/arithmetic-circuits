@@ -3,12 +3,9 @@ module Circuit.Bench where
 import Circuit
 import Circuit.Language
 import Criterion
-import Data.Field.Galois (Prime)
 import Data.IntMap qualified as IntMap
 import Data.Map qualified as Map
 import Protolude
-
-type Fr = Prime 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
 benchmarks :: Benchmark
 benchmarks =
@@ -20,7 +17,7 @@ benchmarks =
       bench "1_000_000" $ whnf largeMult (Proxy @1_000_000)
     ]
 
-largeMult :: (KnownNat n) => Proxy n -> IO Fr
+largeMult :: (KnownNat n) => Proxy n -> IO BN128
 largeMult n =
   let BuilderState {bsVars, bsCircuit} = snd $ runCircuitBuilder (program n)
       inputs =
@@ -29,12 +26,12 @@ largeMult n =
       res = fromMaybe (panic "output not found") $ lookupVar bsVars "out" w
    in pure res
 
-program :: forall n. (KnownNat n) => Proxy n -> ExprM Fr (Var Wire Fr 'TField)
+program :: forall n. (KnownNat n) => Proxy n -> ExprM BN128 (Var Wire BN128 'TField)
 program _ = do
   xs <- fieldInputs @n Public "x"
   fieldOutput "out" $ product $ map var_ xs
 
-altSolve :: ArithCircuit Fr -> IntMap Fr -> IntMap Fr
+altSolve :: ArithCircuit BN128 -> IntMap BN128 -> IntMap BN128
 altSolve p inputs =
   evalArithCircuit
     (\w m -> IntMap.lookup (wireName w) m)
