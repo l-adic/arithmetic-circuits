@@ -11,6 +11,7 @@ module Circuit.Language.Compile
     freshOutput,
     imm,
     emit,
+    reserveBinding,
     fieldToBool,
     compileWithWire,
     compileWithWires,
@@ -24,6 +25,7 @@ import Circuit.Language.Expr
 import Data.Field.Galois (GaloisField)
 import Data.IntSet qualified as IntSet
 import Data.Map qualified as Map
+import Data.Set qualified as Set
 import Data.Sequence (pattern (:|>))
 import Data.Vector qualified as V
 import Lens.Micro (ix, (.~))
@@ -40,7 +42,8 @@ data BuilderState f = BuilderState
     bsNextVar :: Int,
     bsVars :: CircuitVars Text,
     bsMemoMap :: Map Hash (V.Vector (SignalSource f)),
-    bsBoolVars :: IntSet
+    bsBoolVars :: IntSet,
+    bsBindings :: Set Text
   }
   deriving (Show)
 
@@ -51,7 +54,8 @@ defaultBuilderState =
       bsNextVar = 1,
       bsVars = mempty,
       bsMemoMap = mempty,
-      bsBoolVars = mempty
+      bsBoolVars = mempty,
+      bsBindings = mempty
     }
 
 -- non recoverable errors that can arise during circuit building
@@ -111,6 +115,14 @@ fresh = do
 imm :: (MonadState (BuilderState f) m) => m Wire
 imm = IntermediateWire <$> fresh
 {-# INLINE imm #-}
+
+reserveBinding :: (MonadState (BuilderState f) m) => Text -> m ()
+reserveBinding label = do
+  usedBindings <- gets bsBindings
+  when (label `Set.member` usedBindings) $
+    panic $ "Binding already used: " <> label
+  modify $ \s ->
+    s {bsBindings = Set.insert label $ bsBindings s}
 
 -- | Fresh input variables
 freshPublicInput :: (MonadState (BuilderState f) m) => Text -> Maybe Int -> m Wire
