@@ -133,8 +133,8 @@ negs_ = unOp_ UNegs
 fieldInput :: InputType -> Text -> ExprM f (Var Wire f 'TField)
 fieldInput it label =
   case it of
-    Public -> VarField <$> freshPublicInput label 0
-    Private -> VarField <$> freshPrivateInput label 0
+    Public -> VarField <$> freshPublicInput label Nothing
+    Private -> VarField <$> freshPrivateInput label Nothing
 {-# INLINE fieldInput #-}
 
 fieldInputs :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TField))
@@ -143,27 +143,27 @@ fieldInputs it label =
     Public ->
       SV.generateM
         ( \fin ->
-            let i = fromIntegral fin
+            let i = Just $ fromIntegral fin
              in VarField <$> freshPublicInput label i
         )
     Private ->
       SV.generateM
         ( \fin ->
-            let i = fromIntegral fin
+            let i = Just $ fromIntegral fin
              in VarField <$> freshPrivateInput label i
         )
 {-# INLINE fieldInputs #-}
 
 boolInput :: InputType -> Text -> ExprM f (Var Wire f 'TBool)
 boolInput it label = case it of
-  Public -> VarBool <$> freshPublicInput label 0
-  Private -> VarBool <$> freshPrivateInput label 0
+  Public -> VarBool <$> freshPublicInput label Nothing
+  Private -> VarBool <$> freshPrivateInput label Nothing
 {-# INLINE boolInput #-}
 
 boolInputs :: (KnownNat n) => InputType -> Text -> ExprM f (Vector n (Var Wire f 'TBool))
 boolInputs it label =
   let f fin =
-        let i = fromIntegral fin
+        let i = Just $ fromIntegral fin
          in case it of
               Public -> freshPublicInput label i
               Private -> freshPrivateInput label i
@@ -175,7 +175,7 @@ boolInputs it label =
 
 fieldOutput :: (Hashable f, GaloisField f) => Text -> Signal f 'TField -> ExprM f (Var Wire f 'TField)
 fieldOutput label s = do
-  out <- VarField <$> freshOutput label 0
+  out <- VarField <$> freshOutput label Nothing
   compileWithWire out s
 {-# INLINE fieldOutput #-}
 
@@ -187,13 +187,13 @@ fieldOutputs ::
   ExprM f (Vector n (Var Wire f 'TField))
 fieldOutputs label s = do
   vs <- SV.generateM @n $ \fin ->
-    let i = fromIntegral fin
+    let i = Just $ fromIntegral fin
      in VarField <$> freshOutput label i
   fromJust . SV.toSized <$> compileWithWires (SV.fromSized vs) s
 
 boolOutput :: forall f. (Hashable f, GaloisField f) => Text -> Signal f 'TBool -> ExprM f (Var Wire f 'TBool)
 boolOutput label s = do
-  out <- VarBool <$> freshOutput label 0
+  out <- VarBool <$> freshOutput label Nothing
   res <- compileWithWire (boolToField @(Var Wire f 'TBool) out) (boolToField s)
   pure $ unsafeCoerce res
 {-# INLINE boolOutput #-}
@@ -206,7 +206,7 @@ boolOutputs ::
   ExprM f (Vector n (Var Wire f 'TBool))
 boolOutputs label s = do
   vs <- SV.generateM @n $ \fin ->
-    let i = fromIntegral fin
+    let i = Just $ fromIntegral fin
      in VarBool <$> freshOutput label i
   out <-
     fromJust . SV.toSized @n

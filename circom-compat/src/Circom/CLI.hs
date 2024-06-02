@@ -328,15 +328,15 @@ mkInputsTemplate :: Encoding -> CircuitVars Text -> IOVars
 mkInputsTemplate enc vars =
   let inputsOnly = cvInputsLabels $ restrictVars vars (cvPrivateInputs vars `IntSet.union` cvPublicInputs vars)
       vs = Map.toList $ inputSizes inputsOnly
-      f (label, len) =
-        if len > 1
-          then (label, Array (replicate len 0))
-          else (label, Simple 0)
+      f (label, mlen) =
+        case mlen of
+          Nothing -> (label, Simple 0)
+          Just len -> (label, Array (replicate len 0))
    in IOVars enc $ Map.fromList $ map f vs
 
 mkOutputs :: (PrimeField f) => Encoding -> CircuitVars Text -> Witness f -> IOVars
 mkOutputs enc vars (Witness w) =
-  let vs :: [[((Text, Int), Int)]]
+  let vs :: [[((Text, Maybe Int), Int)]]
       vs =
         groupBy (\a b -> fst (fst a) == fst (fst b)) $
           Map.toList $

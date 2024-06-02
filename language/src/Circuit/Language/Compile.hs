@@ -113,7 +113,7 @@ imm = IntermediateWire <$> fresh
 {-# INLINE imm #-}
 
 -- | Fresh input variables
-freshPublicInput :: (MonadState (BuilderState f) m) => Text -> Int -> m Wire
+freshPublicInput :: (MonadState (BuilderState f) m) => Text -> Maybe Int -> m Wire
 freshPublicInput label offset = do
   let l = (label, offset)
   v <- InputWire l Public <$> fresh
@@ -128,7 +128,7 @@ freshPublicInput label offset = do
   pure v
 {-# INLINE freshPublicInput #-}
 
-freshPrivateInput :: (MonadState (BuilderState f) m) => Text -> Int -> m Wire
+freshPrivateInput :: (MonadState (BuilderState f) m) => Text -> Maybe Int -> m Wire
 freshPrivateInput label offset = do
   let l = (label, offset)
   v <- InputWire l Private <$> fresh
@@ -144,7 +144,7 @@ freshPrivateInput label offset = do
 {-# INLINE freshPrivateInput #-}
 
 -- | Fresh output variables
-freshOutput :: (MonadState (BuilderState f) m) => Text -> Int -> m Wire
+freshOutput :: (MonadState (BuilderState f) m) => Text -> Maybe Int -> m Wire
 freshOutput label offset = do
   let l = (label, offset)
   v <- OutputWire <$> fresh
