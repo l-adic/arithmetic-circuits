@@ -61,7 +61,7 @@ removeUnreachable outVars cs@(ArithCircuit gs) =
             -- start searching from the output variables
             exploreVars env outVars
             roots <- gets dfRoots
-            pure $ IntSet.foldl (\acc root -> acc `Set.union` findGates env root) mempty roots
+            pure $ IntSet.foldl' (\acc root -> acc `Set.union` findGates env root) mempty roots
    in -- we have to preserve the order of the gates here
       ( ArithCircuit $ filter (\x -> x `Set.member` foundGates) gs,
         dfRoots usedVars

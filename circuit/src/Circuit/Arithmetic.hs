@@ -208,7 +208,7 @@ evalGate _lookupVar _updateVar vars gate =
                 ( ix + 1,
                   _updateVar currentOut (bool2val $ testBit (fromP inp) ix) oldEnv
                 )
-           in snd . foldl setWire (0, vars) $ os
+           in snd . foldl' setWire (0, vars) $ os
     Boolean i ->
       case _lookupVar i vars of
         Nothing ->
@@ -246,7 +246,7 @@ validArithCircuit (ArithCircuit gates) =
   where
     noRefsToUndefinedWires =
       fst $
-        foldl
+        foldl'
           ( \(res, definedWires) gate ->
               ( res
                   && all isNotInput (outputWires gate)
@@ -297,7 +297,7 @@ unsplit ::
   -- small-endian
   [Wire] ->
   AffineCircuit f Wire
-unsplit = snd . foldl (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (ScalarMul (2 ^ ix) (Var wire)))) (0, ConstGate 0)
+unsplit = snd . foldl' (\(ix, rest) wire -> (ix + (1 :: Integer), Add rest (ScalarMul (2 ^ ix) (Var wire)))) (0, ConstGate 0)
 
 data CircuitVars label = CircuitVars
   { cvVars :: IntSet,

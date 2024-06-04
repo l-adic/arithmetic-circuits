@@ -41,7 +41,7 @@ instance (Pretty f, Eq f, Num f) => Pretty (LinearPoly f) where
      in case summands of
           [] -> "0"
           [x] -> x
-          x : xs -> foldl (\acc a -> acc <+> "+" <+> a) x xs
+          x : xs -> foldl' (\acc a -> acc <+> "+" <+> a) x xs
     where
       mkVar var
         | var == oneVar = "1"

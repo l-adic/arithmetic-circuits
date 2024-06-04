@@ -313,16 +313,15 @@ getPoly fieldSize = do
   LinearCombination factors <- getLinearCombination fieldSize
   pure $
     LinearPoly $
-      foldl (\acc (Factor {wireId, value}) -> IntMap.insert (fromIntegral wireId) value acc) mempty factors
+      foldl' (\acc (Factor {wireId, value}) -> IntMap.insert (fromIntegral wireId) value acc) mempty factors
 
 putPoly :: (PrimeField k) => FieldSize -> LinearPoly k -> Put
 putPoly fieldSize (LinearPoly p) =
   putLinearCombination fieldSize $
-    LinearCombination
-      [ Factor {wireId = fromIntegral var, value}
-        | (var, value) <- IntMap.toAscList p,
-          value /= 0
-      ]
+    LinearCombination $
+      map (\(var, value) -> Factor {wireId = fromIntegral var, value}) $
+        filter (\a -> snd a /= 0) $
+          IntMap.toAscList p
 
 getR1C :: (PrimeField f) => FieldSize -> Get (R1C f)
 getR1C fieldSize = do

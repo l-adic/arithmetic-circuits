@@ -122,7 +122,7 @@ prop_bundleUnbundle x =
       input = assignInputs bsVars $ Map.singleton "x" (Simple x)
       w = solve bsVars bsCircuit input
       res = lookupVar bsVars "out" w
-      expected = foldl (\acc i -> acc + if testBit _x i then 0 else 1) 0 [0 .. nBits - 1]
+      expected = foldl' (\acc i -> acc + if testBit _x i then 0 else 1) 0 [0 .. nBits - 1]
       computed = evalExpr IntMap.lookup input (relabelExpr wireName prog)
    in res === Just expected .&&. computed === Right (V.singleton expected)
 
@@ -304,7 +304,7 @@ intToBitVec :: Word32 -> [Bool]
 intToBitVec n = map (testBit n) [0 .. 31]
 
 bitVecToInt :: [Bool] -> Word32
-bitVecToInt bs = foldl (\acc (b, i) -> if b then setBit acc i else acc) zeroBits (zip bs [0 ..])
+bitVecToInt bs = foldl' (\acc (b, i) -> if b then setBit acc i else acc) zeroBits (zip bs [0 ..])
 
 prop_bitVecIntInverse :: Word32 -> Property
 prop_bitVecIntInverse n = bitVecToInt (intToBitVec n) === n

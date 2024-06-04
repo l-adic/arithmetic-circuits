@@ -645,6 +645,7 @@ data GraphBuilderState i f = GraphBuilderState
   }
 
 {-# SCC buildGraph_ #-}
+-- TODO: CPS transform
 buildGraph_ :: forall i f ty. Expr i f ty -> State (GraphBuilderState i f) Hash
 buildGraph_ expr =
   getId expr <$ case expr of
